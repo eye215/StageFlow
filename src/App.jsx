@@ -10,6 +10,7 @@ import './music.css'
 import './dashboard.css'
 import './cast.css'
 import './props.css'
+import './ui-refinement.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -49,6 +50,7 @@ export default function App() {
   const [defaultProductionId, setDefaultProductionId] = useState(() => window.localStorage.getItem('stageflow:default-production') || '')
   const [homeScenes, setHomeScenes] = useState([])
   const [homeMusicCount, setHomeMusicCount] = useState(0)
+  const [homePropStats, setHomePropStats] = useState({ total: 0, ready: 0 })
   const [castMembers, setCastMembers] = useState([])
   const [castForm, setCastForm] = useState({ name: '', roleName: '', type: '주연', notes: '' })
   const [showCastForm, setShowCastForm] = useState(false)
@@ -170,13 +172,29 @@ export default function App() {
     const { data } = await supabase.from('scenes').select('*').eq('production_id', productionId).order('sort_order').order('scene_no')
     const nextScenes = data || []
     setHomeScenes(nextScenes)
-    if (!workspace || !nextScenes.length) return setHomeMusicCount(0)
+    if (!workspace) return
     const counts = await Promise.all(nextScenes.map(async (scene) => {
       const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
       const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
       return (files || []).filter((file) => file.id).length
     }))
     setHomeMusicCount(counts.reduce((sum, value) => sum + value, 0))
+    const { data: propFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`)
+    if (propFile) {
+      try {
+        const payload = JSON.parse(await propFile.text())
+        const items = Array.isArray(payload.items) ? payload.items : []
+        setHomePropStats({ total: items.length, ready: items.filter((item) => item.ready).length })
+      } catch {
+        setHomePropStats({ total: 0, ready: 0 })
+      }
+    } else setHomePropStats({ total: 0, ready: 0 })
+  }
+
+  function openDefaultAt(tab = 'overview') {
+    if (!defaultProduction) return
+    setSelected(defaultProduction)
+    window.setTimeout(() => setProductionTab(tab), 0)
   }
 
   async function createProduction(event) {
@@ -548,6 +566,17 @@ export default function App() {
     />
   )
 
+  return <HomeDashboardV2
+    session={session} workspace={workspace} productions={productions}
+    defaultProduction={defaultProduction} daysLeft={homeDaysLeft} progress={homeProgress}
+    scenes={homeScenes} musicCount={homeMusicCount} propStats={homePropStats}
+    openAt={openDefaultAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen}
+    chooseDefaultProduction={chooseDefaultProduction} notice={notice}
+    showForm={showProductionForm} setShowForm={setShowProductionForm}
+    productionForm={productionForm} setProductionForm={setProductionForm}
+    createProduction={createProduction} busy={busy}
+  />
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -588,6 +617,36 @@ export default function App() {
   )
 }
 
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy }) {
+  const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
+  return <div className="app-shell home-v2">
+    <header className="topbar home-topbar">
+      <div className="brand-inline"><Theater size={22} /><div><strong>StageFlow</strong><span>{workspace.name}</span></div></div>
+      <div className="topbar-actions"><button className="icon-button" onClick={() => setShowForm((value) => !value)} aria-label="새 공연 만들기"><Plus size={19} /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 기본 공연 설정">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div>
+    </header>
+    <main className="content home-dashboard-v2">
+      {showForm && <section className="inline-create"><div className="compact-heading"><div><span>NEW PRODUCTION</span><h2>새 공연</h2></div><button className="icon-button" onClick={() => setShowForm(false)}><X size={18} /></button></div><ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} /></section>}
+      {defaultProduction ? <>
+        <section className="stage-summary" onClick={() => openAt('overview')}>
+          <div className="stage-summary-top"><div><span className="stage-label">현재 공연</span><h1>{defaultProduction.title}</h1><p><MapPin size={14} /> {defaultProduction.venue || '공연 장소 미정'}</p></div>{daysLeft !== null && <strong className="d-day">{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}</div>
+          <div className="stage-progress"><div><span>준비도</span><b>{progress}%</b></div><div className="progress"><i style={{ width: `${progress}%` }} /></div></div>
+          <div className="stage-stats"><span><b>{scenes.length}</b> 장면</span><span><b>{musicCount}</b> 음악</span><span><b>{propStats.ready}/{propStats.total}</b> 소품 준비</span></div>
+        </section>
+
+        <section className="home-workbench"><div className="compact-heading"><div><span>WORKSPACE</span><h2>지금 할 일</h2></div></div><div className="workbench-grid"><button className="work-main" onClick={() => openAt('import')}><WandSparkles /><div><strong>대본 자동정리</strong><span>PDF에서 장면·인물·소품 추출</span></div><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><div><strong>장면</strong><span>{scenes.length}개</span></div></button><button onClick={() => openAt('props')}><Package /><div><strong>소품</strong><span>{propStats.ready}/{propStats.total} 준비</span></div></button><button onClick={() => openAt('music')}><FileAudio /><div><strong>음악</strong><span>{musicCount}개 파일</span></div></button></div><button className="show-launch" onClick={() => openAt('show')}><Play fill="currentColor" /><div><strong>공연모드</strong><span>장면 순서대로 큐 진행</span></div><ChevronRight /></button></section>
+
+        <section className="attention-block"><div className="compact-heading"><div><span>CHECK</span><h2>확인 필요한 장면</h2></div><button className="text-button" onClick={() => openAt('scenes')}>전체 장면</button></div>{attentionScenes.length ? <div className="attention-list">{attentionScenes.map((scene) => <button key={scene.id} onClick={() => openAt('scenes')}><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{extractAttention(scene.summary)}</small></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>급한 확인 항목이 없어요</strong><span>장면 요약의 ‘미정·논의·확인 필요’를 자동으로 모읍니다.</span></div></div>}</section>
+      </> : <section className="empty-home"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본, 장면, 배우, 소품과 음악을 한곳에서 정리할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
+      {notice && <p className="notice">{notice}</p>}
+    </main>
+    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
+  </div>
+}
+
+function extractAttention(summary = '') {
+  return summary.split('\n').find((line) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(line))?.replace(/^현황:\s*/, '') || '확인 필요'
+}
+
 function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, busy }) {
   return <main className="auth-page"><section className="auth-card">
     <BrandMark icon={<Theater size={34} />} /><p className="eyebrow">MUSICAL PRODUCTION OS</p><h1>StageFlow</h1>
@@ -618,12 +677,13 @@ function ProductionView(props) {
   const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
-  return <div className="app-shell">
-    <header className="topbar"><button className="icon-button" onClick={goBack}><ChevronLeft /></button><div className="topbar-title"><span>{workspace.name}</span><strong>{production.title}</strong></div><span className="header-spacer" /></header>
+  const readyProps = propItems.filter((item) => item.ready).length
+  return <div className="app-shell production-shell-v2">
+    <header className="topbar"><button className="icon-button" onClick={goBack} aria-label="홈으로"><ChevronLeft /></button><div className="topbar-title"><strong>{production.title}</strong><span>{workspace.name}</span></div><span className="header-spacer" /></header>
     <main className="content production-content">
-      <section className="production-cover"><div className="cover-glow" /><div className="cover-copy"><span className="status">준비 중</span><h1>{production.title}</h1><p><MapPin size={15} /> {production.venue || '공연 장소 미정'}</p><div className="cover-meta"><span>{production.performance_start_date || '공연일 미정'}</span>{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '공연 종료'}</strong>}</div></div></section>
+      <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div>{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}</section>
       <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
-      {tab === 'overview' && <><section className="metric-grid"><article className="metric-card"><span>준비도</span><strong>{progress}%</strong><div className="progress"><i style={{ width: `${progress}%` }} /></div></article><article className="metric-card"><span>등록 장면</span><strong>{scenes.length}</strong><small>Scenes</small></article></section><section className="quick-grid"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면 관리</span><small>{scenes.length}개</small></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><small>{castMembers.length}명</small></button><button onClick={() => setTab('show')}><Play /><span>공연 모드</span><small>GO 큐</small></button><button><Settings /><span>공연 설정</span><small>정보 관리</small></button></section></>}
+      {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} remove={removeCastMember} toggleScene={toggleCastScene} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
