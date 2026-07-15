@@ -41,6 +41,7 @@ export default function App() {
   const [importText, setImportText] = useState('')
   const [importRows, setImportRows] = useState([])
   const [importingPdf, setImportingPdf] = useState(false)
+  const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [pendingMusic, setPendingMusic] = useState([])
   const [musicByScene, setMusicByScene] = useState({})
   const [uploadingMusic, setUploadingMusic] = useState(false)
@@ -265,6 +266,23 @@ export default function App() {
     const parsed = parseProductionSheet(importText)
     setImportRows(parsed)
     setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 정리했어요.` : '번호로 시작하는 장면을 찾지 못했어요.')
+  }
+
+  async function analyzeImportWithAI() {
+    if (!importText.trim()) return
+    setAiAnalyzing(true)
+    setNotice('AI가 대본의 장면·인물·넘버·소품을 분석하고 있어요…')
+    const { data, error } = await supabase.functions.invoke('analyze-production', {
+      body: { text: importText.slice(0, 120000), productionTitle: selected.title },
+    })
+    if (error) {
+      setNotice(`AI 분석 실패: ${error.message}. Supabase의 analyze-production 함수가 배포됐는지 확인해 주세요.`)
+    } else {
+      const parsed = normalizeAiScenes(data?.scenes)
+      setImportRows(parsed)
+      setNotice(parsed.length ? `AI가 ${parsed.length}개 장면과 연결 정보를 정리했어요.` : 'AI 응답에서 장면을 찾지 못했어요.')
+    }
+    setAiAnalyzing(false)
   }
 
   async function saveImportedScenes() {
@@ -493,6 +511,7 @@ export default function App() {
       notice={notice} busy={busy}
       importText={importText} setImportText={setImportText} importRows={importRows}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
+      analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
       readPdf={readPdf} importingPdf={importingPdf}
       pendingMusic={pendingMusic} musicByScene={musicByScene}
       organizeMusicFiles={organizeMusicFiles} uploadOrganizedMusic={uploadOrganizedMusic}
@@ -573,7 +592,7 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, clos
 }
 
 function ProductionView(props) {
-  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
+  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   return <div className="app-shell">
@@ -585,7 +604,7 @@ function ProductionView(props) {
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} remove={removeCastMember} toggleScene={toggleCastScene} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
-      {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} />}
+      {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} upload={uploadOrganizedMusic} loading={uploadingMusic} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2><span>{current.summary || '등록된 장면 설명이 없습니다.'}</span></article><article className="next-cue"><span>NEXT</span><strong>{next ? next.title : 'Curtain Call'}</strong></article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
@@ -597,13 +616,13 @@ function ProductionForm({ form, setForm, submit, busy }) { return <form classNam
 function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid" onSubmit={submit}><input required placeholder="장면 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /><div className="two-col"><input type="number" min="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /><input type="number" min="0" step="0.1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></div><textarea placeholder="장면 설명" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /><button className="primary" disabled={busy}>장면 저장</button></form> }
 function ProductionCard({ item, index, open, remove }) { return <article className="production-card" onClick={open}><div className={`poster poster-${index % 3}`}><Theater size={38} /></div><div className="production-info"><div className="card-top"><span className="status">준비 중</span><button className="icon-button danger" onClick={(e) => { e.stopPropagation(); remove() }} aria-label="공연 삭제"><Trash2 size={17} /></button></div><h3>{item.title}</h3><p>{item.venue || '장소 미정'}</p><small>{item.performance_start_date || '공연일 미정'}</small></div></article> }
 function SceneCard({ scene, remove }) { return <article className="scene-card"><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{scene.summary || '설명 없음'}</p></div><button className="icon-button danger" onClick={remove} aria-label="장면 삭제"><Trash2 size={18} /></button></article> }
-function ImportPanel({ text, setText, rows, analyze, save, readPdf, loading }) {
+function ImportPanel({ text, setText, rows, analyze, analyzeWithAI, save, readPdf, loading, aiAnalyzing }) {
   return <section className="import-panel">
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
     <textarea className="import-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder={'1. 가려진 진실\t앤더슨\t살인자 / 매춘부\t...\n2. 진정해 조심해\t앤더슨 / 먼로\t경찰 / 기자\t...'} />
-    <button className="primary analyze-button" disabled={loading || !text.trim()} onClick={analyze}><WandSparkles size={18} /> 자동으로 장면 정리</button>
+    <div className="import-action-grid"><button className="secondary analyze-button" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyze}><WandSparkles size={18} /> 빠른 표 정리</button><button className="primary analyze-button ai-analyze" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyzeWithAI}><Sparkles size={18} /> {aiAnalyzing ? 'AI 분석 중…' : 'AI로 대본 분석'}</button></div>
     {!!rows.length && <><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 장면을 찾았어요</h3></div><button className="primary compact" disabled={loading} onClick={save}><CheckCircle2 size={18} /> 공연에 저장</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
   </section>
 }
@@ -701,14 +720,14 @@ function parseProductionSheet(source) {
     if (!line.trim()) continue
     if (/구분\s*소품명|소품명\s*In\s*Out/i.test(line.replace(/\t/g, ' '))) propsMode = true
     if (/투입\s*인원|진도\s*현황/.test(line.replace(/\t/g, ' '))) propsMode = false
-    const match = line.trimStart().match(/^(\d{1,3})\.\s*([^\t]+?)(?:\t+| {2,}|$)(.*)$/)
+    const match = line.trimStart().match(/^(?:(\d{1,3})\.|SONG[.\s_-]*(\d{1,3}))\s*([^\t]+?)(?:\t+| {2,}|$)(.*)$/i)
     if (match) {
-      const number = Number(match[1])
-      const title = match[2].trim()
+      const number = Number(match[1] || match[2])
+      const title = match[3].trim()
       current = rows.get(number) || { number, title, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [] }
       current.title = title || current.title
       rows.set(number, current)
-      const cells = splitCells(match[3])
+      const cells = splitCells(match[4])
       applyCells(current, cells, propsMode)
       continue
     }
@@ -749,6 +768,23 @@ function addProp(row, cells) {
   if (!duplicate) row.props.push(item)
 }
 
+function normalizeAiScenes(value) {
+  if (!Array.isArray(value)) return []
+  return value.map((scene, index) => ({
+    number: Number(scene.number) || index + 1,
+    title: String(scene.title || `장면 ${index + 1}`).trim(),
+    main: String(scene.main || '').trim(),
+    ensemble: String(scene.ensemble || '').trim(),
+    backstage: String(scene.backstage || '').trim(),
+    music: String(scene.music || '').trim(),
+    movement: String(scene.movement || '').trim(),
+    status: String(scene.status || '').trim(),
+    props: Array.isArray(scene.props) ? scene.props.filter((item) => item?.name).map((item) => ({ kind: item.kind === '대도구' ? '대도구' : '소품', name: String(item.name).trim(), inBy: String(item.inBy || '').trim(), outBy: String(item.outBy || '').trim(), note: String(item.note || '').trim() })) : [],
+    costumes: Array.isArray(scene.costumes) ? scene.costumes : [],
+    cues: Array.isArray(scene.cues) ? scene.cues : [],
+  })).sort((a, b) => a.number - b.number)
+}
+
 function formatSceneSummary(row) {
   const lines = []
   if (row.main) lines.push(`메인 배역: ${row.main}`)
@@ -759,6 +795,14 @@ function formatSceneSummary(row) {
   if (row.props.length) {
     lines.push('소품/대도구:')
     row.props.forEach((prop) => lines.push(`- [${prop.kind}] ${prop.name} · In ${prop.inBy || '-'} · Out ${prop.outBy || '-'}${prop.note ? ` · ${prop.note}` : ''}`))
+  }
+  if (row.costumes?.length) {
+    lines.push('의상/체인지:')
+    row.costumes.forEach((item) => lines.push(`- ${item.character || '배역 미정'}: ${item.name || '의상 확인 필요'}${item.changeNote ? ` · ${item.changeNote}` : ''}`))
+  }
+  if (row.cues?.length) {
+    lines.push('큐:')
+    row.cues.forEach((item) => lines.push(`- [${item.type || '무대'}] ${item.label || '큐 확인 필요'}${item.trigger ? ` · 큐사인 ${item.trigger}` : ''}`))
   }
   return lines.join('\n')
 }
