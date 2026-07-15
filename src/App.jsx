@@ -182,8 +182,12 @@ export default function App() {
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
     try {
-      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
-      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer(), disableWorker: true }).promise
+      const [pdfjs, worker] = await Promise.all([
+        import('pdfjs-dist/legacy/build/pdf.mjs'),
+        import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
+      ])
+      pdfjs.GlobalWorkerOptions.workerSrc = worker.default
+      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pages = []
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
         const page = await pdf.getPage(pageNo)
