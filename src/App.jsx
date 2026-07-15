@@ -310,8 +310,8 @@ export default function App() {
     setUploadingMusic(true)
     let uploaded = 0
     for (const item of matched) {
-      const safeName = item.file.name.replace(/[\\/#?%*:|"<>]/g, '_')
-      const path = `${workspace.id}/${selected.id}/music/${item.sceneNo}/${Date.now()}-${safeName}`
+      const safeName = safeStorageFileName(item.file.name)
+      const path = `${workspace.id}/${selected.id}/music/${item.sceneNo}/${safeName}`
       const { error } = await supabase.storage.from('stageflow-files').upload(path, item.file, { contentType: item.file.type || 'audio/mpeg' })
       if (!error) uploaded += 1
       else setNotice(`음악 업로드 실패: ${error.message}`)
@@ -666,7 +666,29 @@ function matchMusicToScene(filename, scenes) {
 }
 
 function cleanStoredFileName(value) {
+  const encoded = value.match(/^\d{13}--([A-Za-z0-9_-]+)(\.[A-Za-z0-9]+)?$/)
+  if (encoded) {
+    try {
+      const base64 = encoded[1].replace(/-/g, '+').replace(/_/g, '/')
+      const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
+      const bytes = Uint8Array.from(atob(padded), (character) => character.charCodeAt(0))
+      return `${new TextDecoder().decode(bytes)}${encoded[2] || ''}`
+    } catch {
+      return value
+    }
+  }
   return value.replace(/^\d{13}-/, '')
+}
+
+function safeStorageFileName(value) {
+  const extensionMatch = value.match(/\.([A-Za-z0-9]{1,8})$/)
+  const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : ''
+  const title = extension ? value.slice(0, -extension.length) : value
+  const bytes = new TextEncoder().encode(title)
+  let binary = ''
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
+  const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+  return `${Date.now()}--${encoded || 'track'}${extension}`
 }
 
 function parseProductionSheet(source) {
