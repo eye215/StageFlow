@@ -263,9 +263,11 @@ export default function App() {
   }
 
   function analyzeImport() {
-    const parsed = parseProductionSheet(importText)
+    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(importText)
+      ? parseScriptByMarkers(importText)
+      : parseProductionSheet(importText)
     setImportRows(parsed)
-    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 정리했어요.` : '번호로 시작하는 장면을 찾지 못했어요.')
+    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : '장면 번호나 SONG.NN 표기를 찾지 못했어요.')
   }
 
   async function analyzeImportWithAI() {
@@ -284,11 +286,11 @@ export default function App() {
         // The response body may already be consumed; use the SDK message instead.
       }
       if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
-        setNotice('AI 분석 실패: OpenAI API 사용 잔액이나 한도가 없습니다. OpenAI 결제 설정에서 API 크레딧을 추가해 주세요.')
+        applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.')
       } else if (/OPENAI_API_KEY/i.test(detail)) {
-        setNotice('AI 분석 실패: Supabase Edge Functions Secrets에 OPENAI_API_KEY를 확인해 주세요.')
+        applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.')
       } else {
-        setNotice(`AI 분석 실패: ${detail}`)
+        applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`)
       }
     } else {
       const parsed = normalizeAiScenes(data?.scenes)
@@ -296,6 +298,14 @@ export default function App() {
       setNotice(parsed.length ? `AI가 ${parsed.length}개 장면과 연결 정보를 정리했어요.` : 'AI 응답에서 장면을 찾지 못했어요.')
     }
     setAiAnalyzing(false)
+  }
+
+  function applyRuleFallback(message) {
+    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(importText)
+      ? parseScriptByMarkers(importText)
+      : parseProductionSheet(importText)
+    setImportRows(parsed)
+    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} 장면 번호나 SONG.NN 표기를 찾지 못했습니다.`)
   }
 
   async function saveImportedScenes() {
@@ -710,6 +720,62 @@ function cleanStoredFileName(value) {
     }
   }
   return value.replace(/^\d{13}-/, '')
+}
+
+function parseScriptByMarkers(source) {
+  const normalized = source
+    .replace(/\r/g, '')
+    .replace(/([\t ])(?=SONG[.\s_-]*\d+)/gi, '\n')
+  const lines = normalized.split('\n')
+  const markers = []
+  lines.forEach((line, index) => {
+    const match = line.trim().match(/^SONG[.\s_-]*(\d{1,3})\s*[:：.\-_]?\s*(.*)$/i)
+    if (match) markers.push({ index, number: Number(match[1]), title: match[2].trim() })
+  })
+
+  return markers.map((marker, markerIndex) => {
+    const end = markers[markerIndex + 1]?.index ?? lines.length
+    const segment = lines.slice(marker.index + 1, end).map((line) => line.trim()).filter(Boolean)
+    const speakers = new Set()
+    const props = []
+    const cues = []
+    const movement = []
+    const checks = []
+
+    segment.forEach((line) => {
+      const speaker = line.match(/^([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{0,18})\s*[:：]\s*\S/)
+      if (speaker && !/^(소품|대도구|조명|음향|영상|큐|의상|동선|안무)$/i.test(speaker[1].trim())) speakers.add(speaker[1].trim())
+
+      const propLine = line.match(/^(소품|대도구)\s*[:：]\s*(.+)$/i)
+      if (propLine) {
+        propLine[2].split(/\s*[\/|·]\s*|\s*,\s*/).filter(Boolean).forEach((name) => {
+          if (!/^(없음|미정|-)$/.test(name)) props.push({ kind: propLine[1] === '대도구' ? '대도구' : '소품', name: name.trim(), inBy: '', outBy: '', note: '담당자 확인 필요' })
+        })
+      }
+
+      const cueLine = line.match(/^(조명|음향|영상|마이크|무대|큐(?:사인)?)\s*[:：]\s*(.+)$/i)
+      if (cueLine) cues.push({ type: cueLine[1].replace('큐사인', '무대'), label: cueLine[2].trim(), trigger: /큐사인/i.test(cueLine[1]) ? cueLine[2].trim() : '' })
+      else if (/\b(GO|CUE)\b|큐사인|불이야/i.test(line)) cues.push({ type: '무대', label: line.slice(0, 100), trigger: line.match(/큐사인\s*[:：]?\s*(.+)/i)?.[1]?.trim() || '' })
+
+      if (/동선|안무/.test(line)) movement.push(line)
+      if (/확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(line)) checks.push(line)
+    })
+
+    const uniqueProps = props.filter((item, index) => props.findIndex((value) => value.kind === item.kind && value.name === item.name) === index)
+    return {
+      number: marker.number,
+      title: marker.title || `SONG ${marker.number}`,
+      main: [...speakers].join(' / '),
+      ensemble: '',
+      backstage: '',
+      music: marker.title || `SONG ${marker.number}`,
+      movement: movement.slice(0, 4).join(' · '),
+      status: ['규칙 기반 임시 정리', ...checks.slice(0, 3)].join(' · '),
+      props: uniqueProps,
+      costumes: [],
+      cues,
+    }
+  }).sort((a, b) => a.number - b.number)
 }
 
 function safeStorageFileName(value) {
