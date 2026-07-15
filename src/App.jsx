@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, FileAudio, Home, ListMusic, MapPin,
-  Music, Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  Music, Package, Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -9,6 +9,7 @@ import './import.css'
 import './music.css'
 import './dashboard.css'
 import './cast.css'
+import './props.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -50,6 +51,10 @@ export default function App() {
   const [castMembers, setCastMembers] = useState([])
   const [castForm, setCastForm] = useState({ name: '', roleName: '', type: '주연', notes: '' })
   const [showCastForm, setShowCastForm] = useState(false)
+  const [propItems, setPropItems] = useState([])
+  const [propForm, setPropForm] = useState({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
+  const [showPropForm, setShowPropForm] = useState(false)
+  const [propFilter, setPropFilter] = useState('전체')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -73,6 +78,7 @@ export default function App() {
     if (!selected) return
     loadScenes(selected.id)
     loadCastData(selected.id)
+    loadPropData(selected.id)
     setProductionTab('overview')
     setShowIndex(0)
   }, [selected])
@@ -385,6 +391,70 @@ export default function App() {
     await persistCastData(next)
   }
 
+  function propDataPath(productionId) {
+    return `${workspace.id}/${productionId}/data/props.json`
+  }
+
+  async function loadPropData(productionId) {
+    const { data, error } = await supabase.storage.from('stageflow-files').download(propDataPath(productionId))
+    if (error) return setPropItems([])
+    try {
+      const parsed = JSON.parse(await data.text())
+      setPropItems(Array.isArray(parsed.items) ? parsed.items : [])
+    } catch {
+      setPropItems([])
+    }
+  }
+
+  async function persistPropData(items) {
+    const body = new Blob([JSON.stringify({ items, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(propDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
+    if (error) {
+      setNotice(`소품 정보 저장 실패: ${error.message}`)
+      return false
+    }
+    setPropItems(items)
+    return true
+  }
+
+  async function addPropItem(event) {
+    event.preventDefault()
+    if (!propForm.name.trim()) return
+    setBusy(true)
+    const item = { id: crypto.randomUUID(), ...propForm, name: propForm.name.trim(), sceneNo: Number(propForm.sceneNo) || null, ready: false }
+    if (await persistPropData([...propItems, item])) {
+      setPropForm({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
+      setShowPropForm(false)
+      setNotice(`${item.name} 항목을 등록했어요.`)
+    }
+    setBusy(false)
+  }
+
+  async function removePropItem(id) {
+    if (!window.confirm('이 소품 정보를 삭제할까요?')) return
+    await persistPropData(propItems.filter((item) => item.id !== id))
+  }
+
+  async function togglePropReady(id) {
+    await persistPropData(propItems.map((item) => item.id === id ? { ...item, ready: !item.ready } : item))
+  }
+
+  async function importPropsFromScenes() {
+    const extracted = []
+    const pattern = /^- \[(소품|대도구)\]\s*(.*?)\s*·\s*In\s*(.*?)\s*·\s*Out\s*(.*?)(?:\s*·\s*(.*))?$/
+    scenes.forEach((scene) => {
+      String(scene.summary || '').split('\n').forEach((line) => {
+        const match = line.trim().match(pattern)
+        if (!match || !match[2] || match[2] === '없음') return
+        const item = { id: crypto.randomUUID(), kind: match[1], name: match[2].trim(), sceneNo: Number(scene.scene_no), inBy: match[3] === '-' ? '' : match[3].trim(), outBy: match[4] === '-' ? '' : match[4].trim(), note: (match[5] || '').trim(), ready: false }
+        const duplicate = [...propItems, ...extracted].some((value) => value.kind === item.kind && value.name === item.name && Number(value.sceneNo) === item.sceneNo)
+        if (!duplicate) extracted.push(item)
+      })
+    })
+    if (!extracted.length) return setNotice('장면 요약에서 새 소품·대도구를 찾지 못했어요.')
+    if (await persistPropData([...propItems, ...extracted])) setNotice(`${extracted.length}개 항목을 장면에서 가져왔어요.`)
+  }
+
   const progress = useMemo(() => Math.min(100, scenes.length * 10), [scenes])
   const defaultProduction = useMemo(() => productions.find((item) => item.id === defaultProductionId) || productions[0] || null, [productions, defaultProductionId])
   const homeProgress = useMemo(() => Math.min(100, homeScenes.length * 10), [homeScenes])
@@ -430,6 +500,9 @@ export default function App() {
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
       showCastForm={showCastForm} setShowCastForm={setShowCastForm}
       addCastMember={addCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene}
+      propItems={propItems} propForm={propForm} setPropForm={setPropForm}
+      showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
+      addPropItem={addPropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
     />
   )
 
@@ -500,17 +573,18 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, clos
 }
 
 function ProductionView(props) {
-  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene } = props
+  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   return <div className="app-shell">
     <header className="topbar"><button className="icon-button" onClick={goBack}><ChevronLeft /></button><div className="topbar-title"><span>{workspace.name}</span><strong>{production.title}</strong></div><span className="header-spacer" /></header>
     <main className="content production-content">
       <section className="production-cover"><div className="cover-glow" /><div className="cover-copy"><span className="status">준비 중</span><h1>{production.title}</h1><p><MapPin size={15} /> {production.venue || '공연 장소 미정'}</p><div className="cover-meta"><span>{production.performance_start_date || '공연일 미정'}</span>{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '공연 종료'}</strong>}</div></div></section>
-      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
+      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <><section className="metric-grid"><article className="metric-card"><span>준비도</span><strong>{progress}%</strong><div className="progress"><i style={{ width: `${progress}%` }} /></div></article><article className="metric-card"><span>등록 장면</span><strong>{scenes.length}</strong><small>Scenes</small></article></section><section className="quick-grid"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면 관리</span><small>{scenes.length}개</small></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><small>{castMembers.length}명</small></button><button onClick={() => setTab('show')}><Play /><span>공연 모드</span><small>GO 큐</small></button><button><Settings /><span>공연 설정</span><small>정보 관리</small></button></section></>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} remove={removeCastMember} toggleScene={toggleCastScene} busy={busy} />}
+      {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} upload={uploadOrganizedMusic} loading={uploadingMusic} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2><span>{current.summary || '등록된 장면 설명이 없습니다.'}</span></article><article className="next-cue"><span>NEXT</span><strong>{next ? next.title : 'Curtain Call'}</strong></article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
@@ -551,6 +625,19 @@ function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, subm
     <section className="cast-summary"><article><strong>{members.length}</strong><span>전체 인원</span></article><article><strong>{members.filter((member) => member.type === '주연').length}</strong><span>주연</span></article><article><strong>{members.filter((member) => member.type === '앙상블').length}</strong><span>앙상블</span></article></section>
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     <div className="cast-list">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{members.map((member) => <article className="cast-card" key={member.id}><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.type}</span><h3>{member.name}</h3><p>{member.roleName || '배역 미정'}</p></div><button className="icon-button danger" onClick={() => remove(member.id)}><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장 장면</strong><span>{(member.sceneNumbers || []).length}개 선택</span></div><div className="scene-chip-list">{scenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span>{scene.scene_no}</span>{scene.title}</button> })}{!scenes.length && <small>장면을 먼저 등록해주세요.</small>}</div></article>)}</div>
+  </section>
+}
+function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filter, setFilter, submit, remove, toggleReady, importFromScenes, busy }) {
+  const visible = items.filter((item) => filter === '전체' || item.kind === filter)
+  const readyCount = items.filter((item) => item.ready).length
+  const sceneTitle = (sceneNo) => scenes.find((scene) => Number(scene.scene_no) === Number(sceneNo))?.title || '장면 미지정'
+  return <section className="props-panel">
+    <div className="section-heading"><div><p className="eyebrow">PROPS & SET PIECES</p><h2>소품·대도구</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 항목</button></div>
+    <section className="prop-summary"><article><strong>{items.length}</strong><span>전체 항목</span></article><article><strong>{items.filter((item) => item.kind === '소품').length}</strong><span>소품</span></article><article><strong>{readyCount}/{items.length}</strong><span>준비 완료</span></article></section>
+    <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 자동으로 가져오기</strong><span>PDF 자동정리 결과의 소품·대도구와 In/Out 담당자를 불러옵니다.</span></div><ChevronRight /></button>
+    {showForm && <form className="panel form-grid prop-form" onSubmit={submit}><div className="two-col"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><div className="two-col"><input placeholder="In 담당자" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /><input placeholder="Out 담당자" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></div><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary" disabled={busy}>항목 저장</button></form>}
+    <div className="prop-filters">{['전체', '소품', '대도구'].map((value) => <button key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{value}</button>)}</div>
+    <div className="prop-list">{!visible.length && <Empty icon={<Package />} title="등록된 항목이 없어요" description="직접 추가하거나 장면 자동정리 결과에서 한 번에 가져오세요." action={() => setShowForm(true)} />}{visible.map((item) => <article className={item.ready ? 'prop-card ready' : 'prop-card'} key={item.id}><button className="ready-toggle" onClick={() => toggleReady(item.id)} aria-label="준비 상태 변경"><CheckCircle2 /></button><div className="prop-copy"><div><span className={`prop-kind ${item.kind === '대도구' ? 'set-piece' : ''}`}>{item.kind}</span>{item.sceneNo && <span className="prop-scene">{item.sceneNo}. {sceneTitle(item.sceneNo)}</span>}</div><h3>{item.name}</h3><div className="prop-assignees"><span><b>IN</b>{item.inBy || '미정'}</span><span><b>OUT</b>{item.outBy || '미정'}</span></div>{item.note && <p>{item.note}</p>}</div><button className="icon-button danger" onClick={() => remove(item.id)}><Trash2 size={17} /></button></article>)}</div>
   </section>
 }
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
