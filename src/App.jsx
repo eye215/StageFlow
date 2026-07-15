@@ -276,7 +276,20 @@ export default function App() {
       body: { text: importText.slice(0, 120000), productionTitle: selected.title },
     })
     if (error) {
-      setNotice(`AI 분석 실패: ${error.message}. Supabase의 analyze-production 함수가 배포됐는지 확인해 주세요.`)
+      let detail = error.message
+      try {
+        const payload = await error.context?.json()
+        detail = payload?.error || detail
+      } catch {
+        // The response body may already be consumed; use the SDK message instead.
+      }
+      if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
+        setNotice('AI 분석 실패: OpenAI API 사용 잔액이나 한도가 없습니다. OpenAI 결제 설정에서 API 크레딧을 추가해 주세요.')
+      } else if (/OPENAI_API_KEY/i.test(detail)) {
+        setNotice('AI 분석 실패: Supabase Edge Functions Secrets에 OPENAI_API_KEY를 확인해 주세요.')
+      } else {
+        setNotice(`AI 분석 실패: ${detail}`)
+      }
     } else {
       const parsed = normalizeAiScenes(data?.scenes)
       setImportRows(parsed)
