@@ -4,6 +4,7 @@ import {
   Play, Plus, Settings, Sparkles, Theater, Trash2, Users,
 } from 'lucide-react'
 import { supabase } from './supabase'
+import './auth.css'
 
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
 const emptyScene = { title: '', act_no: 1, scene_no: 1, summary: '' }
@@ -13,6 +14,9 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [authMode, setAuthMode] = useState('signup')
   const [notice, setNotice] = useState('')
   const [workspace, setWorkspace] = useState(null)
   const [workspaceName, setWorkspaceName] = useState('')
@@ -51,15 +55,24 @@ export default function App() {
     setShowIndex(0)
   }, [selected])
 
-  async function sendMagicLink(event) {
+  async function submitAuth(event) {
     event.preventDefault()
+    if (authMode === 'signup' && password !== passwordConfirm) {
+      setNotice('비밀번호가 서로 달라요.')
+      return
+    }
+    if (password.length < 6) {
+      setNotice('비밀번호는 6자 이상 입력해주세요.')
+      return
+    }
     setBusy(true)
-    setNotice('로그인 링크를 보내는 중이에요…')
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    })
-    setNotice(error ? `로그인 실패: ${error.message}` : '메일함에서 StageFlow 로그인 링크를 눌러주세요.')
+    setNotice(authMode === 'signup' ? '계정을 만드는 중이에요…' : '로그인 중이에요…')
+    const result = authMode === 'signup'
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password })
+    if (result.error) setNotice(`${authMode === 'signup' ? '회원가입' : '로그인'} 실패: ${result.error.message}`)
+    else if (authMode === 'signup' && !result.data.session) setNotice('계정은 만들어졌지만 이메일 확인 설정이 켜져 있어요. Supabase에서 Confirm email을 꺼주세요.')
+    else setNotice(authMode === 'signup' ? '가입 완료! StageFlow를 시작합니다.' : '로그인 완료!')
     setBusy(false)
   }
 
@@ -167,7 +180,7 @@ export default function App() {
   }, [selected])
 
   if (loading) return <Loading />
-  if (!session) return <Auth email={email} setEmail={setEmail} submit={sendMagicLink} notice={notice} busy={busy} />
+  if (!session) return <Auth email={email} setEmail={setEmail} password={password} setPassword={setPassword} passwordConfirm={passwordConfirm} setPasswordConfirm={setPasswordConfirm} authMode={authMode} setAuthMode={setAuthMode} submit={submitAuth} notice={notice} busy={busy} />
   if (!workspace) return (
     <main className="auth-page"><section className="auth-card">
       <BrandMark icon={<Sparkles size={30} />} />
@@ -220,11 +233,18 @@ export default function App() {
   )
 }
 
-function Auth({ email, setEmail, submit, notice, busy }) {
+function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, busy }) {
   return <main className="auth-page"><section className="auth-card">
     <BrandMark icon={<Theater size={34} />} /><p className="eyebrow">MUSICAL PRODUCTION OS</p><h1>StageFlow</h1>
     <p className="muted">공연 준비부터 실전 큐 진행까지, 하나의 흐름으로.</p>
-    <form onSubmit={submit} className="stack"><label htmlFor="email">이메일</label><input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /><button className="primary" disabled={busy}>{busy ? '보내는 중…' : '로그인 링크 받기'}</button></form>
+    <div className="auth-tabs"><button className={authMode === 'signup' ? 'active' : ''} onClick={() => { setAuthMode('signup'); setNotice('') }}>회원가입</button><button className={authMode === 'login' ? 'active' : ''} onClick={() => { setAuthMode('login'); setNotice('') }}>로그인</button></div>
+    <form onSubmit={submit} className="stack">
+      <label htmlFor="email">이메일</label><input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
+      <label htmlFor="password">비밀번호</label><input id="password" type="password" required minLength="6" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="6자 이상 입력" />
+      {authMode === 'signup' && <><label htmlFor="password-confirm">비밀번호 확인</label><input id="password-confirm" type="password" required minLength="6" autoComplete="new-password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} placeholder="비밀번호를 한 번 더 입력" /></>}
+      <button className="primary" disabled={busy}>{busy ? '처리 중…' : authMode === 'signup' ? '30초 만에 가입하기' : '로그인'}</button>
+    </form>
+    <p className="auth-help">로그인 링크를 기다릴 필요 없이 이메일과 비밀번호로 바로 시작할 수 있어요.</p>
     {notice && <p className="notice">{notice}</p>}
   </section></main>
 }

@@ -1,0 +1,26 @@
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-top: 24px;
+  padding: 5px;
+  border-radius: 15px;
+  background: #0d1424;
+}
+
+.auth-tabs button {
+  border: 0;
+  border-radius: 11px;
+  padding: 11px;
+  background: transparent;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.auth-tabs button.active {
+  background: #2b3350;
+  color: #fff;
+}
+
+.auth-card .stack { margin-top: 16px; }
+.auth-help { margin: 14px 0 0; color: #64748b; font-size: 12px; line-height: 1.5; }
