@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarDays, ChevronLeft, LogOut, Plus, Sparkles, Theater, Trash2 } from 'lucide-react'
+import {
+  CalendarDays, ChevronLeft, Clapperboard, Home, LogOut, MapPin, Menu,
+  MoreHorizontal, Play, Plus, Settings, Sparkles, Theater, Trash2, Users
+} from 'lucide-react'
 import { supabase } from './supabase'
 
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
@@ -19,6 +22,9 @@ export default function App() {
   const [sceneForm, setSceneForm] = useState(emptyScene)
   const [showProductionForm, setShowProductionForm] = useState(false)
   const [showSceneForm, setShowSceneForm] = useState(false)
+  const [activeTab, setActiveTab] = useState('home')
+  const [productionTab, setProductionTab] = useState('overview')
+  const [showIndex, setShowIndex] = useState(0)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -39,7 +45,11 @@ export default function App() {
   }, [session])
 
   useEffect(() => {
-    if (selected) loadScenes(selected.id)
+    if (selected) {
+      loadScenes(selected.id)
+      setProductionTab('overview')
+      setShowIndex(0)
+    }
   }, [selected])
 
   async function sendMagicLink(e) {
@@ -129,14 +139,18 @@ export default function App() {
   }
 
   async function deleteScene(id) {
+    if (!confirm('이 장면을 삭제할까요?')) return
     await supabase.from('scenes').delete().eq('id', id)
     await loadScenes(selected.id)
   }
 
-  const progress = useMemo(() => {
-    if (!selected) return 0
-    return Math.min(100, scenes.length * 10)
-  }, [selected, scenes])
+  const progress = useMemo(() => Math.min(100, scenes.length * 10), [scenes])
+  const currentScene = scenes[showIndex]
+  const nextScene = scenes[showIndex + 1]
+  const daysLeft = useMemo(() => {
+    if (!selected?.performance_start_date) return null
+    return Math.ceil((new Date(selected.performance_start_date) - new Date()) / 86400000)
+  }, [selected])
 
   if (loading) return <div className="center"><div className="spinner" /></div>
 
@@ -147,7 +161,7 @@ export default function App() {
           <div className="brand-mark"><Theater size={34} /></div>
           <p className="eyebrow">MUSICAL PRODUCTION OS</p>
           <h1>StageFlow</h1>
-          <p className="muted">장면, 배우, 의상, 소품과 큐를 한곳에서 관리하세요.</p>
+          <p className="muted">공연의 모든 흐름을 한곳에서 관리하세요.</p>
           <form onSubmit={sendMagicLink} className="stack">
             <label>이메일</label>
             <input type="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" />
@@ -183,45 +197,91 @@ export default function App() {
         <header className="topbar">
           <button className="icon-button" onClick={() => setSelected(null)}><ChevronLeft /></button>
           <div className="topbar-title"><span>{workspace.name}</span><strong>{selected.title}</strong></div>
-          <button className="icon-button" onClick={() => supabase.auth.signOut()}><LogOut /></button>
+          <button className="icon-button"><MoreHorizontal /></button>
         </header>
 
-        <main className="content">
-          <section className="hero production-hero">
-            <p className="eyebrow">PRODUCTION</p>
-            <h1>{selected.title}</h1>
-            <p>{selected.venue || '공연 장소 미정'} · {selected.performance_start_date || '공연일 미정'}</p>
-            <div className="progress"><span style={{ width: `${progress}%` }} /></div>
-            <small>준비도 {progress}% · 등록 장면 {scenes.length}개</small>
+        <main className="content production-content">
+          <section className="production-cover">
+            <div className="cover-glow" />
+            <div className="cover-copy">
+              <span className="status">{selected.status || 'preparing'}</span>
+              <h1>{selected.title}</h1>
+              <p><MapPin size={15} /> {selected.venue || '공연 장소 미정'}</p>
+              <div className="cover-meta">
+                <span>{selected.performance_start_date || '공연일 미정'}</span>
+                {daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '공연 종료'}</strong>}
+              </div>
+            </div>
           </section>
 
-          <div className="section-heading">
-            <div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div>
-            <button className="primary compact" onClick={() => setShowSceneForm(v => !v)}><Plus size={18} /> 장면</button>
-          </div>
+          <nav className="segmented">
+            <button className={productionTab === 'overview' ? 'active' : ''} onClick={() => setProductionTab('overview')}>홈</button>
+            <button className={productionTab === 'scenes' ? 'active' : ''} onClick={() => setProductionTab('scenes')}>장면</button>
+            <button className={productionTab === 'show' ? 'active' : ''} onClick={() => setProductionTab('show')}>공연모드</button>
+          </nav>
 
-          {showSceneForm && (
-            <form className="panel form-grid" onSubmit={createScene}>
-              <input required placeholder="장면 제목" value={sceneForm.title} onChange={e => setSceneForm({ ...sceneForm, title: e.target.value })} />
-              <div className="two-col">
-                <input type="number" min="1" value={sceneForm.act_no} onChange={e => setSceneForm({ ...sceneForm, act_no: Number(e.target.value) })} placeholder="Act" />
-                <input type="number" min="0" step="0.1" value={sceneForm.scene_no} onChange={e => setSceneForm({ ...sceneForm, scene_no: Number(e.target.value) })} placeholder="Scene" />
-              </div>
-              <textarea placeholder="장면 설명" value={sceneForm.summary} onChange={e => setSceneForm({ ...sceneForm, summary: e.target.value })} />
-              <button className="primary">저장</button>
-            </form>
+          {productionTab === 'overview' && (
+            <>
+              <section className="metric-grid">
+                <article className="metric-card"><span>준비도</span><strong>{progress}%</strong><div className="progress"><i style={{ width: `${progress}%` }} /></div></article>
+                <article className="metric-card"><span>등록 장면</span><strong>{scenes.length}</strong><small>Scene</small></article>
+              </section>
+              <section className="quick-grid">
+                <button onClick={() => setProductionTab('scenes')}><Clapperboard /><span>장면 관리</span><small>{scenes.length}개</small></button>
+                <button><Users /><span>배우·배역</span><small>준비 중</small></button>
+                <button><Play /><span>큐시트</span><small>준비 중</small></button>
+                <button><Settings /><span>공연 설정</span><small>정보 관리</small></button>
+              </section>
+              <div className="section-heading compact-heading"><div><p className="eyebrow">NEXT</p><h2>다음 장면</h2></div></div>
+              {scenes[0] ? <SceneCard scene={scenes[0]} onDelete={deleteScene} /> : <EmptyScene onAdd={() => { setProductionTab('scenes'); setShowSceneForm(true) }} />}
+            </>
           )}
 
-          <section className="scene-list">
-            {scenes.length === 0 && <div className="empty"><Theater size={34} /><strong>아직 장면이 없어요</strong><span>첫 장면을 등록해 공연 흐름을 만들어보세요.</span></div>}
-            {scenes.map(scene => (
-              <article className="scene-card" key={scene.id}>
-                <div className="scene-index">{scene.scene_no}</div>
-                <div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{scene.summary || '설명 없음'}</p></div>
-                <button className="icon-button danger" onClick={() => deleteScene(scene.id)}><Trash2 size={18} /></button>
-              </article>
-            ))}
-          </section>
+          {productionTab === 'scenes' && (
+            <>
+              <div className="section-heading">
+                <div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div>
+                <button className="primary compact" onClick={() => setShowSceneForm(v => !v)}><Plus size={18} /> 장면</button>
+              </div>
+              {showSceneForm && (
+                <form className="panel form-grid" onSubmit={createScene}>
+                  <input required placeholder="장면 제목" value={sceneForm.title} onChange={e => setSceneForm({ ...sceneForm, title: e.target.value })} />
+                  <div className="two-col">
+                    <input type="number" min="1" value={sceneForm.act_no} onChange={e => setSceneForm({ ...sceneForm, act_no: Number(e.target.value) })} placeholder="Act" />
+                    <input type="number" min="0" step="0.1" value={sceneForm.scene_no} onChange={e => setSceneForm({ ...sceneForm, scene_no: Number(e.target.value) })} placeholder="Scene" />
+                  </div>
+                  <textarea placeholder="장면 설명" value={sceneForm.summary} onChange={e => setSceneForm({ ...sceneForm, summary: e.target.value })} />
+                  <button className="primary">저장</button>
+                </form>
+              )}
+              <section className="scene-list">
+                {scenes.length === 0 && <EmptyScene onAdd={() => setShowSceneForm(true)} />}
+                {scenes.map(scene => <SceneCard key={scene.id} scene={scene} onDelete={deleteScene} />)}
+              </section>
+            </>
+          )}
+
+          {productionTab === 'show' && (
+            <section className="show-mode">
+              {!currentScene ? (
+                <EmptyScene onAdd={() => { setProductionTab('scenes'); setShowSceneForm(true) }} />
+              ) : (
+                <>
+                  <div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div>
+                  <article className="current-scene">
+                    <p>ACT {currentScene.act_no} · SCENE {currentScene.scene_no}</p>
+                    <h2>{currentScene.title}</h2>
+                    <span>{currentScene.summary || '장면 설명이 없습니다.'}</span>
+                  </article>
+                  <article className="next-cue"><span>NEXT</span><strong>{nextScene ? nextScene.title : 'Curtain Call'}</strong></article>
+                  <div className="show-actions">
+                    <button disabled={showIndex === 0} onClick={() => setShowIndex(i => Math.max(0, i - 1))}>이전</button>
+                    <button className="go-button" onClick={() => setShowIndex(i => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
         </main>
       </div>
     )
@@ -229,16 +289,24 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
+      <header className="topbar home-topbar">
         <div className="brand-inline"><Theater size={24} /><strong>StageFlow</strong></div>
-        <button className="icon-button" onClick={() => supabase.auth.signOut()}><LogOut /></button>
+        <button className="avatar" onClick={() => supabase.auth.signOut()}>{session.user.email?.[0]?.toUpperCase() || 'U'}</button>
       </header>
-      <main className="content">
-        <section className="hero">
-          <p className="eyebrow">WELCOME BACK</p>
-          <h1>{workspace.name}</h1>
-          <p>공연 준비 현황을 한눈에 확인하세요.</p>
-        </section>
+      <main className="content home-content">
+        {activeTab === 'home' && (
+          <>
+            <section className="welcome-block">
+              <p className="eyebrow">WELCOME BACK</p>
+              <h1>안녕하세요 👋</h1>
+              <p>{workspace.name}의 공연 준비를 이어가세요.</p>
+            </section>
+            <section className="today-card">
+              <div><span>오늘의 준비</span><h3>{productions.length ? '공연 흐름 점검하기' : '첫 공연을 만들어보세요'}</h3></div>
+              <Sparkles />
+            </section>
+          </>
+        )}
 
         <div className="section-heading">
           <div><p className="eyebrow">PRODUCTIONS</p><h2>내 공연</h2></div>
@@ -256,18 +324,40 @@ export default function App() {
 
         <section className="production-grid">
           {productions.length === 0 && <div className="empty"><CalendarDays size={34} /><strong>아직 공연이 없어요</strong><span>새 공연을 만들고 준비를 시작하세요.</span></div>}
-          {productions.map(item => (
+          {productions.map((item, index) => (
             <article className="production-card" key={item.id} onClick={() => setSelected(item)}>
-              <div className="card-top"><span className="status">{item.status}</span><button className="icon-button danger" onClick={e => { e.stopPropagation(); deleteProduction(item.id) }}><Trash2 size={17} /></button></div>
-              <div className="poster"><Theater size={34} /></div>
-              <h3>{item.title}</h3>
-              <p>{item.venue || '장소 미정'}</p>
-              <small>{item.performance_start_date || '공연일 미정'}</small>
+              <div className={`poster poster-${index % 3}`}><Theater size={38} /></div>
+              <div className="production-info">
+                <div className="card-top"><span className="status">{item.status || 'preparing'}</span><button className="icon-button danger" onClick={e => { e.stopPropagation(); deleteProduction(item.id) }}><Trash2 size={17} /></button></div>
+                <h3>{item.title}</h3>
+                <p>{item.venue || '장소 미정'}</p>
+                <small>{item.performance_start_date || '공연일 미정'}</small>
+              </div>
             </article>
           ))}
         </section>
         {message && <p className="notice">{message}</p>}
       </main>
+      <nav className="bottom-nav">
+        <button className={activeTab === 'home' ? 'active' : ''} onClick={() => setActiveTab('home')}><Home /><span>홈</span></button>
+        <button className={activeTab === 'productions' ? 'active' : ''} onClick={() => setActiveTab('productions')}><Theater /><span>공연</span></button>
+        <button><Menu /><span>자료</span></button>
+        <button><Settings /><span>설정</span></button>
+      </nav>
     </div>
   )
+}
+
+function SceneCard({ scene, onDelete }) {
+  return (
+    <article className="scene-card">
+      <div className="scene-index">{scene.scene_no}</div>
+      <div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{scene.summary || '설명 없음'}</p></div>
+      <button className="icon-button danger" onClick={() => onDelete(scene.id)}><Trash2 size={18} /></button>
+    </article>
+  )
+}
+
+function EmptyScene({ onAdd }) {
+  return <div className="empty"><Clapperboard size={34} /><strong>아직 장면이 없어요</strong><span>첫 장면을 등록해 공연 흐름을 만들어보세요.</span><button className="primary compact" onClick={onAdd}><Plus size={17} /> 장면 추가</button></div>
 }
