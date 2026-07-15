@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarDays, CheckCircle2, ChevronLeft, Clapperboard, FileAudio, Home, ListMusic, MapPin,
-  Music, Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, Users, WandSparkles,
+  Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, FileAudio, Home, ListMusic, MapPin,
+  Music, Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
 import './import.css'
 import './music.css'
+import './dashboard.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -41,6 +42,10 @@ export default function App() {
   const [pendingMusic, setPendingMusic] = useState([])
   const [musicByScene, setMusicByScene] = useState({})
   const [uploadingMusic, setUploadingMusic] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
+  const [defaultProductionId, setDefaultProductionId] = useState(() => window.localStorage.getItem('stageflow:default-production') || '')
+  const [homeScenes, setHomeScenes] = useState([])
+  const [homeMusicCount, setHomeMusicCount] = useState(0)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -70,6 +75,10 @@ export default function App() {
   useEffect(() => {
     if (selected && productionTab === 'music') loadMusic(selected.id)
   }, [selected, productionTab, scenes.length])
+
+  useEffect(() => {
+    if (defaultProductionId && productions.some((item) => item.id === defaultProductionId)) loadHomeOverview(defaultProductionId)
+  }, [defaultProductionId, productions])
 
   async function submitAuth(event) {
     event.preventDefault()
@@ -126,7 +135,36 @@ export default function App() {
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
     if (error) setNotice(`공연을 불러오지 못했어요: ${error.message}`)
-    else setProductions(data || [])
+    else {
+      const next = data || []
+      setProductions(next)
+      const saved = window.localStorage.getItem('stageflow:default-production')
+      if (!saved || !next.some((item) => item.id === saved)) {
+        const firstId = next[0]?.id || ''
+        setDefaultProductionId(firstId)
+        if (firstId) window.localStorage.setItem('stageflow:default-production', firstId)
+      }
+    }
+  }
+
+  function chooseDefaultProduction(id) {
+    setDefaultProductionId(id)
+    window.localStorage.setItem('stageflow:default-production', id)
+    setProfileOpen(false)
+    setNotice('기본 공연을 변경했어요.')
+  }
+
+  async function loadHomeOverview(productionId) {
+    const { data } = await supabase.from('scenes').select('*').eq('production_id', productionId).order('sort_order').order('scene_no')
+    const nextScenes = data || []
+    setHomeScenes(nextScenes)
+    if (!workspace || !nextScenes.length) return setHomeMusicCount(0)
+    const counts = await Promise.all(nextScenes.map(async (scene) => {
+      const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
+      const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
+      return (files || []).filter((file) => file.id).length
+    }))
+    setHomeMusicCount(counts.reduce((sum, value) => sum + value, 0))
   }
 
   async function createProduction(event) {
@@ -289,6 +327,12 @@ export default function App() {
   }
 
   const progress = useMemo(() => Math.min(100, scenes.length * 10), [scenes])
+  const defaultProduction = useMemo(() => productions.find((item) => item.id === defaultProductionId) || productions[0] || null, [productions, defaultProductionId])
+  const homeProgress = useMemo(() => Math.min(100, homeScenes.length * 10), [homeScenes])
+  const homeDaysLeft = useMemo(() => {
+    if (!defaultProduction?.performance_start_date) return null
+    return Math.ceil((new Date(`${defaultProduction.performance_start_date}T00:00:00`) - new Date()) / 86400000)
+  }, [defaultProduction])
   const daysLeft = useMemo(() => {
     if (!selected?.performance_start_date) return null
     return Math.ceil((new Date(`${selected.performance_start_date}T00:00:00`) - new Date()) / 86400000)
@@ -331,25 +375,38 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-inline"><Theater size={24} /><strong>StageFlow</strong></div>
-        <button className="avatar" onClick={() => supabase.auth.signOut()} aria-label="로그아웃">
+        <button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 기본 공연 설정">
           {session.user.email?.[0]?.toUpperCase() || 'U'}
         </button>
       </header>
-      <main className="content">
+      <main className="content home-dashboard">
         <section className="welcome-block">
-          <p className="eyebrow">WELCOME BACK</p><h1>오늘도 무대를 완성해봐요.</h1>
-          <p>{workspace.name}의 공연 준비 현황입니다.</p>
+          <p className="eyebrow">TODAY'S STAGE</p><h1>오늘의 공연 준비</h1>
+          <p>{workspace.name} · 해야 할 일을 빠르게 확인하세요.</p>
         </section>
-        <section className="today-card"><div><span>오늘의 StageFlow</span><h3>{productions.length ? `${productions.length}개 공연을 준비 중이에요` : '첫 공연을 만들어보세요'}</h3></div><Sparkles /></section>
-        <div className="section-heading"><div><p className="eyebrow">PRODUCTIONS</p><h2>내 공연</h2></div><button className="primary compact" onClick={() => setShowProductionForm((v) => !v)}><Plus size={18} /> 공연</button></div>
+        {defaultProduction ? <>
+          <section className="focus-production" onClick={() => setSelected(defaultProduction)}>
+            <div className="focus-top"><span className="status">기본 공연</span>{homeDaysLeft !== null && <strong>{homeDaysLeft >= 0 ? `D-${homeDaysLeft}` : '공연 종료'}</strong>}</div>
+            <h2>{defaultProduction.title}</h2><p><MapPin size={15} /> {defaultProduction.venue || '공연 장소 미정'}</p>
+            <div className="focus-progress"><div><span>전체 준비도</span><b>{homeProgress}%</b></div><div className="progress"><i style={{ width: `${homeProgress}%` }} /></div></div>
+            <div className="focus-open">공연 준비 열기 <ChevronRight size={18} /></div>
+          </section>
+          <section className="home-metrics"><article><Clapperboard /><span>등록 장면</span><strong>{homeScenes.length}</strong></article><article><Music /><span>음악 파일</span><strong>{homeMusicCount}</strong></article><article><Clock3 /><span>정리 필요</span><strong>{Math.max(0, 10 - homeScenes.length)}</strong></article></section>
+          <div className="section-heading home-section-heading"><div><p className="eyebrow">PREPARATION</p><h2>바로 준비하기</h2></div></div>
+          <section className="prep-actions"><button onClick={() => setSelected(defaultProduction)}><WandSparkles /><div><strong>PDF·표 자동정리</strong><span>장면과 소품을 한 번에</span></div><ChevronRight /></button><button onClick={() => setSelected(defaultProduction)}><FileAudio /><div><strong>넘버 음악 정리</strong><span>여러 파일 자동 분류</span></div><ChevronRight /></button><button onClick={() => setSelected(defaultProduction)}><Play /><div><strong>공연모드 점검</strong><span>장면 순서대로 GO</span></div><ChevronRight /></button></section>
+          <div className="section-heading home-section-heading"><div><p className="eyebrow">RECENT SCENES</p><h2>최근 장면</h2></div><button className="text-button" onClick={() => setSelected(defaultProduction)}>전체 보기</button></div>
+          <section className="home-scene-list">{homeScenes.slice(0, 4).map((scene) => <button key={scene.id} onClick={() => setSelected(defaultProduction)}><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>ACT {scene.act_no}</small></div><ChevronRight /></button>)}{!homeScenes.length && <Empty icon={<Clapperboard />} title="등록된 장면이 없어요" description="자동정리에서 공연표를 넣어보세요." action={() => setSelected(defaultProduction)} />}</section>
+        </> : <section className="today-card"><div><span>첫 번째 준비</span><h3>공연을 만들고 무대 준비를 시작하세요.</h3></div><Sparkles /></section>}
+        <div className="section-heading"><div><p className="eyebrow">ALL PRODUCTIONS</p><h2>다른 공연</h2></div><button className="primary compact" onClick={() => setShowProductionForm((v) => !v)}><Plus size={18} /> 공연</button></div>
         {showProductionForm && <ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} />}
         <section className="production-grid">
           {!productions.length && <Empty icon={<CalendarDays />} title="아직 공연이 없어요" description="첫 공연을 만들고 준비를 시작해보세요." />}
-          {productions.map((item, index) => <ProductionCard key={item.id} item={item} index={index} open={() => setSelected(item)} remove={() => deleteProduction(item.id)} />)}
+          {productions.filter((item) => item.id !== defaultProduction?.id).map((item, index) => <ProductionCard key={item.id} item={item} index={index} open={() => setSelected(item)} remove={() => deleteProduction(item.id)} />)}
         </section>
         {notice && <p className="notice">{notice}</p>}
       </main>
       <nav className="bottom-nav"><button className="active"><Home /><span>홈</span></button><button><Theater /><span>공연</span></button><button><Users /><span>팀</span></button><button><Settings /><span>설정</span></button></nav>
+      {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
     </div>
   )
 }
@@ -368,6 +425,16 @@ function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPass
     <p className="auth-help">로그인 링크를 기다릴 필요 없이 이메일과 비밀번호로 바로 시작할 수 있어요.</p>
     {notice && <p className="notice">{notice}</p>}
   </section></main>
+}
+
+function ProfileSheet({ session, workspace, productions, defaultId, choose, close, logout }) {
+  return <div className="sheet-backdrop" onClick={close}><section className="profile-sheet" onClick={(event) => event.stopPropagation()}>
+    <div className="sheet-handle" /><div className="profile-head"><div className="profile-avatar"><UserRound /></div><div><strong>{session.user.email?.split('@')[0] || 'StageFlow 사용자'}</strong><span>{session.user.email}</span></div><button className="icon-button" onClick={close}><X size={19} /></button></div>
+    <div className="profile-workspace"><Users size={18} /><div><span>현재 팀</span><strong>{workspace.name}</strong></div></div>
+    <div className="sheet-title"><div><p className="eyebrow">DEFAULT PRODUCTION</p><h3>기본 공연 선택</h3></div><small>홈 화면에 표시할 공연</small></div>
+    <div className="default-production-list">{productions.map((item) => <button className={item.id === defaultId ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><div className="production-radio">{item.id === defaultId && <i />}</div><div><strong>{item.title}</strong><span>{item.venue || '장소 미정'} · {item.performance_start_date || '공연일 미정'}</span></div>{item.id === defaultId && <CheckCircle2 />}</button>)}</div>
+    <button className="logout-button" onClick={logout}>로그아웃</button>
+  </section></div>
 }
 
 function ProductionView(props) {
