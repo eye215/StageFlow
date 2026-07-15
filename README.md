@@ -1,6 +1,6 @@
 # StageFlow
 
-뮤지컬·공연 준비와 운영을 한곳에서 관리하는 모바일 우선 웹앱입니다.
+뮤지컬 공연의 준비와 실전 진행을 한곳에서 관리하는 모바일 우선 웹앱입니다.
 
 ## 현재 구현
 
@@ -8,8 +8,9 @@
 - 팀 작업공간 생성
 - 공연 생성·조회·삭제
 - 공연별 장면 생성·조회·삭제
-- 공연 준비도 표시
-- iPhone 대응 반응형 UI
+- 공연 준비도와 D-day 표시
+- 장면 단위 공연 모드와 GO 진행
+- iPhone 안전 영역을 포함한 반응형 UI
 
 ## 실행
 
@@ -18,14 +19,11 @@ npm install
 npm run dev
 ```
 
-## Supabase
+루트에 `.env` 파일을 만들고 다음 값을 설정합니다.
 
-현재 프로젝트는 StageFlow Supabase 스키마의 다음 항목을 사용합니다.
+```env
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=sb_publishable_xxx
+```
 
-- `workspace_members`
-- `workspaces`
-- `productions`
-- `scenes`
-- `create_workspace(workspace_name)` RPC
-
-Supabase Authentication의 Redirect URL에는 로컬 및 실제 배포 주소를 추가해야 합니다.
+앱은 Supabase의 `workspaces`, `workspace_members`, `productions`, `scenes` 테이블과 `create_workspace(workspace_name)` RPC를 사용합니다.
