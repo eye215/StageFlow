@@ -1,5 +1,4 @@
-import { cp, mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { cp, mkdir, readdir, rename, writeFile } from 'node:fs/promises'
 
 const dist = new URL('../dist/', import.meta.url)
 const client = new URL('../dist/client/', import.meta.url)
@@ -16,11 +15,20 @@ await mkdir(server, { recursive: true })
 await writeFile(new URL('../dist/server/index.js', import.meta.url), `export default {
   async fetch(request, env) {
     const response = await env.ASSETS.fetch(request)
-    if (response.status !== 404) return response
+    if (response.status !== 404) return withFreshHtml(response)
     const url = new URL(request.url)
     url.pathname = '/index.html'
-    return env.ASSETS.fetch(new Request(url, request))
+    return withFreshHtml(await env.ASSETS.fetch(new Request(url, request)))
   }
+}
+
+function withFreshHtml(response) {
+  if (!response.headers.get('content-type')?.includes('text/html')) return response
+  const headers = new Headers(response.headers)
+  headers.set('Cache-Control', 'no-store, no-cache, must-revalidate')
+  headers.set('Pragma', 'no-cache')
+  headers.set('Expires', '0')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
 }\n`)
 
 await mkdir(new URL('../dist/.openai/', import.meta.url), { recursive: true })
