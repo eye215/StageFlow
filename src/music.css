@@ -1,0 +1,24 @@
+.segmented-five { grid-template-columns: repeat(5, 1fr); }
+.segmented-five button { padding-inline: 5px; font-size: 12px; }
+.music-icon { background: linear-gradient(135deg,#db2777,#7c3aed); }
+.music-upload { background: rgba(219,39,119,.07); border-color: rgba(244,114,182,.35); }
+.music-file-list,.music-library,.audio-list { display: grid; gap: 9px; }
+.music-file-list article { display: flex; align-items: center; gap: 11px; padding: 13px; border: 1px solid rgba(255,255,255,.08); border-radius: 15px; background: rgba(15,23,42,.75); }
+.music-file-list article>svg { flex: 0 0 auto; color: #a5b4fc; }
+.music-file-list article div { min-width: 0; display: grid; gap: 4px; }
+.music-file-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.music-file-list span { color: #86efac; font-size: 11px; }
+.music-file-list .unmatched { border-color: rgba(251,191,36,.22); }
+.music-file-list .unmatched span { color: #fbbf24; }
+.music-scene { overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 19px; background: rgba(15,23,42,.72); }
+.music-scene-head { display: flex; align-items: center; gap: 12px; padding: 15px; }
+.music-scene-head>span { width: 38px; height: 38px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 12px; color: #f0abfc; background: rgba(219,39,119,.14); font-weight: 900; }
+.music-scene-head div { display: grid; gap: 3px; }
+.music-scene-head small,.music-scene>p { color: #64748b; }
+.music-scene>p { margin: 0; padding: 0 15px 15px 65px; font-size: 12px; }
+.audio-list { padding: 0 12px 12px; }
+.audio-row { display: grid; gap: 9px; padding: 12px; border-radius: 14px; background: rgba(2,6,23,.6); }
+.audio-row>div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.audio-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1; font-size: 12px; }
+.audio-row audio { width: 100%; height: 36px; }
+@media(max-width:480px){.segmented-five button{font-size:10px}.music-scene-head{padding:13px}.import-result-head .compact{padding:10px 11px}}

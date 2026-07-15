@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarDays, CheckCircle2, ChevronLeft, Clapperboard, FileText, Home, MapPin,
-  Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, Users, WandSparkles,
+  CalendarDays, CheckCircle2, ChevronLeft, Clapperboard, FileAudio, Home, ListMusic, MapPin,
+  Music, Play, Plus, Settings, Sparkles, Theater, Trash2, Upload, Users, WandSparkles,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
 import './import.css'
+import './music.css'
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
+
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
 
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
 const emptyScene = { title: '', act_no: 1, scene_no: 1, summary: '' }
@@ -33,6 +38,9 @@ export default function App() {
   const [importText, setImportText] = useState('')
   const [importRows, setImportRows] = useState([])
   const [importingPdf, setImportingPdf] = useState(false)
+  const [pendingMusic, setPendingMusic] = useState([])
+  const [musicByScene, setMusicByScene] = useState({})
+  const [uploadingMusic, setUploadingMusic] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -58,6 +66,10 @@ export default function App() {
     setProductionTab('overview')
     setShowIndex(0)
   }, [selected])
+
+  useEffect(() => {
+    if (selected && productionTab === 'music') loadMusic(selected.id)
+  }, [selected, productionTab, scenes.length])
 
   async function submitAuth(event) {
     event.preventDefault()
@@ -182,11 +194,6 @@ export default function App() {
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
     try {
-      const [pdfjs, worker] = await Promise.all([
-        import('pdfjs-dist/legacy/build/pdf.mjs'),
-        import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
-      ])
-      pdfjs.GlobalWorkerOptions.workerSrc = worker.default
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pages = []
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
@@ -238,6 +245,49 @@ export default function App() {
     setBusy(false)
   }
 
+  function organizeMusicFiles(files) {
+    const organized = [...files].map((file) => {
+      const match = matchMusicToScene(file.name, scenes)
+      return { file, sceneNo: match?.scene_no || null, sceneTitle: match?.title || '매칭 안 됨' }
+    })
+    setPendingMusic(organized)
+    const matched = organized.filter((item) => item.sceneNo !== null).length
+    setNotice(`${organized.length}개 파일 중 ${matched}개를 넘버에 자동 연결했어요.`)
+  }
+
+  async function uploadOrganizedMusic() {
+    const matched = pendingMusic.filter((item) => item.sceneNo !== null)
+    if (!matched.length) return setNotice('업로드할 수 있도록 파일명에 넘버 번호나 제목을 넣어주세요.')
+    setUploadingMusic(true)
+    let uploaded = 0
+    for (const item of matched) {
+      const safeName = item.file.name.replace(/[\\/#?%*:|"<>]/g, '_')
+      const path = `${workspace.id}/${selected.id}/music/${item.sceneNo}/${Date.now()}-${safeName}`
+      const { error } = await supabase.storage.from('stageflow-files').upload(path, item.file, { contentType: item.file.type || 'audio/mpeg' })
+      if (!error) uploaded += 1
+      else setNotice(`음악 업로드 실패: ${error.message}`)
+    }
+    setUploadingMusic(false)
+    setPendingMusic([])
+    await loadMusic(selected.id)
+    if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장했어요.`)
+  }
+
+  async function loadMusic(productionId) {
+    if (!scenes.length) return setMusicByScene({})
+    const base = `${workspace.id}/${productionId}/music`
+    const entries = await Promise.all(scenes.map(async (scene) => {
+      const { data } = await supabase.storage.from('stageflow-files').list(`${base}/${scene.scene_no}`, { limit: 100, sortBy: { column: 'name', order: 'asc' } })
+      const files = (data || []).filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
+      const signed = await Promise.all(files.map(async (file) => {
+        const { data: urlData } = await supabase.storage.from('stageflow-files').createSignedUrl(file.path, 3600)
+        return { ...file, url: urlData?.signedUrl || '' }
+      }))
+      return [scene.scene_no, signed]
+    }))
+    setMusicByScene(Object.fromEntries(entries))
+  }
+
   const progress = useMemo(() => Math.min(100, scenes.length * 10), [scenes])
   const daysLeft = useMemo(() => {
     if (!selected?.performance_start_date) return null
@@ -271,6 +321,9 @@ export default function App() {
       importText={importText} setImportText={setImportText} importRows={importRows}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
       readPdf={readPdf} importingPdf={importingPdf}
+      pendingMusic={pendingMusic} musicByScene={musicByScene}
+      organizeMusicFiles={organizeMusicFiles} uploadOrganizedMusic={uploadOrganizedMusic}
+      uploadingMusic={uploadingMusic}
     />
   )
 
@@ -318,17 +371,18 @@ function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPass
 }
 
 function ProductionView(props) {
-  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, saveImportedScenes, readPdf, importingPdf } = props
+  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   return <div className="app-shell">
     <header className="topbar"><button className="icon-button" onClick={goBack}><ChevronLeft /></button><div className="topbar-title"><span>{workspace.name}</span><strong>{production.title}</strong></div><span className="header-spacer" /></header>
     <main className="content production-content">
       <section className="production-cover"><div className="cover-glow" /><div className="cover-copy"><span className="status">준비 중</span><h1>{production.title}</h1><p><MapPin size={15} /> {production.venue || '공연 장소 미정'}</p><div className="cover-meta"><span>{production.performance_start_date || '공연일 미정'}</span>{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '공연 종료'}</strong>}</div></div></section>
-      <nav className="segmented segmented-four"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
+      <nav className="segmented segmented-five"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <><section className="metric-grid"><article className="metric-card"><span>준비도</span><strong>{progress}%</strong><div className="progress"><i style={{ width: `${progress}%` }} /></div></article><article className="metric-card"><span>등록 장면</span><strong>{scenes.length}</strong><small>Scenes</small></article></section><section className="quick-grid"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면 관리</span><small>{scenes.length}개</small></button><button><Users /><span>배우·배역</span><small>다음 버전</small></button><button onClick={() => setTab('show')}><Play /><span>공연 모드</span><small>GO 큐</small></button><button><Settings /><span>공연 설정</span><small>정보 관리</small></button></section></>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} />}
+      {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} upload={uploadOrganizedMusic} loading={uploadingMusic} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2><span>{current.summary || '등록된 장면 설명이 없습니다.'}</span></article><article className="next-cue"><span>NEXT</span><strong>{next ? next.title : 'Curtain Call'}</strong></article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
@@ -349,12 +403,45 @@ function ImportPanel({ text, setText, rows, analyze, save, readPdf, loading }) {
     {!!rows.length && <><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 장면을 찾았어요</h3></div><button className="primary compact" disabled={loading} onClick={save}><CheckCircle2 size={18} /> 공연에 저장</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
   </section>
 }
+function MusicPanel({ scenes, pending, musicByScene, organize, upload, loading }) {
+  const uploadedCount = Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)
+  return <section className="import-panel music-panel">
+    <div className="import-hero"><div className="import-icon music-icon"><Music /></div><div><p className="eyebrow">NUMBER MUSIC</p><h2>음악 자동정리</h2><p>음악파일을 한꺼번에 넣으면 파일명의 번호나 제목을 보고 해당 넘버에 자동 연결합니다. 한 넘버에 여러 파일도 저장할 수 있어요.</p></div></div>
+    {!scenes.length ? <Empty icon={<ListMusic />} title="먼저 장면을 등록해주세요" description="자동정리에서 넘버표를 저장하면 음악을 자동 매칭할 수 있어요." /> : <>
+      <label className="upload-zone music-upload"><FileAudio size={28} /><strong>음악파일 여러 개 선택</strong><span>MP3, M4A, WAV, AAC · 여러 파일 동시 선택 가능</span><input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac" multiple disabled={loading} onChange={(event) => organize(event.target.files || [])} /></label>
+      {!!pending.length && <div className="music-match"><div className="import-result-head"><div><p className="eyebrow">AUTO MATCH</p><h3>{pending.length}개 파일 분류 결과</h3></div><button className="primary compact" disabled={loading || !pending.some((item) => item.sceneNo)} onClick={upload}><Upload size={17} /> {loading ? '업로드 중…' : '모두 저장'}</button></div><div className="music-file-list">{pending.map((item, index) => <article className={item.sceneNo ? 'matched' : 'unmatched'} key={`${item.file.name}-${index}`}><FileAudio /><div><strong>{item.file.name}</strong><span>{item.sceneNo ? `${item.sceneNo}. ${item.sceneTitle}` : '번호나 제목을 찾지 못했어요'}</span></div></article>)}</div></div>}
+      <div className="import-result-head"><div><p className="eyebrow">LIBRARY</p><h3>넘버별 음악 {uploadedCount}개</h3></div></div>
+      <div className="music-library">{scenes.map((scene) => { const files = musicByScene[scene.scene_no] || []; return <article className="music-scene" key={scene.id}><div className="music-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{files.length}개 파일</small></div></div>{files.length ? <div className="audio-list">{files.map((file) => <div className="audio-row" key={file.path}><div><FileAudio size={17} /><span>{cleanStoredFileName(file.name)}</span></div>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>등록된 음악이 없어요.</p>}</article> })}</div>
+    </>}
+  </section>
+}
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
 function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
 function Loading() { return <div className="center"><div className="spinner" /><span>StageFlow 불러오는 중…</span></div> }
 
 function splitCells(value) {
   return value.split(/\t+| {2,}/).map((cell) => cell.trim()).filter(Boolean)
+}
+
+function normalizeMatch(value) {
+  return value.toLowerCase().replace(/\.[a-z0-9]+$/i, '').replace(/[^0-9a-z가-힣]/g, '')
+}
+
+function matchMusicToScene(filename, scenes) {
+  const numberMatch = filename.match(/(?:^|[^0-9])(\d{1,3})(?:[^0-9]|$)/)
+  if (numberMatch) {
+    const byNumber = scenes.find((scene) => Number(scene.scene_no) === Number(numberMatch[1]))
+    if (byNumber) return byNumber
+  }
+  const normalizedFile = normalizeMatch(filename)
+  return scenes.find((scene) => {
+    const title = normalizeMatch(scene.title)
+    return title.length >= 2 && normalizedFile.includes(title)
+  }) || null
+}
+
+function cleanStoredFileName(value) {
+  return value.replace(/^\d{13}-/, '')
 }
 
 function parseProductionSheet(source) {
