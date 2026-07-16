@@ -91,3 +91,15 @@
 .hold-control.resume { border-color: rgba(52,211,153,.28); background: rgba(6,78,59,.18); color: #a7f3d0; }
 .hold-control.resume > svg { color: #34d399; }
 .hold-control.resume small { color: #6ee7b7; }
+.show-event-log { margin-top: 9px; padding: 13px; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; background: rgba(15,23,42,.72); }
+.show-event-log > div { display: flex; align-items: center; gap: 7px; }
+.show-event-log > div svg { width: 16px; color: #a5b4fc; }
+.show-event-log > div strong { flex: 1; font-size: 10px; }
+.show-event-log > div span { color: #64748b; font-size: 8px; }
+.show-event-log ol { display: grid; gap: 5px; margin: 9px 0 0; padding: 0; list-style: none; }
+.show-event-log li { display: grid; grid-template-columns: 58px 48px 1fr; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px; background: rgba(2,6,23,.3); font-size: 9px; }
+.show-event-log time { color: #64748b; font-variant-numeric: tabular-nums; }
+.show-event-log li b { color: #a5b4fc; font-size: 8px; }
+.show-event-log li span { overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }
+.show-event-log .event-hold b { color: #f87171; }
+.show-event-log .event-resume b { color: #34d399; }

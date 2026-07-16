@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, FileAudio, FileText, Home, ListChecks, ListMusic, MapPin,
   MoreHorizontal, Music, Package, Pencil, Play, Plus, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
@@ -759,6 +759,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {tab === 'show' && !showController && <p className="follow-lock"><Clapperboard />FOLLOW 모드 · 장면 이동은 무대감독 기기에서 제어합니다.</p>}
       {tab === 'show' && showHold && <section className="show-hold-alert"><Bell /><div><span>SHOW HOLD</span><strong>{showHoldMessage || '공연 진행 일시 정지'}</strong><small>무대감독의 재개 신호를 기다려주세요.</small></div></section>}
       {tab === 'show' && showController && <button className={showHold ? 'hold-control resume' : 'hold-control'} onClick={toggleShowHold}>{showHold ? <Play /> : <Square />}<span><b>{showHold ? '공연 재개' : '긴급 HOLD'}</b><small>{showHold ? '팀 화면의 정지를 해제하고 GO를 활성화합니다.' : '팀 전체 화면을 정지하고 장면 이동을 잠급니다.'}</small></span></button>}
+      {tab === 'show' && !!showEvents.length && <ShowEventLog events={showEvents} />}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
@@ -865,8 +866,11 @@ function ProductionView(props) {
   const [showController, setShowController] = useState(() => window.localStorage.getItem(`stageflow-show-controller-${production.id}`) === 'true')
   const [showHold, setShowHold] = useState(false)
   const [showHoldMessage, setShowHoldMessage] = useState('')
+  const [showEvents, setShowEvents] = useState([])
+  const previousShowState = useRef(null)
   const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
+  const showLogPath = `${workspace.id}/${production.id}/data/show-log.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
   function toggleShowController() {
     setShowController((value) => {
@@ -951,10 +955,39 @@ function ProductionView(props) {
     return () => { active = false; if (timer) window.clearInterval(timer) }
   }, [tab, showCursorPath, scenes.length, setShowIndex, showController])
   useEffect(() => {
+    if (tab !== 'show') return
+    supabase.storage.from('stageflow-files').download(showLogPath).then(async ({ data }) => {
+      if (!data) return
+      try {
+        const parsed = JSON.parse(await data.text())
+        setShowEvents(Array.isArray(parsed) ? parsed.slice(-100) : [])
+      } catch { /* 공연 기록이 아직 없으면 빈 목록으로 시작합니다. */ }
+    })
+  }, [tab, showLogPath])
+  async function appendShowEvent(event) {
+    let existing = showEvents
+    const { data } = await supabase.storage.from('stageflow-files').download(showLogPath)
+    if (data) {
+      try { const parsed = JSON.parse(await data.text()); if (Array.isArray(parsed)) existing = parsed }
+      catch { /* 기존 기록을 읽지 못하면 현재 화면의 기록을 사용합니다. */ }
+    }
+    const nextEvents = [...existing, event].slice(-100)
+    const { error } = await supabase.storage.from('stageflow-files').upload(showLogPath, new Blob([JSON.stringify(nextEvents)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+    if (!error) setShowEvents(nextEvents)
+  }
+  useEffect(() => {
     if (tab !== 'show' || !showController || !showCursorLoaded || !scenes[showIndex]) return
+    const previous = previousShowState.current
     const payload = { index: showIndex, sceneNo: scenes[showIndex].scene_no, hold: showHold, holdMessage: showHold ? showHoldMessage : '', updatedAt: new Date().toISOString() }
+    previousShowState.current = payload
+    let event = null
+    if (previous && previous.hold !== showHold) event = { id: crypto.randomUUID(), type: showHold ? 'HOLD' : 'RESUME', label: showHold ? (showHoldMessage || '상황 확인 중') : '공연 재개', sceneNo: scenes[showIndex].scene_no, createdAt: payload.updatedAt }
+    else if (previous && previous.index !== showIndex) event = { id: crypto.randomUUID(), type: 'GO', label: scenes[showIndex].title, sceneNo: scenes[showIndex].scene_no, createdAt: payload.updatedAt }
     supabase.storage.from('stageflow-files').upload(showCursorPath, new Blob([JSON.stringify(payload)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' }).then(({ error }) => {
-      if (!error) setShowCursorSyncedAt(new Date())
+      if (!error) {
+        setShowCursorSyncedAt(new Date())
+        if (event) appendShowEvent(event)
+      }
     })
   }, [showIndex, showHold, showHoldMessage, showController, showCursorLoaded, showCursorPath, tab, scenes])
   useEffect(() => {
@@ -1027,6 +1060,11 @@ function ProductionView(props) {
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
   </div>
+}
+
+function ShowEventLog({ events }) {
+  const recent = events.slice(-6).reverse()
+  return <section className="show-event-log"><div><Clock3 /><strong>최근 공연 기록</strong><span>{events.length}건</span></div><ol>{recent.map((event) => <li className={`event-${event.type.toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
 }
 
 function ProductionMoreSheet({ active, close, choose }) {
