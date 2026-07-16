@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, FileAudio, FileText, Home, ListChecks, ListMusic, MapPin,
-  MoreHorizontal, Music, Package, Pencil, Play, Plus, Save, Search, Settings, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  MoreHorizontal, Music, Package, Pencil, Play, Plus, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -20,6 +20,7 @@ import './navigation.css'
 import './schedule.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
+import './show-briefing.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -845,6 +846,9 @@ function ProductionView(props) {
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
   const currentCues = current ? parseSceneCues(current.summary) : []
+  const currentCostumes = current ? parseSceneCostumes(current.summary) : []
+  const nextProps = next ? propItems.filter((item) => Number(item.sceneNo) === Number(next.scene_no)) : []
+  const nextCostumes = next ? parseSceneCostumes(next.summary) : []
   const actNumbers = [...new Set(scenes.map((scene) => Number(scene.act_no)))].sort((a, b) => a - b)
   const visibleScenes = scenes.filter((scene) => {
     const matchesAct = actFilter === '전체' || Number(scene.act_no) === Number(actFilter)
@@ -873,7 +877,7 @@ function ProductionView(props) {
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
-      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2></article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span key={member.id}><b>{member.roleName || member.name}</b>{member.name !== member.roleName && <small>{member.name}</small>}</span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Package /><strong>소품·대도구</strong><span>{currentProps.filter((item) => item.ready).length}/{currentProps.length}</span></div>{currentProps.length ? <div className="show-prop-list">{currentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>연결된 소품이 없어요.</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong></article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
+      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2></article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>현재 의상 · 체인지</strong><span>{currentCostumes.length}</span></div>{currentCostumes.length ? <div className="show-costume-list">{currentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>등록된 의상 체인지가 없어요.</p>}</article><article><div className="show-section-title"><Package /><strong>소품·대도구</strong><span>{currentProps.filter((item) => item.ready).length}/{currentProps.length}</span></div>{currentProps.length ? <div className="show-prop-list">{currentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>연결된 소품이 없어요.</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{nextCostumes.length ? nextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{nextProps.length ? nextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
@@ -1029,6 +1033,23 @@ function parseSceneCues(summary = '') {
     const parts = match[2].split(/\s*·\s*큐사인\s*/)
     return { type: match[1], label: parts[0].trim(), trigger: parts[1]?.trim() || '', rawLine: line.trim() }
   }).filter(Boolean)
+}
+
+function parseSceneCostumes(summary = '') {
+  const lines = String(summary).split('\n')
+  const costumes = []
+  let inSection = false
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (/^(의상|의상\/체인지)\s*:?$/.test(line)) { inSection = true; continue }
+    if (inSection && /^(소품|대도구|큐|조명|음향|영상|음악)\s*[:：]/.test(line)) inSection = false
+    if (!inSection) continue
+    const match = line.match(/^[-•]\s*([^:：]+)\s*[:：]\s*(.+)$/)
+    if (!match) continue
+    const parts = match[2].split(/\s*·\s*/)
+    costumes.push({ role: match[1].trim(), name: parts[0].trim(), note: parts.slice(1).join(' · ') })
+  }
+  return costumes
 }
 
 function RehearsalPanel({ workspace, production, scenes }) {

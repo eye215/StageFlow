@@ -1,0 +1,10 @@
+.show-costume-list { display: grid; gap: 7px; }
+.show-costume-list > div { display: grid; grid-template-columns: auto 1fr; gap: 3px 9px; padding: 9px 10px; border-radius: 11px; background: rgba(236, 72, 153, .09); }
+.show-costume-list b { color: #f9a8d4; font-size: 10px; }
+.show-costume-list span { font-size: 11px; font-weight: 750; }
+.show-costume-list small { grid-column: 2; color: #94a3b8; font-size: 9px; }
+.next-prep { display: grid; gap: 8px; margin-top: 12px; }
+.next-prep > div { display: grid; grid-template-columns: auto auto 1fr; align-items: start; gap: 7px; padding: 10px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 12px; background: rgba(15, 23, 42, .72); }
+.next-prep svg { width: 16px; color: #a5b4fc; }
+.next-prep b { font-size: 10px; white-space: nowrap; }
+.next-prep span { color: #cbd5e1; font-size: 10px; line-height: 1.45; }
