@@ -1463,7 +1463,11 @@ function mergeCastFromScenes(existing, scenes) {
           const roleName = paired[1].trim()
           splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => add(actor, roleName, type, Number(scene.scene_no)))
         } else {
-          add(value, value, type, Number(scene.scene_no))
+          const roleMatches = members.filter((member) => normalizeMatch(member.roleName) === normalizeMatch(value))
+          const actorMatches = members.filter((member) => canonicalActor(member.name) === canonicalActor(value))
+          if (roleMatches.length) roleMatches.forEach((member) => add(member.name, member.roleName || value, type, Number(scene.scene_no)))
+          else if (actorMatches.length) actorMatches.forEach((member) => add(member.name, member.roleName || value, type, Number(scene.scene_no)))
+          else add(value, value, type, Number(scene.scene_no))
         }
       })
     })
@@ -1831,7 +1835,7 @@ function ProductionView(props) {
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -2171,7 +2175,7 @@ function SceneCard({ scene, update, remove }) {
   </article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ workspace, production, scenes, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
+function ImportPanel({ workspace, production, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
@@ -2221,7 +2225,7 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
     <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
     {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}
     {!!rows.length && <ImportAudit audit={audit} mergeDuplicates={mergeDuplicateRows} />}
-    {!!rows.length && <ImportCastPreview rows={rows} />}
+    {!!rows.length && <ImportCastPreview rows={rows} castMembers={castMembers} />}
     {!!rows.length && <ImportPlan rows={rows} excluded={excludedRows} existing={existingImportNumbers} mode={mode} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} existing={existingImportNumbers} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
@@ -2276,35 +2280,56 @@ function mergeDuplicateImportRows(rows) {
   return [...byNumber.values()].sort((a, b) => Number(a.number) - Number(b.number))
 }
 
-function buildImportedCastAssignments(rows) {
+function buildImportedCastAssignments(rows, castMembers = []) {
   const assignments = []
+  const addAssignment = ({ actor = '', role = '', type, sceneNo, sceneTitle, confidence = 'unmatched' }) => {
+    const cleanActor = String(actor || '').trim()
+    const cleanRole = String(role || '').trim()
+    if (!cleanActor && !cleanRole) return
+    assignments.push({ actor: cleanActor, role: cleanRole || cleanActor, type, sceneNo, sceneTitle, confidence })
+  }
+  const resolveUnpaired = (value, context) => {
+    const roleMatches = castMembers.filter((member) => normalizeMatch(member.roleName) === normalizeMatch(value))
+    if (roleMatches.length) {
+      roleMatches.forEach((member) => addAssignment({ ...context, actor: member.name, role: member.roleName || value, confidence: 'role' }))
+      return
+    }
+    const actorMatches = castMembers.filter((member) => canonicalActor(member.name) === canonicalActor(value))
+    if (actorMatches.length) {
+      actorMatches.forEach((member) => addAssignment({ ...context, actor: member.name, role: member.roleName || value, confidence: 'actor' }))
+      return
+    }
+    addAssignment({ ...context, actor: '', role: value, confidence: 'unmatched' })
+  }
   rows.forEach((row) => {
     ;[['주연', row.main], ['앙상블', row.ensemble], ['백 앙상블', row.backstage]].forEach(([type, value]) => {
       splitRoleEntries(value).forEach((entry) => {
         const paired = entry.match(/^(.+?)\s*\((.+)\)\s*$/)
         if (paired) {
           const role = paired[1].trim()
-          splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => assignments.push({ actor, role, type, sceneNo: row.number, sceneTitle: row.title }))
-        } else if (entry.trim()) assignments.push({ actor: entry.trim(), role: entry.trim(), type, sceneNo: row.number, sceneTitle: row.title })
+          splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => addAssignment({ actor, role, type, sceneNo: row.number, sceneTitle: row.title, confidence: 'explicit' }))
+        } else if (entry.trim()) resolveUnpaired(entry.trim(), { type, sceneNo: row.number, sceneTitle: row.title })
       })
     })
   })
   const unique = new Map()
   assignments.forEach((item) => {
-    const key = `${canonicalActor(item.actor)}::${normalizeMatch(item.role)}`
+    const key = `${canonicalActor(item.actor) || 'unmatched'}::${normalizeMatch(item.role)}`
     if (!unique.has(key)) unique.set(key, { ...item, scenes: [] })
     const target = unique.get(key)
+    if (target.confidence === 'unmatched' && item.confidence !== 'unmatched') target.confidence = item.confidence
     if (!target.scenes.some((scene) => Number(scene.number) === Number(item.sceneNo))) target.scenes.push({ number: item.sceneNo, title: item.sceneTitle })
   })
-  return [...unique.values()].sort((a, b) => a.actor.localeCompare(b.actor, 'ko') || a.role.localeCompare(b.role, 'ko'))
+  return [...unique.values()].sort((a, b) => (a.actor || a.role).localeCompare(b.actor || b.role, 'ko') || a.role.localeCompare(b.role, 'ko'))
 }
 
-function ImportCastPreview({ rows }) {
+function ImportCastPreview({ rows, castMembers }) {
   const [open, setOpen] = useState(false)
-  const assignments = useMemo(() => buildImportedCastAssignments(rows), [rows])
+  const assignments = useMemo(() => buildImportedCastAssignments(rows, castMembers), [rows, castMembers])
   if (!assignments.length) return null
-  const actors = new Set(assignments.map((item) => canonicalActor(item.actor))).size
-  return <section className={open ? 'import-cast-preview open' : 'import-cast-preview'}><button className="import-cast-preview-head" onClick={() => setOpen((value) => !value)}><Users /><span><b>배우·배역 매칭 미리보기</b><small>{actors}명 · {assignments.length}개 배역 연결</small></span><ChevronRight /></button>{open && <div className="import-cast-preview-list">{assignments.map((item) => <article key={`${item.actor}-${item.role}`}><span className="cast-preview-avatar"><UserRound /></span><div><strong>{item.actor}</strong><small>{item.role} · {item.type}</small><p>{item.scenes.map((scene) => `${scene.number}. ${scene.title}`).join(' · ')}</p></div><em>{item.scenes.length}장면</em></article>)}</div>}</section>
+  const actors = new Set(assignments.map((item) => canonicalActor(item.actor)).filter(Boolean)).size
+  const unmatched = assignments.filter((item) => item.confidence === 'unmatched').length
+  return <section className={open ? 'import-cast-preview open' : 'import-cast-preview'}><button className="import-cast-preview-head" onClick={() => setOpen((value) => !value)}><Users /><span><b>배우·배역 매칭 미리보기</b><small>{actors}명 · {assignments.length}개 배역 연결{unmatched ? ` · ${unmatched}개 배우 미지정` : ''}</small></span><ChevronRight /></button>{open && <div className="import-cast-preview-list">{assignments.map((item) => <article className={item.confidence === 'unmatched' ? 'unmatched' : 'matched'} key={`${item.actor}-${item.role}`}><span className="cast-preview-avatar"><UserRound /></span><div><strong>{item.actor || '배우 미지정'}</strong><small>{item.role} · {item.type}</small><p>{item.scenes.map((scene) => `${scene.number}. ${scene.title}`).join(' · ')}</p></div><em>{item.confidence === 'explicit' ? '직접 인식' : item.confidence === 'role' ? '배역 매칭' : item.confidence === 'actor' ? '이름 매칭' : '확인 필요'}</em></article>)}</div>}</section>
 }
 
 function SourceReanalyze({ sources, reanalyze, loading }) {
