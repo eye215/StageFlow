@@ -6,6 +6,7 @@ import './danger.css'
 import './reset.css'
 import './approval-alert.css'
 import './share-deletion.css'
+import './team-panel.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
