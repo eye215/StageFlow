@@ -753,6 +753,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
         <section className="attention-block"><div className="compact-heading"><div><span>CHECK</span><h2>확인 필요한 장면</h2></div><button className="text-button" onClick={() => openAt('scenes')}>전체 장면</button></div>{attentionScenes.length ? <div className="attention-list">{attentionScenes.map((scene) => <button key={scene.id} onClick={() => openAt('scenes')}><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{extractAttention(scene.summary)}</small></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>급한 확인 항목이 없어요</strong><span>장면 요약의 ‘미정·논의·확인 필요’를 자동으로 모읍니다.</span></div></div>}</section>
       </> : <section className="empty-home"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본, 장면, 배우, 소품과 음악을 한곳에서 정리할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
+      {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
@@ -852,7 +853,25 @@ function ProductionView(props) {
     try { return JSON.parse(window.localStorage.getItem(`stageflow-personal-ready-${production.id}`) || '{}') }
     catch { return {} }
   })
+  const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
+  useEffect(() => {
+    let active = true
+    supabase.storage.from('stageflow-files').download(readinessPath).then(async ({ data }) => {
+      if (!active || !data) return
+      try {
+        const cloudReady = JSON.parse(await data.text())
+        if (cloudReady && typeof cloudReady === 'object') {
+          setPersonalReady((localReady) => {
+            const merged = { ...localReady, ...cloudReady }
+            window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, JSON.stringify(merged))
+            return merged
+          })
+        }
+      } catch { /* 준비 상태 파일이 아직 없거나 손상된 경우 로컬 값을 유지합니다. */ }
+    })
+    return () => { active = false }
+  }, [readinessPath, production.id])
   const currentCast = current ? castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
@@ -868,6 +887,8 @@ function ProductionView(props) {
   const nextAppearance = nextAppearanceIndex >= 0 ? scenes[nextAppearanceIndex] : null
   const nextAppearanceCostumes = nextAppearance && briefingMember ? parseSceneCostumes(nextAppearance.summary).filter((item) => assignmentMatches(item.role, briefingMember)) : []
   const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && assignmentMatches(item.inBy, briefingMember)) : []
+  const upcomingCast = next ? castMembers.filter((member) => (member.sceneNumbers || []).includes(next.scene_no)) : []
+  const upcomingReadyCount = next ? upcomingCast.filter((member) => personalReady[`${member.id}-${next.scene_no}`]).length : 0
   const actNumbers = [...new Set(scenes.map((scene) => Number(scene.act_no)))].sort((a, b) => a - b)
   const visibleScenes = scenes.filter((scene) => {
     const matchesAct = actFilter === '전체' || Number(scene.act_no) === Number(actFilter)
@@ -880,13 +901,12 @@ function ProductionView(props) {
     if (id) window.localStorage.setItem(`stageflow-briefing-${production.id}`, id)
     else window.localStorage.removeItem(`stageflow-briefing-${production.id}`)
   }
-  function togglePersonalReady(sceneNo) {
+  async function togglePersonalReady(sceneNo) {
     const key = `${briefingMemberId}-${sceneNo}`
-    setPersonalReady((value) => {
-      const nextValue = { ...value, [key]: !value[key] }
-      window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, JSON.stringify(nextValue))
-      return nextValue
-    })
+    const nextValue = { ...personalReady, [key]: !personalReady[key] }
+    setPersonalReady(nextValue)
+    window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, JSON.stringify(nextValue))
+    await supabase.storage.from('stageflow-files').upload(readinessPath, new Blob([JSON.stringify(nextValue)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
   }
   async function saveProduction(event) {
     event.preventDefault()
