@@ -39,6 +39,7 @@ import './preparation-health.css'
 import './import-audit.css'
 import './spreadsheet-upload.css'
 import './import-selection.css'
+import './import-edit.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -836,7 +837,7 @@ export default function App() {
       form={sceneForm} setForm={setSceneForm} createScene={createScene}
       updateScene={updateScene} deleteScene={deleteScene} showForm={showSceneForm} setShowForm={setShowSceneForm}
       notice={notice} busy={busy}
-      importText={importText} setImportText={setImportText} importRows={importRows}
+      importText={importText} setImportText={setImportText} importRows={importRows} setImportRows={setImportRows}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
       analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
       readPdf={readPdf} readSpreadsheet={readSpreadsheet} importingPdf={importingPdf}
@@ -1020,7 +1021,7 @@ function RoleClaimSheet({ members, choose, busy }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -1291,7 +1292,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -1423,7 +1424,7 @@ function SceneCard({ scene, update, remove }) {
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ workspace, production, text, setText, rows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, loading, aiAnalyzing }) {
+function ImportPanel({ workspace, production, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, loading, aiAnalyzing }) {
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
@@ -1435,15 +1436,17 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
     setSources(next)
   }
   useEffect(() => { loadSources() }, [workspace.id, production.id])
-  useEffect(() => { setExcludedRows([]) }, [rows])
+  const rowSignature = rows.map((row) => Number(row.number)).join(',')
+  useEffect(() => { setExcludedRows([]) }, [rowSignature])
   async function applyImport() { await save({ mode, targets, selectedNumbers: rows.filter((row) => !excludedRows.includes(Number(row.number))).map((row) => row.number) }); await loadSources() }
   const toggleTarget = (key) => setTargets((value) => ({ ...value, [key]: !value[key] }))
   const toggleImportRow = (number) => setExcludedRows((value) => value.includes(Number(number)) ? value.filter((item) => item !== Number(number)) : [...value, Number(number)])
+  const updateImportRow = (index, patch) => setRows((value) => value.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
   const audit = useMemo(() => buildImportAudit(rows), [rows])
   return <section className="import-panel">
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     {!!rows.length && <ImportAudit audit={audit} />}
-    {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} toggle={toggleImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
+    {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
@@ -1457,9 +1460,9 @@ function ImportAudit({ audit }) {
   return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
 }
 
-function ImportSelection({ rows, excluded, toggle, selectAll, clearAll }) {
+function ImportSelection({ rows, excluded, toggle, update, selectAll, clearAll }) {
   const selected = rows.length - excluded.length
-  return <section className="import-selection"><div className="import-selection-head"><div><span>APPLY ROWS</span><h3>적용할 장면 선택</h3></div><strong>{selected}/{rows.length}</strong></div><div className="import-selection-actions"><button onClick={selectAll}>전체 선택</button><button onClick={clearAll}>전체 해제</button></div><div className="import-selection-list">{rows.map((row) => { const checked = !excluded.includes(Number(row.number)); return <label className={checked ? 'selected' : ''} key={row.number}><input type="checkbox" checked={checked} onChange={() => toggle(row.number)} /><span>{row.number}</span><div><b>{row.title}</b><small>{[row.main && `배역 ${row.main}`, row.props?.length && `소품 ${row.props.length}`, row.costumes?.length && `의상 ${row.costumes.length}`, row.cues?.length && `큐 ${row.cues.length}`].filter(Boolean).join(' · ') || '장면 정보만 적용'}</small></div></label> })}</div></section>
+  return <section className="import-selection"><div className="import-selection-head"><div><span>APPLY ROWS</span><h3>적용할 장면 선택·수정</h3></div><strong>{selected}/{rows.length}</strong></div><div className="import-selection-actions"><button onClick={selectAll}>전체 선택</button><button onClick={clearAll}>전체 해제</button></div><div className="import-selection-list">{rows.map((row, index) => { const checked = !excluded.includes(Number(row.number)); return <article className={checked ? 'selected' : ''} key={`${row.number}-${index}`}><label aria-label={`${row.number}. ${row.title} 적용`}><input type="checkbox" checked={checked} onChange={() => toggle(row.number)} /></label><span>{row.number}</span><div><input value={row.title} onChange={(event) => update(index, { title: event.target.value })} aria-label={`${row.number}번 장면 제목`} /><input value={row.main || ''} onChange={(event) => update(index, { main: event.target.value })} placeholder="메인 배역" aria-label={`${row.number}번 메인 배역`} /><small>{[row.props?.length && `소품 ${row.props.length}`, row.costumes?.length && `의상 ${row.costumes.length}`, row.cues?.length && `큐 ${row.cues.length}`].filter(Boolean).join(' · ') || '장면 정보만 적용'}</small></div></article> })}</div></section>
 }
 
 function buildImportAudit(rows) {
