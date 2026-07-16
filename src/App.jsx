@@ -32,6 +32,7 @@ import './invite.css'
 import './full-run.css'
 import './run-history.css'
 import './import-options.css'
+import './ux-pass.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -158,6 +159,35 @@ export default function App() {
     setWorkspace(current)
     if (current) await loadProductions(current.id)
     setLoading(false)
+  }
+
+  useEffect(() => {
+    if (workspace && inviteProductionId && showRoleClaim) loadInviteRoles(inviteProductionId)
+  }, [workspace, inviteProductionId, showRoleClaim])
+  async function loadInviteRoles(productionId) {
+    const { data, error } = await supabase.storage.from('stageflow-files').download(castDataPath(productionId))
+    if (error) return setInviteCastMembers([])
+    try { const parsed = JSON.parse(await data.text()); setInviteCastMembers(Array.isArray(parsed.members) ? parsed.members : []) } catch { setInviteCastMembers([]) }
+  }
+  async function createTeamInvite() {
+    const productionId = defaultProductionId || productions[0]?.id
+    if (!productionId) return setNotice('먼저 공연을 하나 만들어주세요.')
+    const { data, error } = await supabase.rpc('create_workspace_invite', { target_workspace_id: workspace.id, target_production_id: productionId })
+    if (error) return setNotice(`초대 링크 생성 실패: ${error.message}`)
+    const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(data)}&production=${encodeURIComponent(productionId)}`
+    try { if (navigator.share) await navigator.share({ title: `${workspace.name} StageFlow 초대`, text: '회원가입 후 팀 참가와 배역 선택을 진행해주세요.', url: link }); else await navigator.clipboard.writeText(link); setNotice('팀 초대 링크를 공유했어요.') }
+    catch (error) { if (error?.name !== 'AbortError') setNotice(`초대 링크 공유 실패: ${error.message}`) }
+  }
+  async function claimInviteRole(memberId) {
+    const member = inviteCastMembers.find((item) => item.id === memberId)
+    if (!member || (member.userId && member.userId !== session.user.id)) return
+    setBusy(true)
+    const next = inviteCastMembers.map((item) => item.id === memberId ? { ...item, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : item)
+    const body = new Blob([JSON.stringify({ members: next, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(inviteProductionId), body, { upsert: true, contentType: 'application/json' })
+    setBusy(false)
+    if (error) return setNotice(`배역 선택 실패: ${error.message}`)
+    window.localStorage.setItem(`stageflow-briefing-${inviteProductionId}`, memberId); setShowRoleClaim(false); window.history.replaceState({}, '', window.location.pathname); setNotice(`${member.roleName || member.name} 배역으로 팀 참가가 완료됐어요.`)
   }
 
   async function createWorkspace(event) {
@@ -1764,47 +1794,6 @@ function MaterialsPanel({ workspace, production }) {
     }))
     setFiles(groups.flat())
     setLoading(false)
-  }
-
-  useEffect(() => {
-    if (workspace && inviteProductionId && showRoleClaim) loadInviteRoles(inviteProductionId)
-  }, [workspace, inviteProductionId, showRoleClaim])
-
-  async function loadInviteRoles(productionId) {
-    const { data, error } = await supabase.storage.from('stageflow-files').download(castDataPath(productionId))
-    if (error) return setInviteCastMembers([])
-    try {
-      const parsed = JSON.parse(await data.text())
-      setInviteCastMembers(Array.isArray(parsed.members) ? parsed.members : [])
-    } catch { setInviteCastMembers([]) }
-  }
-
-  async function createTeamInvite() {
-    const productionId = defaultProductionId || productions[0]?.id
-    if (!productionId) return setNotice('먼저 공연을 하나 만들어주세요.')
-    const { data, error } = await supabase.rpc('create_workspace_invite', { target_workspace_id: workspace.id, target_production_id: productionId })
-    if (error) return setNotice(`초대 링크 생성 실패: ${error.message}`)
-    const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(data)}&production=${encodeURIComponent(productionId)}`
-    try {
-      if (navigator.share) await navigator.share({ title: `${workspace.name} StageFlow 초대`, text: '회원가입 후 팀 참가와 배역 선택을 진행해주세요.', url: link })
-      else await navigator.clipboard.writeText(link)
-      setNotice('팀 초대 링크를 공유했어요.')
-    } catch (error) { if (error?.name !== 'AbortError') setNotice(`초대 링크 공유 실패: ${error.message}`) }
-  }
-
-  async function claimInviteRole(memberId) {
-    const member = inviteCastMembers.find((item) => item.id === memberId)
-    if (!member || (member.userId && member.userId !== session.user.id)) return
-    setBusy(true)
-    const next = inviteCastMembers.map((item) => item.id === memberId ? { ...item, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : item)
-    const body = new Blob([JSON.stringify({ members: next, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
-    const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(inviteProductionId), body, { upsert: true, contentType: 'application/json' })
-    setBusy(false)
-    if (error) return setNotice(`배역 선택 실패: ${error.message}`)
-    window.localStorage.setItem(`stageflow-briefing-${inviteProductionId}`, memberId)
-    setShowRoleClaim(false)
-    window.history.replaceState({}, '', window.location.pathname)
-    setNotice(`${member.roleName || member.name} 배역으로 팀 참가가 완료됐어요.`)
   }
 
   useEffect(() => { loadMaterials() }, [production.id])
