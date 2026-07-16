@@ -29,6 +29,7 @@ import './cast-scenes-ux.css'
 import './cast-call-sheet.css'
 import './backup.css'
 import './invite.css'
+import './full-run.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -962,10 +963,15 @@ function ProductionView(props) {
   const [showHold, setShowHold] = useState(false)
   const [showHoldMessage, setShowHoldMessage] = useState('')
   const [showEvents, setShowEvents] = useState([])
+  const [runType, setRunType] = useState('rehearsal')
+  const [runSession, setRunSession] = useState(null)
+  const [runElapsed, setRunElapsed] = useState(0)
+  const [runHistory, setRunHistory] = useState([])
   const previousShowState = useRef(null)
   const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
   const showLogPath = `${workspace.id}/${production.id}/data/show-log.json`
+  const runLogPath = `${workspace.id}/${production.id}/data/full-runs.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
   function toggleShowController() {
     setShowController((value) => {
@@ -1059,6 +1065,56 @@ function ProductionView(props) {
       } catch { /* 공연 기록이 아직 없으면 빈 목록으로 시작합니다. */ }
     })
   }, [tab, showLogPath])
+  useEffect(() => {
+    if (tab !== 'show') return
+    supabase.storage.from('stageflow-files').download(runLogPath).then(async ({ data }) => {
+      if (!data) return
+      try { const parsed = JSON.parse(await data.text()); setRunHistory(Array.isArray(parsed.runs) ? parsed.runs : []) }
+      catch { /* 전체 런 기록이 없으면 빈 목록 유지 */ }
+    })
+  }, [tab, runLogPath])
+  useEffect(() => {
+    if (!runSession) return undefined
+    const timer = window.setInterval(() => setRunElapsed(Math.floor((Date.now() - new Date(runSession.startedAt).getTime()) / 1000)), 250)
+    return () => window.clearInterval(timer)
+  }, [runSession])
+  function startFullRun() {
+    if (!scenes.length || !showController) return
+    const now = new Date().toISOString()
+    setShowIndex(0); setRunElapsed(0)
+    setRunSession({ id: crypto.randomUUID(), type: runType, startedAt: now, sceneStartedAt: now, segments: [] })
+  }
+  async function persistFullRun(session, completed) {
+    const record = { ...session, totalDuration: Math.max(1, Math.floor((Date.now() - new Date(session.startedAt).getTime()) / 1000)), completed, endedAt: completed ? new Date().toISOString() : null }
+    let existing = runHistory
+    const { data } = await supabase.storage.from('stageflow-files').download(runLogPath)
+    if (data) { try { const parsed = JSON.parse(await data.text()); if (Array.isArray(parsed.runs)) existing = parsed.runs } catch { /* 현재 기록 사용 */ } }
+    const nextRuns = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 50)
+    const { error } = await supabase.storage.from('stageflow-files').upload(runLogPath, new Blob([JSON.stringify({ runs: nextRuns, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+    if (!error) setRunHistory(nextRuns)
+  }
+  async function goNextWithTiming() {
+    if (!current) return
+    if (!runSession) { if (next) setShowIndex((index) => Math.min(scenes.length - 1, index + 1)); return }
+    const now = new Date()
+    const segment = { sceneNo: current.scene_no, sceneTitle: current.title, startedAt: runSession.sceneStartedAt, endedAt: now.toISOString(), duration: Math.max(1, Math.floor((now - new Date(runSession.sceneStartedAt)) / 1000)) }
+    const updated = { ...runSession, sceneStartedAt: now.toISOString(), segments: [...runSession.segments, segment] }
+    await persistFullRun(updated, !next)
+    if (next) { setRunSession(updated); setShowIndex((index) => Math.min(scenes.length - 1, index + 1)) }
+    else { setRunSession(null); setRunElapsed(0) }
+  }
+  useEffect(() => {
+    if (tab !== 'show' || !runSession) return undefined
+    const interceptRunControls = (event) => {
+      const goButton = event.target.closest?.('.show-actions .go-button')
+      const previousButton = event.target.closest?.('.show-actions button:not(.go-button)')
+      if (!goButton && !previousButton) return
+      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation()
+      if (goButton) goNextWithTiming()
+    }
+    document.addEventListener('click', interceptRunControls, true)
+    return () => document.removeEventListener('click', interceptRunControls, true)
+  }, [tab, runSession, current, next, scenes.length])
   async function appendShowEvent(event) {
     let existing = showEvents
     const { data } = await supabase.storage.from('stageflow-files').download(showLogPath)
@@ -1145,7 +1201,6 @@ function ProductionView(props) {
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
-      {tab === 'rehearsal' && <RehearsalPanel workspace={workspace} production={production} scenes={scenes} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
@@ -1158,12 +1213,18 @@ function ProductionView(props) {
       {tab === 'show' && !showController && <p className="follow-lock"><Clapperboard />FOLLOW 모드 · 장면 이동은 무대감독 기기에서 제어합니다.</p>}
       {tab === 'show' && showHold && <section className="show-hold-alert"><Bell /><div><span>SHOW HOLD</span><strong>{showHoldMessage || '공연 진행 일시 정지'}</strong><small>무대감독의 재개 신호를 기다려주세요.</small></div></section>}
       {tab === 'show' && showController && <button className={showHold ? 'hold-control resume' : 'hold-control'} onClick={toggleShowHold}>{showHold ? <Play /> : <Square />}<span><b>{showHold ? '공연 재개' : '긴급 HOLD'}</b><small>{showHold ? '팀 화면의 정지를 해제하고 GO를 활성화합니다.' : '팀 전체 화면을 정지하고 장면 이동을 잠급니다.'}</small></span></button>}
+      {tab === 'show' && <RunControl type={runType} setType={setRunType} session={runSession} elapsed={runElapsed} history={runHistory} current={current} start={startFullRun} finish={goNextWithTiming} enabled={showController} isLast={!next} />}
       {tab === 'show' && !!showEvents.length && <ShowEventLog events={showEvents} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{castMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.id === briefingMemberId ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
   </div>
+}
+
+function RunControl({ type, setType, session, elapsed, history, current, start, finish, enabled, isLast }) {
+  const latest = history[0]
+  return <section className={session ? 'full-run-control running' : 'full-run-control'}><div className="run-control-head"><Timer /><span><b>{session ? `${session.type === 'rehearsal' ? '리허설' : '공연'} 전체 런 진행 중` : '공연 · 리허설 통합 런'}</b><small>{session ? `${current?.scene_no}. ${current?.title || ''} 측정 중` : 'GO를 누를 때마다 장면별 시간이 자동 저장됩니다.'}</small></span>{session && <strong>{formatDuration(elapsed)}</strong>}</div>{!session ? <><div className="run-type-switch"><button className={type === 'rehearsal' ? 'active' : ''} onClick={() => setType('rehearsal')}>리허설</button><button className={type === 'show' ? 'active' : ''} onClick={() => setType('show')}>공연</button></div><button className="run-start" disabled={!enabled} onClick={start}><Play fill="currentColor" /> 전체 장면 런 시작</button>{!enabled && <small className="run-help">CONTROL 모드에서 전체 런을 시작할 수 있어요.</small>}</> : <><div className="run-live"><span>완료 장면 <b>{session.segments.length}</b></span><span>현재 장면 <b>{formatDuration(Math.max(0, Math.floor((Date.now() - new Date(session.sceneStartedAt).getTime()) / 1000)))}</b></span></div>{isLast && <button className="run-finish" onClick={finish}><Square fill="currentColor" /> 마지막 장면 기록 · 런 종료</button>}</>}{latest && !session && <div className="last-run"><span>최근 {latest.type === 'show' ? '공연' : '리허설'} 런</span><b>{formatDuration(latest.totalDuration || 0)}</b><small>{latest.segments?.length || 0}개 장면 기록</small></div>}</section>
 }
 
 function ShowEventLog({ events }) {
@@ -1231,7 +1292,6 @@ function ProductionMoreSheet({ active, close, choose }) {
     { id: 'costumes', label: '의상·퀵체인지', description: '배역별 의상과 체인지 순서', icon: <Shirt /> },
     { id: 'cues', label: '큐시트', description: '조명·음향·영상·무대 큐', icon: <ListChecks /> },
     { id: 'music', label: '음악', description: '넘버별 음악 업로드와 재생', icon: <FileAudio /> },
-    { id: 'rehearsal', label: '리허설', description: '장면별 실제 시간 측정', icon: <Timer /> },
     { id: 'materials', label: '자료실', description: '대본·악보·영상·이미지', icon: <FileText /> },
     { id: 'schedule', label: '일정', description: '연습·리허설·공연 일정', icon: <CalendarDays /> },
     { id: 'backup', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
