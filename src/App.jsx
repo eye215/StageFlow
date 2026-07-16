@@ -46,6 +46,7 @@ import './import-flow.css'
 import './source-reanalyze.css'
 import './import-flow-override.css'
 import './install-app.css'
+import './home-schedule.css'
 let pdfRuntimePromise
 async function loadPdfRuntime() {
   if (!pdfRuntimePromise) {
@@ -97,6 +98,7 @@ export default function App() {
   const [homeMusicLinkedScenes, setHomeMusicLinkedScenes] = useState(0)
   const [homePropStats, setHomePropStats] = useState({ total: 0, ready: 0 })
   const [homeTasks, setHomeTasks] = useState([])
+  const [homeEvents, setHomeEvents] = useState([])
   const [castMembers, setCastMembers] = useState([])
   const [castForm, setCastForm] = useState({ name: '', roleName: '', type: '주연', notes: '' })
   const [showCastForm, setShowCastForm] = useState(false)
@@ -262,13 +264,14 @@ export default function App() {
         setHomeMusicLinkedScenes(cached.musicLinkedScenes || 0)
         setHomePropStats(cached.propStats || { total: 0, ready: 0 })
         setHomeTasks(cached.tasks || [])
+        setHomeEvents(cached.events || [])
       }
     } catch { /* 손상된 캐시는 무시하고 최신 데이터를 불러옵니다. */ }
     const { data } = await supabase.from('scenes').select('*').eq('production_id', productionId).order('sort_order').order('scene_no')
     const nextScenes = data || []
     setHomeScenes(nextScenes)
     if (!workspace) return
-    const [counts, propResult, taskResult] = await Promise.all([
+    const [counts, propResult, taskResult, scheduleResult] = await Promise.all([
       Promise.all(nextScenes.map(async (scene) => {
         const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
         const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
@@ -276,6 +279,7 @@ export default function App() {
       })),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/tasks.json`),
+      supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/schedule.json`),
     ])
     const musicCount = counts.reduce((sum, value) => sum + value, 0)
     const musicLinkedScenes = counts.filter((value) => value > 0).length
@@ -300,7 +304,15 @@ export default function App() {
       } catch { /* 빈 상태를 사용합니다. */ }
     }
     setHomeTasks(tasks)
-    try { window.localStorage.setItem(cacheKey, JSON.stringify({ scenes: nextScenes, musicCount, musicLinkedScenes, propStats, tasks, updatedAt: new Date().toISOString() })) } catch { /* 저장 공간이 부족하면 캐시 없이 계속합니다. */ }
+    let events = []
+    if (scheduleResult.data) {
+      try {
+        const payload = JSON.parse(await scheduleResult.data.text())
+        events = Array.isArray(payload.events) ? payload.events : []
+      } catch { /* 일정이 없거나 손상되면 빈 상태를 사용합니다. */ }
+    }
+    setHomeEvents(events)
+    try { window.localStorage.setItem(cacheKey, JSON.stringify({ scenes: nextScenes, musicCount, musicLinkedScenes, propStats, tasks, events, updatedAt: new Date().toISOString() })) } catch { /* 저장 공간이 부족하면 캐시 없이 계속합니다. */ }
   }
 
   function openDefaultAt(tab = 'overview') {
@@ -915,7 +927,7 @@ export default function App() {
   return <HomeDashboardV2
     session={session} workspace={workspace} productions={productions}
     defaultProduction={defaultProduction} daysLeft={homeDaysLeft} progress={homeProgress}
-    scenes={homeScenes} musicCount={homeMusicCount} propStats={homePropStats} tasks={homeTasks}
+    scenes={homeScenes} musicCount={homeMusicCount} propStats={homePropStats} tasks={homeTasks} events={homeEvents}
     openAt={openDefaultAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen}
     chooseDefaultProduction={chooseDefaultProduction} notice={notice}
     showForm={showProductionForm} setShowForm={setShowProductionForm}
@@ -964,9 +976,11 @@ export default function App() {
   )
 }
 
-function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, tasks, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, tasks, events, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
   const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
   const pendingTasks = [...tasks].filter((task) => !task.done).sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'))).slice(0, 3)
+  const today = new Date().toISOString().slice(0, 10)
+  const upcomingEvents = [...events].filter((event) => event.date >= today).sort((a, b) => `${a.date}T${a.time || '23:59'}`.localeCompare(`${b.date}T${b.time || '23:59'}`)).slice(0, 3)
   return <div className="app-shell home-v2">
     <header className="topbar home-topbar">
       <div className="brand-inline"><Theater size={22} /><div><strong>StageFlow</strong><span>{workspace.name}</span></div></div>
@@ -983,6 +997,8 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
         </button>
 
         <section className="home-workbench"><div className="compact-heading"><div><span>WORKSPACE</span><h2>지금 할 일</h2></div></div><div className="workbench-grid"><button className="work-main" onClick={() => openAt('import')}><WandSparkles /><div><strong>대본 자동정리</strong><span>PDF에서 장면·인물·소품 추출</span></div><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><div><strong>장면</strong><span>{scenes.length}개</span></div></button><button onClick={() => openAt('props')}><Package /><div><strong>소품</strong><span>{propStats.ready}/{propStats.total} 준비</span></div></button><button onClick={() => openAt('music')}><FileAudio /><div><strong>음악</strong><span>{musicCount}개 파일</span></div></button></div><button className="show-launch" onClick={() => openAt('show')}><Play fill="currentColor" /><div><strong>공연모드</strong><span>장면 순서대로 큐 진행</span></div><ChevronRight /></button></section>
+
+        <section className="home-schedule-block"><div className="compact-heading"><div><span>NEXT CALL</span><h2>다가오는 일정</h2></div><button className="text-button" onClick={() => openAt('schedule')}>일정 관리</button></div>{upcomingEvents.length ? <div className="home-schedule-list">{upcomingEvents.map((event, index) => <button className={index === 0 ? 'next' : ''} key={event.id} onClick={() => openAt('schedule')}><span className="home-schedule-date"><b>{new Date(`${event.date}T00:00:00`).getDate()}</b><small>{new Date(`${event.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</small></span><div><span>{event.type}{index === 0 ? ' · NEXT' : ''}</span><strong>{event.title}</strong><small>{[event.time, event.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</small>{event.note && <p>{event.note}</p>}</div><ChevronRight /></button>)}</div> : <button className="home-schedule-empty" onClick={() => openAt('schedule')}><CalendarDays /><div><strong>예정된 연습이 없어요</strong><span>다음 연습·리허설·공연 일정을 등록하세요.</span></div><Plus /></button>}</section>
 
         <section className="home-task-block"><div className="compact-heading"><div><span>TO DO</span><h2>공연 준비 할 일</h2></div><button className="text-button" onClick={() => openAt('tasks')}>{tasks.filter((task) => !task.done).length}개 남음</button></div>{pendingTasks.length ? <div className="home-task-list">{pendingTasks.map((task) => <button key={task.id} onClick={() => openAt('tasks')}><CheckCircle2 /><div><strong>{task.title}</strong><span>{task.assignee ? `${task.assignee} · ` : ''}{task.dueDate ? formatTaskDue(task.dueDate) : '마감일 미정'}</span></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>남은 준비 업무가 없어요</strong><span>할 일 탭에서 새로운 공연 준비 업무를 추가할 수 있어요.</span></div></div>}</section>
 
