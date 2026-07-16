@@ -1332,7 +1332,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
 
 function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, nextEvent = null, pendingTasks = [], attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
   return <div className="app-shell actor-home">
-    <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>배우 연습</span></div></div><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></header>
+    <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>배우 연습</span></div></div><div className="actor-home-header-actions"><button className="actor-share-button" disabled={!production} onClick={() => createTeamInvite(production?.id)} aria-label="팀원 초대 링크 공유"><Upload /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div></header>
     <main className="content actor-home-content">
       {showForm && <section className="inline-create"><div className="compact-heading"><div><span>NEW PRODUCTION</span><h2>새 공연</h2></div><button className="icon-button" onClick={() => setShowForm(false)}><X /></button></div><ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} /></section>}
       {production ? <>
@@ -1343,8 +1343,7 @@ function ActorHome({ session, workspace, productions, production, daysLeft, prog
       </> : <section className="actor-home-empty"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본과 배역, 장면, 음악을 연결해서 연습할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
-    <button className="actor-home-add" onClick={() => setShowForm(true)} aria-label="새 공연 만들기"><Plus /></button>
-    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={production?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
+    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={production?.id} choose={chooseDefaultProduction} createTeam={() => { setProfileOpen(false); setShowForm(true) }} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
     {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
   </div>
 }
@@ -1506,13 +1505,14 @@ function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPass
   </section></main>
 }
 
-function ProfileSheet({ session, workspace, productions, defaultId, choose, invite, close, logout }) {
+function ProfileSheet({ session, workspace, productions, defaultId, choose, createTeam, close, logout }) {
+  const currentProduction = productions.find((item) => item.id === defaultId)
   return <div className="sheet-backdrop" onClick={close}><section className="profile-sheet" onClick={(event) => event.stopPropagation()}>
     <div className="sheet-handle" /><div className="profile-head"><div className="profile-avatar"><UserRound /></div><div><strong>{session.user.email?.split('@')[0] || 'StageFlow 사용자'}</strong><span>{session.user.email}</span></div><button className="icon-button" onClick={close}><X size={19} /></button></div>
-    <div className="profile-workspace"><Users size={18} /><div><span>현재 팀</span><strong>{workspace.name}</strong></div></div>
+    <div className="profile-workspace"><Theater size={18} /><div><span>현재 공연</span><strong>{currentProduction?.title || '선택된 공연 없음'}</strong></div></div>
     <div className="sheet-title"><div><p className="eyebrow">DEFAULT PRODUCTION</p><h3>기본 공연 선택</h3></div><small>홈 화면에 표시할 공연</small></div>
     <div className="default-production-list">{productions.map((item) => <button className={item.id === defaultId ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><div className="production-radio">{item.id === defaultId && <i />}</div><div><strong>{item.title}</strong><span>{item.venue || '장소 미정'} · {item.performance_start_date || '공연일 미정'}</span></div>{item.id === defaultId && <CheckCircle2 />}</button>)}</div>
-    <button className="team-invite-button" onClick={invite}><Upload /><span><b>팀원 초대 링크</b><small>회원가입 후 팀 참가 · 배역 선택</small></span><ChevronRight /></button>
+    {createTeam && <button className="team-invite-button create-production-team" onClick={createTeam}><Plus /><span><b>공연팀 생성</b><small>새 공연 공간과 배우팀을 만듭니다</small></span><ChevronRight /></button>}
     <button className="logout-button" onClick={logout}>로그아웃</button>
   </section></div>
 }
