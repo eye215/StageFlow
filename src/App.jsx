@@ -2201,9 +2201,13 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     return groups
   }, []).sort((a, b) => a.role === '이름 미정' ? 1 : b.role === '이름 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
   async function regroupRoles() {
+    const selectedMembers = cleanupPreview.filter(({ member }) => cleanupSelectedIds.includes(member.id))
+    const matchResults = selectedMembers.flatMap(({ member }) => splitRoleEntries(cleanupRoleDrafts[member.id] ?? member.roleName ?? '').map((role) => analyzeScenesForSplitRole(member.name, role, scenes, member.sceneNumbers || [])))
+    const automaticMatches = matchResults.filter((result) => result.matched).length
+    const fallbackMatches = matchResults.length - automaticMatches
     const changed = await consolidate({ memberIds: cleanupSelectedIds, roleOverrides: cleanupRoleDrafts })
     setCleanupPreviewOpen(false)
-    setGroupNotice(changed ? `배역 이름 ${changed}건을 구분자 기준으로 정리하고 등장 장면을 보존했어요.` : '현재 정리할 배역 이름이나 중복 배우가 없어요.')
+    setGroupNotice(changed ? `배역 이름 ${changed}건 정리 · 장면 자동 매칭 ${automaticMatches}건 · 기존 연결 유지 ${fallbackMatches}건` : '현재 정리할 배역 이름이나 중복 배우가 없어요.')
   }
   async function undoRegroupRoles() {
     const restored = await undoCleanup()
@@ -2292,16 +2296,22 @@ function canonicalActor(name = '') {
 }
 
 function matchScenesForSplitRole(actorName, roleName, scenes, originalSceneNumbers) {
+  return analyzeScenesForSplitRole(actorName, roleName, scenes, originalSceneNumbers).sceneNumbers
+}
+
+function analyzeScenesForSplitRole(actorName, roleName, scenes, originalSceneNumbers) {
   const originals = [...new Set(originalSceneNumbers.map(Number))]
   const actor = canonicalActor(actorName)
   const role = normalizeMatch(roleName)
-  if (!actor || !role) return originals
+  if (!actor || !role) return { sceneNumbers: originals, matched: false }
   const matched = scenes.filter((scene) => {
     if (originals.length && !originals.includes(Number(scene.scene_no))) return false
     const summary = normalizeMatch(scene.summary || '')
     return summary.includes(actor) && summary.includes(role)
   }).map((scene) => Number(scene.scene_no))
-  return matched.length ? [...new Set(matched)].sort((a, b) => a - b) : originals.sort((a, b) => a - b)
+  return matched.length
+    ? { sceneNumbers: [...new Set(matched)].sort((a, b) => a - b), matched: true }
+    : { sceneNumbers: originals.sort((a, b) => a - b), matched: false }
 }
 
 function CastCard({ member, scenes, update, remove, toggleScene, busy }) {
