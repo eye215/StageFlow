@@ -52,6 +52,26 @@
 .actor-call-preview article small { color: #64748b; font-size: 8px; }
 .actor-call-preview article em { color: #94a3b8; font-size: 8px; font-style: normal; white-space: nowrap; }
 
+.actor-call-kit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.actor-call-kit em {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.86);
+  color: #cbd5e1 !important;
+  font-size: 7px !important;
+}
+
+.actor-call-kit svg { width: 9px; height: 9px; color: #a5b4fc; }
+
 .actor-call-share {
   display: flex;
   align-items: center;
