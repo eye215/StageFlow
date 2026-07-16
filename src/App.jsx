@@ -998,7 +998,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
 
         <section className="home-workbench"><div className="compact-heading"><div><span>WORKSPACE</span><h2>지금 할 일</h2></div></div><div className="workbench-grid"><button className="work-main" onClick={() => openAt('import')}><WandSparkles /><div><strong>대본 자동정리</strong><span>PDF에서 장면·인물·소품 추출</span></div><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><div><strong>장면</strong><span>{scenes.length}개</span></div></button><button onClick={() => openAt('props')}><Package /><div><strong>소품</strong><span>{propStats.ready}/{propStats.total} 준비</span></div></button><button onClick={() => openAt('music')}><FileAudio /><div><strong>음악</strong><span>{musicCount}개 파일</span></div></button></div><button className="show-launch" onClick={() => openAt('show')}><Play fill="currentColor" /><div><strong>공연모드</strong><span>장면 순서대로 큐 진행</span></div><ChevronRight /></button></section>
 
-        <section className="home-schedule-block"><div className="compact-heading"><div><span>NEXT CALL</span><h2>다가오는 일정</h2></div><button className="text-button" onClick={() => openAt('schedule')}>일정 관리</button></div>{upcomingEvents.length ? <div className="home-schedule-list">{upcomingEvents.map((event, index) => <button className={index === 0 ? 'next' : ''} key={event.id} onClick={() => openAt('schedule')}><span className="home-schedule-date"><b>{new Date(`${event.date}T00:00:00`).getDate()}</b><small>{new Date(`${event.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</small></span><div><span>{event.type}{index === 0 ? ' · NEXT' : ''}</span><strong>{event.title}</strong><small>{[formatScheduleTimeRange(event), event.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</small>{event.note && <p>{event.note}</p>}</div><ChevronRight /></button>)}</div> : <button className="home-schedule-empty" onClick={() => openAt('schedule')}><CalendarDays /><div><strong>예정된 연습이 없어요</strong><span>다음 연습·리허설·공연 일정을 등록하세요.</span></div><Plus /></button>}</section>
+        <HomeScheduleBlock events={upcomingEvents} scenes={scenes} open={() => openAt('schedule')} />
 
         <section className="home-task-block"><div className="compact-heading"><div><span>TO DO</span><h2>공연 준비 할 일</h2></div><button className="text-button" onClick={() => openAt('tasks')}>{tasks.filter((task) => !task.done).length}개 남음</button></div>{pendingTasks.length ? <div className="home-task-list">{pendingTasks.map((task) => <button key={task.id} onClick={() => openAt('tasks')}><CheckCircle2 /><div><strong>{task.title}</strong><span>{task.assignee ? `${task.assignee} · ` : ''}{task.dueDate ? formatTaskDue(task.dueDate) : '마감일 미정'}</span></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>남은 준비 업무가 없어요</strong><span>할 일 탭에서 새로운 공연 준비 업무를 추가할 수 있어요.</span></div></div>}</section>
 
@@ -1009,6 +1009,20 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
     {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
   </div>
+}
+
+function HomeScheduleBlock({ events, scenes, open }) {
+  const scenesByNumber = new Map(scenes.map((scene) => [String(scene.scene_no), scene]))
+  return <section className="home-schedule-block">
+    <div className="compact-heading"><div><span>NEXT CALL</span><h2>다가오는 일정</h2></div><button className="text-button" onClick={open}>일정 관리</button></div>
+    {events.length ? <div className="home-schedule-list">{events.map((event, index) => {
+      const selectedScenes = (event.sceneNumbers || []).map((number) => scenesByNumber.get(String(number))).filter(Boolean)
+      return <button className={index === 0 ? 'next' : ''} key={event.id} onClick={open}>
+        <span className="home-schedule-date"><b>{new Date(`${event.date}T00:00:00`).getDate()}</b><small>{new Date(`${event.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</small></span>
+        <div><span>{event.type}{index === 0 ? ' · NEXT' : ''}</span><strong>{event.title}</strong><small>{[formatScheduleTimeRange(event), event.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</small>{selectedScenes.length > 0 && <div className="home-call-scenes">{selectedScenes.slice(0, 4).map((scene) => <em key={scene.id}><b>{scene.scene_no}</b>{scene.title}</em>)}{selectedScenes.length > 4 && <em className="more">+{selectedScenes.length - 4}</em>}</div>}{event.note && <p>{event.note}</p>}</div><ChevronRight />
+      </button>
+    })}</div> : <button className="home-schedule-empty" onClick={open}><CalendarDays /><div><strong>예정된 연습이 없어요</strong><span>다음 연습·리허설·공연 일정을 등록하세요.</span></div><Plus /></button>}
+  </section>
 }
 
 function InstallAppCard() {
