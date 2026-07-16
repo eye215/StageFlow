@@ -17,6 +17,7 @@
 .cast-cleanup-role-input:disabled { opacity: .5; }
 .cast-cleanup-preview-list p { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; }
 .cast-cleanup-preview-list p span { padding: 4px 7px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 800; }
+.cast-cleanup-preview-list p span i { margin-left: 5px; color: var(--muted); font-size: 9px; font-style: normal; font-weight: 700; }
 .cast-cleanup-preview-list em { color: var(--muted); font-size: 11px; font-style: normal; }
 .cast-cleanup-empty, .cast-cleanup-more { display: block; margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .cast-cleanup-select-actions { display: flex; gap: 7px; margin-top: 11px; }
