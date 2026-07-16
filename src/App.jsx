@@ -788,9 +788,12 @@ export default function App() {
   async function uploadOrganizedMusic() {
     const matched = pendingMusic.filter((item) => item.sceneNo !== null)
     if (!matched.length) return setNotice('업로드할 파일의 넘버를 하나 이상 선택해주세요.')
+    const oversized = matched.filter((item) => item.file.size > 100 * 1024 * 1024)
+    if (oversized.length) return setNotice(`100MB를 넘는 음악은 업로드할 수 없어요: ${oversized.map((item) => `${item.file.name} (${formatBytes(item.file.size)})`).join(', ')}`)
     setUploadingMusic(true)
     let uploaded = 0
     const uploadedItems = []
+    const failures = []
     for (const item of matched) {
       const safeName = safeStorageFileName(item.file.name)
       const path = `${workspace.id}/${selected.id}/music/${item.sceneNo}/${safeName}`
@@ -799,13 +802,14 @@ export default function App() {
         uploaded += 1
         uploadedItems.push(item)
       }
-      else setNotice(`음악 업로드 실패: ${error.message}`)
+      else failures.push(`${item.file.name} (${formatBytes(item.file.size)}): ${error.message}`)
     }
     setUploadingMusic(false)
     setPendingMusic([])
     if (uploadedItems.length) await linkUploadedMusicCues(uploadedItems)
     await loadMusic(selected.id)
     if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장하고 음향 큐까지 연결했어요.`)
+    else if (failures.length) setNotice(`음악 업로드 실패 · ${failures.join(' / ')} · Supabase 버킷 용량 제한 SQL을 적용했는지 확인해주세요.`)
   }
 
   async function linkUploadedMusicCues(items) {
@@ -2987,13 +2991,15 @@ function MaterialsPanel({ workspace, production }) {
   async function uploadMaterials(fileList) {
     const selected = [...fileList]
     if (!selected.length) return
+    const oversized = selected.filter((file) => file.size > 100 * 1024 * 1024)
+    if (oversized.length) return setStatus(`100MB 초과 파일: ${oversized.map((file) => `${file.name} (${formatBytes(file.size)})`).join(', ')}`)
     setLoading(true)
     let uploaded = 0
     for (const file of selected) {
       const path = `${base}/${category}/${safeStorageFileName(file.name)}`
       const { error } = await supabase.storage.from('stageflow-files').upload(path, file, { contentType: file.type || 'application/octet-stream' })
       if (!error) uploaded += 1
-      else setStatus(`업로드 실패: ${error.message}`)
+      else setStatus(`업로드 실패 · ${file.name} (${formatBytes(file.size)}): ${error.message}`)
     }
     await loadMaterials()
     if (uploaded) setStatus(`${uploaded}개 자료를 업로드했어요.`)
