@@ -895,9 +895,18 @@ export default function App() {
   async function importCastFromScenes() {
     const next = mergeCastFromScenes(castMembers, scenes)
     const added = next.length - castMembers.length
-    if (!added) return setNotice('장면에서 새로 가져올 배우·배역이 없어요.')
+    const previousById = new Map(castMembers.map((member) => [member.id, new Set(member.sceneNumbers || [])]))
+    const linked = next.reduce((sum, member) => {
+      const previous = previousById.get(member.id)
+      if (!previous) return sum
+      return sum + (member.sceneNumbers || []).filter((sceneNo) => !previous.has(sceneNo)).length
+    }, 0)
+    if (!added && !linked) return setNotice('장면에서 새로 가져오거나 연결할 배우·배역이 없어요.')
     setBusy(true)
-    if (await persistCastData(next)) setNotice(`${added}명의 배우·배역을 장면에서 가져왔어요.`)
+    if (await persistCastData(next)) {
+      const result = [added ? `새 배우·배역 ${added}개` : '', linked ? `기존 배우 등장 장면 ${linked}개` : ''].filter(Boolean).join(' · ')
+      setNotice(`${result}를 장면 정보에서 자동 연결했어요.`)
+    }
     setBusy(false)
   }
 
@@ -1346,7 +1355,7 @@ function splitRoleEntries(value) {
 
 function mergeCastFromScenes(existing, scenes) {
   const members = existing.map((member) => ({ ...member, sceneNumbers: [...(member.sceneNumbers || [])] }))
-  const findMember = (name, roleName) => members.find((member) => normalizeMatch(member.name) === normalizeMatch(name) && normalizeMatch(member.roleName || member.name) === normalizeMatch(roleName || name))
+  const findMember = (name, roleName) => members.find((member) => canonicalActor(member.name) === canonicalActor(name) && normalizeMatch(member.roleName || member.name) === normalizeMatch(roleName || name))
   const add = (name, roleName, type, sceneNo) => {
     const cleanName = name.trim()
     const cleanRole = roleName.trim()
