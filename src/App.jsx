@@ -623,6 +623,26 @@ export default function App() {
     if (await persistPropData([...propItems, ...extracted])) setNotice(`${extracted.length}개 항목을 장면에서 가져왔어요.`)
   }
 
+  async function restoreProductionBackup(backup) {
+    if (!backup || backup.format !== 'stageflow-backup' || !Array.isArray(backup.scenes) || !Array.isArray(backup.castMembers) || !Array.isArray(backup.props)) return { ok: false, message: 'StageFlow 백업 파일 형식이 아니에요.' }
+    if (!window.confirm(`현재 공연 데이터를 백업 내용으로 교체할까요?\n\n장면 ${backup.scenes.length}개 · 배우 ${backup.castMembers.length}명 · 소품 ${backup.props.length}개`)) return { ok: false, cancelled: true }
+    setBusy(true)
+    const sceneRows = backup.scenes.map((scene, index) => ({ production_id: selected.id, title: String(scene.title || `장면 ${index + 1}`), act_no: Number(scene.act_no) || 1, scene_no: Number(scene.scene_no) || index + 1, sort_order: index, summary: String(scene.summary || '') }))
+    const { error: deleteError } = await supabase.from('scenes').delete().eq('production_id', selected.id)
+    if (deleteError) { setBusy(false); return { ok: false, message: `기존 장면 정리 실패: ${deleteError.message}` } }
+    if (sceneRows.length) {
+      const { error: sceneError } = await supabase.from('scenes').insert(sceneRows)
+      if (sceneError) { setBusy(false); return { ok: false, message: `장면 복원 실패: ${sceneError.message}` } }
+    }
+    const castSaved = await persistCastData(backup.castMembers)
+    const propsSaved = await persistPropData(backup.props)
+    await loadScenes(selected.id)
+    setBusy(false)
+    if (!castSaved || !propsSaved) return { ok: false, message: '일부 배우·소품 정보를 복원하지 못했어요.' }
+    setNotice('공연 백업을 복원했어요.')
+    return { ok: true }
+  }
+
   const selectedMusicCount = useMemo(() => Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0), [musicByScene])
   const progress = useMemo(() => calculateReadiness(scenes, selectedMusicCount, {
     total: propItems.length,
@@ -676,6 +696,7 @@ export default function App() {
       propItems={propItems} propForm={propForm} setPropForm={setPropForm}
       showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
       addPropItem={addPropItem} updatePropItem={updatePropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
+      restoreProductionBackup={restoreProductionBackup}
     />
   )
 
@@ -845,7 +866,7 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, clos
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -1054,7 +1075,7 @@ function ProductionView(props) {
       {tab === 'rehearsal' && <RehearsalPanel workspace={workspace} production={production} scenes={scenes} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
-      {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} />}
+      {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{castMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.id === briefingMemberId ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
@@ -1082,7 +1103,7 @@ function ShowEventLog({ events }) {
   return <section className="show-event-log"><div><Clock3 /><strong>공연 기록</strong><span>{events.length}건</span></div><div className="show-report-summary"><span><b>{durationMinutes}</b>분</span><span><b>{goCount}</b>GO</span><span><b>{holdEvents.length}</b>HOLD</span><button onClick={shareReport}><Upload /> 리포트</button></div>{reportStatus && <p>{reportStatus}</p>}<ol>{recent.map((event) => <li className={`event-${event.type.toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
 }
 
-function BackupPanel({ workspace, production, scenes, castMembers, propItems, musicByScene }) {
+function BackupPanel({ workspace, production, scenes, castMembers, propItems, musicByScene, restore, busy }) {
   const [status, setStatus] = useState('')
   const musicCount = Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)
   async function exportBackup() {
@@ -1111,7 +1132,16 @@ function BackupPanel({ workspace, production, scenes, castMembers, propItems, mu
       }
     } catch (error) { if (error?.name !== 'AbortError') setStatus('백업 파일을 만들지 못했어요.') }
   }
-  return <section className="backup-panel"><div className="backup-hero"><Download /><div><p className="eyebrow">PRODUCTION BACKUP</p><h2>공연 데이터 백업</h2><p>현재 공연의 운영 정보를 한 파일로 보관합니다.</p></div></div><div className="backup-summary"><article><b>{scenes.length}</b><span>장면</span></article><article><b>{castMembers.length}</b><span>배우</span></article><article><b>{propItems.length}</b><span>소품</span></article><article><b>{musicCount}</b><span>음악 연결</span></article></div><article className="backup-info"><FileText /><div><strong>백업에 포함되는 정보</strong><p>공연 기본정보, 장면 요약, 배우·배역·등장 장면, 의상·큐, 소품 IN/OUT, 음악 파일 연결 경로</p><small>음악·PDF 원본 파일 자체는 포함되지 않습니다.</small></div></article><button className="primary backup-button" onClick={exportBackup}><Download /> JSON 백업 저장</button>{status && <p className="notice">{status}</p>}</section>
+  async function importBackup(file) {
+    if (!file) return
+    try {
+      const backup = JSON.parse(await file.text())
+      const result = await restore(backup)
+      if (result.ok) setStatus(`복원 완료 · 장면 ${backup.scenes.length}개, 배우 ${backup.castMembers.length}명, 소품 ${backup.props.length}개`)
+      else if (!result.cancelled) setStatus(result.message || '백업을 복원하지 못했어요.')
+    } catch { setStatus('JSON 백업 파일을 읽지 못했어요.') }
+  }
+  return <section className="backup-panel"><div className="backup-hero"><Download /><div><p className="eyebrow">PRODUCTION BACKUP</p><h2>공연 데이터 백업</h2><p>현재 공연의 운영 정보를 한 파일로 보관합니다.</p></div></div><div className="backup-summary"><article><b>{scenes.length}</b><span>장면</span></article><article><b>{castMembers.length}</b><span>배우</span></article><article><b>{propItems.length}</b><span>소품</span></article><article><b>{musicCount}</b><span>음악 연결</span></article></div><article className="backup-info"><FileText /><div><strong>백업에 포함되는 정보</strong><p>공연 기본정보, 장면 요약, 배우·배역·등장 장면, 의상·큐, 소품 IN/OUT, 음악 파일 연결 경로</p><small>음악·PDF 원본 파일 자체는 포함되지 않습니다.</small></div></article><button className="primary backup-button" disabled={busy} onClick={exportBackup}><Download /> JSON 백업 저장</button><label className="restore-backup-button"><Upload /><span><b>백업에서 복원</b><small>현재 장면·배우·소품 데이터가 선택한 백업으로 교체됩니다.</small></span><input type="file" accept="application/json,.json" disabled={busy} onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = '' }} /></label>{status && <p className="notice">{status}</p>}</section>
 }
 
 function ProductionMoreSheet({ active, close, choose }) {
