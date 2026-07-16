@@ -2131,6 +2131,28 @@ function ProductionMoreSheet({ active, close, choose }) {
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid" onSubmit={submit}><input required placeholder="공연명" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /><input placeholder="공연 장소" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /><button className="primary" disabled={busy}>공연 만들기</button></form> }
 function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid" onSubmit={submit}><input required placeholder="장면 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /><div className="two-col"><input type="number" min="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /><input type="number" min="0" step="0.1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></div><textarea placeholder="장면 설명" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /><button className="primary" disabled={busy}>장면 저장</button></form> }
 function ProductionCard({ item, index, open, remove }) { return <article className="production-card" onClick={open}><div className={`poster poster-${index % 3}`}><Theater size={38} /></div><div className="production-info"><div className="card-top"><span className="status">준비 중</span><button className="icon-button danger" onClick={(e) => { e.stopPropagation(); remove() }} aria-label="공연 삭제"><Trash2 size={17} /></button></div><h3>{item.title}</h3><p>{item.venue || '장소 미정'}</p><small>{item.performance_start_date || '공연일 미정'}</small></div></article> }
+function parseSceneSummarySections(summary = '') {
+  const result = { main: [], ensemble: [], backstage: [], props: [], status: [], other: [] }
+  let section = ''
+  summary.split('\n').map((line) => line.trim()).filter(Boolean).forEach((line) => {
+    const field = line.match(/^(메인 배역|등장 앙상블|백 앙상블)\s*[:：]\s*(.*)$/)
+    if (field) {
+      const key = field[1] === '메인 배역' ? 'main' : field[1] === '등장 앙상블' ? 'ensemble' : 'backstage'
+      result[key] = splitRoleEntries(field[2]).filter(Boolean)
+      section = key
+      return
+    }
+    if (/^소품\s*\/\s*대도구\s*[:：]?$/.test(line)) { section = 'props'; return }
+    const prop = line.match(/^-?\s*\[(소품|대도구)\]\s*(.+?)(?:\s*·\s*In\s*(.*?))?(?:\s*·\s*Out\s*(.*?))?(?:\s*·\s*(.*))?$/i)
+    if (prop) { result.props.push({ kind: prop[1], name: prop[2].trim(), inBy: prop[3]?.trim() || '', outBy: prop[4]?.trim() || '', note: prop[5]?.trim() || '' }); return }
+    if (/^(진도|현황|상태|메모)\s*[:：]/.test(line)) { result.status.push(line.replace(/^[^:：]+[:：]\s*/, '')); return }
+    if (!line.startsWith('[') && line !== '-') result.other.push(line.replace(/^[-•]\s*/, ''))
+  })
+  return result
+}
+function ScenePeopleRow({ label, tone, people }) {
+  return <div className={`scene-people-row ${tone}`}><div><Users /><strong>{label}</strong><span>{people.length}</span></div>{people.length ? <p>{people.map((person) => <em key={person}>{person}</em>)}</p> : <small>등록 없음</small>}</div>
+}
 function SceneCard({ scene, update, remove }) {
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -2143,6 +2165,21 @@ function SceneCard({ scene, update, remove }) {
     if (await update(scene.id, draft)) setEditing(false)
   }
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
+  const sections = parseSceneSummarySections(scene.summary)
+  const castCount = sections.main.length + sections.ensemble.length + sections.backstage.length
+  return <article className={expanded ? 'scene-hub-card open' : 'scene-hub-card'}>
+    <button className="scene-hub-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="scene-hub-number">{scene.scene_no}</span><div><small>ACT {scene.act_no}</small><h3>{scene.title}</h3><p><Users /> {castCount} 배역 <Package /> {sections.props.length} 준비물</p></div><ChevronRight /></button>
+    {expanded && <div className="scene-hub-body">
+      <section className="scene-cast-sections">
+        <ScenePeopleRow label="메인 배역" tone="main" people={sections.main} />
+        <ScenePeopleRow label="등장 앙상블" tone="ensemble" people={sections.ensemble} />
+        <ScenePeopleRow label="백 앙상블" tone="backstage" people={sections.backstage} />
+      </section>
+      <section className="scene-prop-section"><div className="scene-detail-title"><Package /><strong>소품·대도구</strong><span>{sections.props.length}</span></div>{sections.props.length ? <div>{sections.props.map((item, index) => <article key={`${item.name}-${index}`}><span className={item.kind === '대도구' ? 'set' : ''}>{item.kind}</span><div><b>{item.name}</b><small><em>IN</em>{item.inBy || '미정'} <i /> <em>OUT</em>{item.outBy || '미정'}</small>{item.note && <p>{item.note}</p>}</div></article>)}</div> : <p className="scene-section-empty">등록된 소품이 없어요.</p>}</section>
+      {(sections.status.length > 0 || sections.other.length > 0) && <section className="scene-notes-section"><div className="scene-detail-title"><FileText /><strong>연습 메모</strong></div>{[...sections.status, ...sections.other].map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</section>}
+      <div className="scene-hub-actions"><button onClick={() => setEditing(true)}><Pencil /> 정보 수정</button><button className="danger" onClick={remove}><Trash2 /> 장면 삭제</button></div>
+    </div>}
+  </article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
 function ImportPanel({ workspace, production, scenes, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
