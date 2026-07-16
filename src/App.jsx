@@ -28,6 +28,7 @@ import './role-grouping.css'
 import './cast-scenes-ux.css'
 import './cast-call-sheet.css'
 import './backup.css'
+import './invite.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -76,6 +77,9 @@ export default function App() {
   const [propForm, setPropForm] = useState({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
   const [showPropForm, setShowPropForm] = useState(false)
   const [propFilter, setPropFilter] = useState('미준비')
+  const [inviteProductionId, setInviteProductionId] = useState(() => new URLSearchParams(window.location.search).get('production') || '')
+  const [inviteCastMembers, setInviteCastMembers] = useState([])
+  const [showRoleClaim, setShowRoleClaim] = useState(() => Boolean(new URLSearchParams(window.location.search).get('invite')))
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -135,6 +139,12 @@ export default function App() {
 
   async function loadWorkspace() {
     setLoading(true)
+    const inviteToken = new URLSearchParams(window.location.search).get('invite')
+    if (inviteToken) {
+      const { data: joinedProduction, error: joinError } = await supabase.rpc('join_workspace_by_invite', { invite_token: inviteToken })
+      if (joinError) setNotice(`팀 초대 확인 실패: ${joinError.message}`)
+      else if (joinedProduction) setInviteProductionId(String(joinedProduction))
+    }
     const { data, error } = await supabase
       .from('workspace_members')
       .select('workspace_id, workspaces(*)')
@@ -770,7 +780,8 @@ export default function App() {
     chooseDefaultProduction={chooseDefaultProduction} notice={notice}
     showForm={showProductionForm} setShowForm={setShowProductionForm}
     productionForm={productionForm} setProductionForm={setProductionForm}
-    createProduction={createProduction} busy={busy}
+    createProduction={createProduction} busy={busy} createTeamInvite={createTeamInvite}
+    showRoleClaim={showRoleClaim} inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole}
   />
 
   return (
@@ -813,7 +824,7 @@ export default function App() {
   )
 }
 
-function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, tasks, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy }) {
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, tasks, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
   const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
   const pendingTasks = [...tasks].filter((task) => !task.done).sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'))).slice(0, 3)
   return <div className="app-shell home-v2">
@@ -838,7 +849,8 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       </> : <section className="empty-home"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본, 장면, 배우, 소품과 음악을 한곳에서 정리할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
-    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
+    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
+    {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
   </div>
 }
 
@@ -909,14 +921,21 @@ function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPass
   </section></main>
 }
 
-function ProfileSheet({ session, workspace, productions, defaultId, choose, close, logout }) {
+function ProfileSheet({ session, workspace, productions, defaultId, choose, invite, close, logout }) {
   return <div className="sheet-backdrop" onClick={close}><section className="profile-sheet" onClick={(event) => event.stopPropagation()}>
     <div className="sheet-handle" /><div className="profile-head"><div className="profile-avatar"><UserRound /></div><div><strong>{session.user.email?.split('@')[0] || 'StageFlow 사용자'}</strong><span>{session.user.email}</span></div><button className="icon-button" onClick={close}><X size={19} /></button></div>
     <div className="profile-workspace"><Users size={18} /><div><span>현재 팀</span><strong>{workspace.name}</strong></div></div>
     <div className="sheet-title"><div><p className="eyebrow">DEFAULT PRODUCTION</p><h3>기본 공연 선택</h3></div><small>홈 화면에 표시할 공연</small></div>
     <div className="default-production-list">{productions.map((item) => <button className={item.id === defaultId ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><div className="production-radio">{item.id === defaultId && <i />}</div><div><strong>{item.title}</strong><span>{item.venue || '장소 미정'} · {item.performance_start_date || '공연일 미정'}</span></div>{item.id === defaultId && <CheckCircle2 />}</button>)}</div>
+    <button className="team-invite-button" onClick={invite}><Upload /><span><b>팀원 초대 링크</b><small>회원가입 후 팀 참가 · 배역 선택</small></span><ChevronRight /></button>
     <button className="logout-button" onClick={logout}>로그아웃</button>
   </section></div>
+}
+
+function RoleClaimSheet({ members, choose, busy }) {
+  const [query, setQuery] = useState('')
+  const available = members.filter((member) => !member.userId && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
+  return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배역을 선택하세요</h2><p className="muted">선택하면 이 팀에 참가하고 개인 공연 브리핑이 자동 설정돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{available.map((member) => <button key={member.id} disabled={busy} onClick={() => choose(member.id)}><UserRound /><span><b>{member.roleName || '배역 미정'}</b><small>{member.name} · {member.type}</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !available.length && <p className="notice">선택 가능한 배역이 없어요.</p>}</section></div>
 }
 
 function ProductionView(props) {
@@ -1650,6 +1669,47 @@ function MaterialsPanel({ workspace, production }) {
     }))
     setFiles(groups.flat())
     setLoading(false)
+  }
+
+  useEffect(() => {
+    if (workspace && inviteProductionId && showRoleClaim) loadInviteRoles(inviteProductionId)
+  }, [workspace, inviteProductionId, showRoleClaim])
+
+  async function loadInviteRoles(productionId) {
+    const { data, error } = await supabase.storage.from('stageflow-files').download(castDataPath(productionId))
+    if (error) return setInviteCastMembers([])
+    try {
+      const parsed = JSON.parse(await data.text())
+      setInviteCastMembers(Array.isArray(parsed.members) ? parsed.members : [])
+    } catch { setInviteCastMembers([]) }
+  }
+
+  async function createTeamInvite() {
+    const productionId = defaultProductionId || productions[0]?.id
+    if (!productionId) return setNotice('먼저 공연을 하나 만들어주세요.')
+    const { data, error } = await supabase.rpc('create_workspace_invite', { target_workspace_id: workspace.id, target_production_id: productionId })
+    if (error) return setNotice(`초대 링크 생성 실패: ${error.message}`)
+    const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(data)}&production=${encodeURIComponent(productionId)}`
+    try {
+      if (navigator.share) await navigator.share({ title: `${workspace.name} StageFlow 초대`, text: '회원가입 후 팀 참가와 배역 선택을 진행해주세요.', url: link })
+      else await navigator.clipboard.writeText(link)
+      setNotice('팀 초대 링크를 공유했어요.')
+    } catch (error) { if (error?.name !== 'AbortError') setNotice(`초대 링크 공유 실패: ${error.message}`) }
+  }
+
+  async function claimInviteRole(memberId) {
+    const member = inviteCastMembers.find((item) => item.id === memberId)
+    if (!member || (member.userId && member.userId !== session.user.id)) return
+    setBusy(true)
+    const next = inviteCastMembers.map((item) => item.id === memberId ? { ...item, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : item)
+    const body = new Blob([JSON.stringify({ members: next, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(inviteProductionId), body, { upsert: true, contentType: 'application/json' })
+    setBusy(false)
+    if (error) return setNotice(`배역 선택 실패: ${error.message}`)
+    window.localStorage.setItem(`stageflow-briefing-${inviteProductionId}`, memberId)
+    setShowRoleClaim(false)
+    window.history.replaceState({}, '', window.location.pathname)
+    setNotice(`${member.roleName || member.name} 배역으로 팀 참가가 완료됐어요.`)
   }
 
   useEffect(() => { loadMaterials() }, [production.id])
