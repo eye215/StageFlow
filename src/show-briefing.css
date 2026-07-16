@@ -64,3 +64,12 @@
 .cursor-sync > span { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
 .cursor-sync.active { color: #c4b5fd; }
 .cursor-sync.active > span { background: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,.1); }
+.show-control-toggle { display: flex; align-items: center; gap: 9px; width: 100%; margin-top: 9px; padding: 11px 12px; border: 1px solid rgba(165,180,252,.13); border-radius: 14px; background: rgba(15,23,42,.72); color: #cbd5e1; text-align: left; }
+.show-control-toggle > svg { width: 18px; color: #94a3b8; }
+.show-control-toggle > span { display: grid; flex: 1; gap: 2px; }
+.show-control-toggle b { font-size: 10px; }
+.show-control-toggle small { color: #64748b; font-size: 8px; }
+.show-control-toggle > strong { padding: 5px 7px; border-radius: 7px; background: rgba(148,163,184,.08); color: #94a3b8; font-size: 8px; }
+.show-control-toggle.controller { border-color: rgba(251,191,36,.28); background: rgba(120,53,15,.14); }
+.show-control-toggle.controller > svg,.show-control-toggle.controller > strong { color: #fbbf24; }
+.show-control-toggle.controller > strong { background: rgba(245,158,11,.12); }

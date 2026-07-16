@@ -755,6 +755,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
+      {tab === 'show' && <button className={showController ? 'show-control-toggle controller' : 'show-control-toggle'} onClick={toggleShowController}><Clapperboard /><span><b>{showController ? '진행 제어 중' : '무대감독 장면 따라가기'}</b><small>{showController ? '이 기기의 이전·GO 이동을 팀에 전송합니다.' : '팀에서 공유된 현재 장면으로 자동 이동합니다.'}</small></span><strong>{showController ? 'CONTROL' : 'FOLLOW'}</strong></button>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
@@ -858,9 +859,17 @@ function ProductionView(props) {
   const [wakeLockActive, setWakeLockActive] = useState(false)
   const [showCursorLoaded, setShowCursorLoaded] = useState(false)
   const [showCursorSyncedAt, setShowCursorSyncedAt] = useState(null)
+  const [showController, setShowController] = useState(() => window.localStorage.getItem(`stageflow-show-controller-${production.id}`) === 'true')
   const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
+  function toggleShowController() {
+    setShowController((value) => {
+      const nextValue = !value
+      window.localStorage.setItem(`stageflow-show-controller-${production.id}`, String(nextValue))
+      return nextValue
+    })
+  }
   useEffect(() => {
     let active = true
     async function syncReadiness() {
@@ -919,16 +928,16 @@ function ProductionView(props) {
       setShowCursorLoaded(true)
     }
     syncShowCursor()
-    const timer = window.setInterval(syncShowCursor, 3000)
-    return () => { active = false; window.clearInterval(timer) }
-  }, [tab, showCursorPath, scenes.length, setShowIndex])
+    const timer = showController ? null : window.setInterval(syncShowCursor, 3000)
+    return () => { active = false; if (timer) window.clearInterval(timer) }
+  }, [tab, showCursorPath, scenes.length, setShowIndex, showController])
   useEffect(() => {
-    if (tab !== 'show' || !showCursorLoaded || !scenes[showIndex]) return
+    if (tab !== 'show' || !showController || !showCursorLoaded || !scenes[showIndex]) return
     const payload = { index: showIndex, sceneNo: scenes[showIndex].scene_no, updatedAt: new Date().toISOString() }
     supabase.storage.from('stageflow-files').upload(showCursorPath, new Blob([JSON.stringify(payload)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' }).then(({ error }) => {
       if (!error) setShowCursorSyncedAt(new Date())
     })
-  }, [showIndex, showCursorLoaded, showCursorPath, tab, scenes])
+  }, [showIndex, showController, showCursorLoaded, showCursorPath, tab, scenes])
   const currentCast = current ? castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
