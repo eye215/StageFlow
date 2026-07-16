@@ -23,6 +23,7 @@ import './connected-overview.css'
 import './actor-home.css'
 import './scene-hub.css'
 import './scene-card-polish.css'
+import './production-create-modal.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
