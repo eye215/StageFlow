@@ -1694,8 +1694,11 @@ function ProductionView(props) {
     else window.localStorage.removeItem(`stageflow-briefing-${production.id}`)
   }
   async function togglePersonalReady(sceneNo) {
-    const key = `${briefingMemberId}-${sceneNo}`
-    const nextValue = { ...personalReady, [key]: !personalReady[key] }
+    if (!briefingMember) return
+    const actorMembers = briefingMembers.length ? briefingMembers : [briefingMember]
+    const isReady = actorMembers.some((member) => personalReady[`${member.id}-${sceneNo}`])
+    const nextValue = { ...personalReady }
+    actorMembers.forEach((member) => { nextValue[`${member.id}-${sceneNo}`] = !isReady })
     setPersonalReady(nextValue)
     window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, JSON.stringify(nextValue))
     const { error } = await supabase.storage.from('stageflow-files').upload(readinessPath, new Blob([JSON.stringify(nextValue)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
