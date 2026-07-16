@@ -28,6 +28,30 @@ create table if not exists public.production_people (
   unique (production_id, display_name)
 );
 
+-- 이전 StageFlow 스키마에 production_people 테이블이 이미 있고 이름 컬럼이
+-- `name`으로 만들어진 경우를 안전하게 승격합니다. CREATE TABLE IF NOT EXISTS는
+-- 기존 테이블에 새 컬럼을 추가하지 않으므로 인덱스 생성 전에 보정해야 합니다.
+alter table public.production_people add column if not exists display_name text;
+alter table public.production_people add column if not exists contact_note text not null default '';
+alter table public.production_people add column if not exists is_active boolean not null default true;
+alter table public.production_people add column if not exists created_at timestamptz not null default now();
+alter table public.production_people add column if not exists updated_at timestamptz not null default now();
+
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'production_people' and column_name = 'name'
+  ) then
+    execute 'update public.production_people set display_name = coalesce(nullif(display_name, ''''), nullif(name, ''''), ''이름 미정'')';
+  else
+    update public.production_people
+    set display_name = coalesce(nullif(display_name, ''), '이름 미정');
+  end if;
+end $$;
+
+alter table public.production_people alter column display_name set not null;
+
 create table if not exists public.production_roles (
   id uuid primary key default gen_random_uuid(),
   production_id uuid not null references public.productions(id) on delete cascade,
@@ -74,6 +98,7 @@ create table if not exists public.scene_cast_assignments (
 
 create index if not exists production_pairs_production_idx on public.production_pairs(production_id, sort_order);
 create index if not exists production_people_production_idx on public.production_people(production_id, display_name);
+create unique index if not exists production_people_name_unique on public.production_people(production_id, lower(display_name));
 create index if not exists production_people_user_idx on public.production_people(user_id) where user_id is not null;
 create index if not exists production_roles_production_idx on public.production_roles(production_id, depth, sort_order);
 create index if not exists pair_cast_pair_idx on public.pair_cast_assignments(pair_id);
