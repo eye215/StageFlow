@@ -897,6 +897,27 @@ export default function App() {
     setBusy(false)
   }
 
+  async function consolidateCastDuplicates() {
+    const grouped = new Map()
+    for (const member of castMembers) {
+      const key = `${canonicalActor(member.name)}::${normalizeMatch(member.roleName || member.name)}`
+      if (!grouped.has(key)) { grouped.set(key, { ...member, sceneNumbers: [...new Set(member.sceneNumbers || [])] }); continue }
+      const current = grouped.get(key)
+      current.sceneNumbers = [...new Set([...(current.sceneNumbers || []), ...(member.sceneNumbers || [])])].sort((a, b) => Number(a) - Number(b))
+      current.notes = [...new Set([current.notes, member.notes].filter(Boolean))].join(' · ')
+      if (!current.userId && member.userId) Object.assign(current, { userId: member.userId, email: member.email, claimedAt: member.claimedAt })
+      if ((member.name || '').trim().length < (current.name || '').trim().length) current.name = member.name.trim()
+    }
+    const next = [...grouped.values()]
+    const removed = castMembers.length - next.length
+    if (!removed) { setNotice('합칠 중복 배우·배역이 없어요.'); return 0 }
+    setBusy(true)
+    const saved = await persistCastData(next)
+    setBusy(false)
+    if (saved) setNotice(`중복 배우·배역 ${removed}개를 합치고 등장 장면을 통합했어요.`)
+    return saved ? removed : 0
+  }
+
   async function changeMyProductionRole(memberId) {
     const target = castMembers.find((member) => member.id === memberId)
     if (target?.userId && target.userId !== session.user.id) { setNotice('이미 다른 팀원이 선택한 배역이에요.'); return false }
@@ -1064,6 +1085,7 @@ export default function App() {
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
       showCastForm={showCastForm} setShowCastForm={setShowCastForm}
       addCastMember={addCastMember} updateCastMember={updateCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene} importCastFromScenes={importCastFromScenes}
+      consolidateCastDuplicates={consolidateCastDuplicates}
       propItems={propItems} propForm={propForm} setPropForm={setPropForm}
       showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
       addPropItem={addPropItem} updatePropItem={updatePropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
@@ -1339,6 +1361,7 @@ function ProductionView(props) {
   const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const current = scenes[showIndex]
   const pdfExtractionReport = props.pdfExtractionReport
+  const consolidateCastDuplicates = props.consolidateCastDuplicates
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
   const [completedCues, setCompletedCues] = useState({})
@@ -1602,7 +1625,7 @@ function ProductionView(props) {
       {tab === 'overview' && <PreparationHealth alerts={preparationAlerts} open={setTab} />}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} castMembers={castMembers} session={session} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
-      {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
+      {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
@@ -1984,7 +2007,7 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
     </>}
   </section>
 }
-function CastPanel({ members, scenes, propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, importFromScenes, busy }) {
+function CastPanel({ members, scenes, propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, importFromScenes, consolidate, busy }) {
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
@@ -2006,15 +2029,15 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     } else groups.push({ key, role: actor, aliases: [actor], members: [member] })
     return groups
   }, []).sort((a, b) => a.role === '이름 미정' ? 1 : b.role === '이름 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
-  function regroupRoles() {
-    const merged = roleGroups.filter((group) => group.aliases.length > 1).length
-    setGroupNotice(merged ? `이름 표기가 비슷한 배우 ${merged}개 그룹을 다시 묶었어요.` : '현재 배우 이름이 가장 깔끔하게 묶여 있어요.')
+  async function regroupRoles() {
+    const merged = await consolidate()
+    setGroupNotice(merged ? `중복 배우·배역 ${merged}개를 합치고 등장 장면을 보존했어요.` : '현재 중복된 배우·배역이 없어요.')
   }
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST</p><h2>배우</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 추가</button></div>
     <section className="cast-summary compact-summary"><article><strong>{actorCount}</strong><span>배우</span></article><article><strong>{roleCount}</strong><span>배역</span></article><article><strong>{linkedSceneCount}</strong><span>연결 장면</span></article></section>
     <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배우별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
-    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>배우·배역 자동 연결</small></span></button>{!!members.length && <button onClick={regroupRoles}><Sparkles /><span><b>이름 정리</b><small>비슷한 배우 묶기</small></span></button>}</div>
+    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>구분자 분석 · 배우·배역 연결</small></span></button>{!!members.length && <button disabled={busy} onClick={regroupRoles}><Sparkles /><span><b>중복 정리</b><small>같은 배우·배역과 등장 장면 병합</small></span></button>}</div>
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
