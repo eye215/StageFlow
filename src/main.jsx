@@ -28,6 +28,7 @@ import './mobile-system.css'
 import './visual-refresh.css'
 import './design-v5.css'
 import './shared-player.css'
+import './mobile-v6.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
