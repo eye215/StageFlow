@@ -97,6 +97,14 @@ input::placeholder,textarea::placeholder{color:#656b74!important}
 .sheet-handle{background:#444950!important}
 .empty{border-color:var(--g-line)!important;background:rgba(21,23,26,.5)!important}.empty>svg{color:var(--g-accent)!important}.empty p,.empty span{color:var(--g-muted)!important}
 
+.cast-form{gap:14px!important}
+.cast-field{display:grid;gap:7px;min-width:0}
+.cast-field>span{color:var(--g-text);font-size:13px;font-weight:800;letter-spacing:-.01em}
+.cast-field>span small{margin-left:6px;color:var(--g-accent);font-size:10px;font-weight:800}
+.cast-field>small{color:var(--g-muted);font-size:11px;line-height:1.45}
+.pair-group-field{padding:13px;border:1px solid rgba(255,101,74,.3);border-radius:14px;background:rgba(255,101,74,.045)}
+.pair-group-field input{border-color:rgba(255,101,74,.36)!important}
+
 @media(max-width:600px){
   .actor-home-title h2,.section-heading h2{font-weight:900}
   .production-primary-nav button.active{box-shadow:none!important}
