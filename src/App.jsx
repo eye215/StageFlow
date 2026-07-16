@@ -752,6 +752,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
 
         <section className="attention-block"><div className="compact-heading"><div><span>CHECK</span><h2>확인 필요한 장면</h2></div><button className="text-button" onClick={() => openAt('scenes')}>전체 장면</button></div>{attentionScenes.length ? <div className="attention-list">{attentionScenes.map((scene) => <button key={scene.id} onClick={() => openAt('scenes')}><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{extractAttention(scene.summary)}</small></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>급한 확인 항목이 없어요</strong><span>장면 요약의 ‘미정·논의·확인 필요’를 자동으로 모읍니다.</span></div></div>}</section>
       </> : <section className="empty-home"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본, 장면, 배우, 소품과 음악을 한곳에서 정리할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
+      {tab === 'show' && briefingMember && current && <section className="next-appearance-card"><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex}장면 뒤</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
@@ -859,6 +860,10 @@ function ProductionView(props) {
   const briefingNextProps = briefingMember ? nextProps.filter((item) => assignmentMatches(item.inBy, briefingMember)) : nextProps
   const briefingCurrentCostumes = briefingMember ? currentCostumes.filter((item) => assignmentMatches(item.role, briefingMember)) : currentCostumes
   const briefingNextCostumes = briefingMember ? nextCostumes.filter((item) => assignmentMatches(item.role, briefingMember)) : nextCostumes
+  const nextAppearanceIndex = briefingMember ? scenes.findIndex((scene, index) => index > showIndex && (briefingMember.sceneNumbers || []).includes(scene.scene_no)) : -1
+  const nextAppearance = nextAppearanceIndex >= 0 ? scenes[nextAppearanceIndex] : null
+  const nextAppearanceCostumes = nextAppearance && briefingMember ? parseSceneCostumes(nextAppearance.summary).filter((item) => assignmentMatches(item.role, briefingMember)) : []
+  const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && assignmentMatches(item.inBy, briefingMember)) : []
   const actNumbers = [...new Set(scenes.map((scene) => Number(scene.act_no)))].sort((a, b) => a - b)
   const visibleScenes = scenes.filter((scene) => {
     const matchesAct = actFilter === '전체' || Number(scene.act_no) === Number(actFilter)
