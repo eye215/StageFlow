@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
-  MoreHorizontal, Music, Package, Pencil, Play, Plus, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  MoreHorizontal, Music, Package, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -40,6 +40,7 @@ import './import-audit.css'
 import './spreadsheet-upload.css'
 import './import-selection.css'
 import './import-edit.css'
+import './import-undo.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -471,6 +472,10 @@ export default function App() {
     const selectedImportRows = selectedNumbers ? importRows.filter((row) => selectedNumbers.has(Number(row.number))) : importRows
     if (!selectedImportRows.length) return setNotice('적용할 장면을 하나 이상 선택해 주세요.')
     setBusy(true)
+    const undoSnapshot = { format: 'stageflow-backup', version: 1, createdAt: new Date().toISOString(), production: selected, scenes, castMembers, props: propItems, reason: 'before-import' }
+    const undoPath = `${workspace.id}/${selected.id}/data/import-undo.json`
+    const { error: undoError } = await supabase.storage.from('stageflow-files').upload(undoPath, new Blob([JSON.stringify(undoSnapshot, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+    if (undoError) { setBusy(false); return setNotice(`자동 백업 실패: ${undoError.message}`) }
     const existingNumbers = new Set(scenes.map((scene) => Number(scene.scene_no)))
     const rows = selectedImportRows.filter((row) => !existingNumbers.has(row.number)).map((row, index) => ({
       production_id: selected.id,
@@ -515,6 +520,20 @@ export default function App() {
       setProductionTab('scenes')
     }
     setBusy(false)
+  }
+
+  async function undoLastImport() {
+    if (!selected) return
+    const path = `${workspace.id}/${selected.id}/data/import-undo.json`
+    const { data, error } = await supabase.storage.from('stageflow-files').download(path)
+    if (error || !data) return setNotice('되돌릴 자동정리 백업이 없어요.')
+    try {
+      const backup = JSON.parse(await data.text())
+      const result = await restoreProductionBackup(backup)
+      if (result?.ok) setNotice('마지막 자동정리 전 상태로 되돌렸어요.')
+    } catch (parseError) {
+      setNotice(`되돌리기 실패: ${parseError.message}`)
+    }
   }
 
   function organizeMusicFiles(files) {
@@ -840,7 +859,7 @@ export default function App() {
       importText={importText} setImportText={setImportText} importRows={importRows} setImportRows={setImportRows}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
       analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
-      readPdf={readPdf} readSpreadsheet={readSpreadsheet} importingPdf={importingPdf}
+      readPdf={readPdf} readSpreadsheet={readSpreadsheet} undoLastImport={undoLastImport} importingPdf={importingPdf}
       pendingMusic={pendingMusic} musicByScene={musicByScene}
       organizeMusicFiles={organizeMusicFiles} assignMusicScene={assignMusicScene} uploadOrganizedMusic={uploadOrganizedMusic} deleteMusicFile={deleteMusicFile}
       uploadingMusic={uploadingMusic}
@@ -1021,7 +1040,7 @@ function RoleClaimSheet({ members, choose, busy }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -1292,7 +1311,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -1424,7 +1443,7 @@ function SceneCard({ scene, update, remove }) {
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ workspace, production, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, loading, aiAnalyzing }) {
+function ImportPanel({ workspace, production, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing }) {
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
@@ -1445,6 +1464,7 @@ function ImportPanel({ workspace, production, text, setText, rows, setRows, anal
   const audit = useMemo(() => buildImportAudit(rows), [rows])
   return <section className="import-panel">
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
+    <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
     {!!rows.length && <ImportAudit audit={audit} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
