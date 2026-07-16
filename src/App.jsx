@@ -31,6 +31,7 @@ import './backup.css'
 import './invite.css'
 import './full-run.css'
 import './run-history.css'
+import './import-options.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -342,6 +343,8 @@ export default function App() {
       }
       const text = pages.join('\n')
       setImportText(text)
+      const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
+      await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: 'application/pdf' })
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
       setNotice(parsed.length ? `${parsed.length}개 장면을 찾았어요.` : 'PDF에서 표를 찾지 못했어요. 텍스트를 붙여넣어 주세요.')
@@ -397,8 +400,10 @@ export default function App() {
     setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} 장면 번호나 SONG.NN 표기를 찾지 못했습니다.`)
   }
 
-  async function saveImportedScenes() {
+  async function saveImportedScenes(options = {}) {
     if (!importRows.length) return
+    const mode = options.mode || 'add'
+    const targets = options.targets || { scenes: true, cast: true, props: true, costumes: true, cues: true }
     setBusy(true)
     const existingNumbers = new Set(scenes.map((scene) => Number(scene.scene_no)))
     const rows = importRows.filter((row) => !existingNumbers.has(row.number)).map((row, index) => ({
@@ -406,18 +411,25 @@ export default function App() {
       act_no: row.number <= 14 ? 1 : 2,
       scene_no: row.number,
       sort_order: scenes.length + index,
-      title: row.title,
-      summary: formatSceneSummary(row),
+      title: targets.scenes ? row.title : `장면 ${row.number}`,
+      summary: formatSceneSummarySelected(row, targets),
     }))
-    if (!rows.length) {
-      setNotice('이미 같은 번호의 장면이 모두 등록되어 있어요.')
-      setBusy(false)
-      return
+    let updated = 0
+    if (mode === 'update') {
+      for (const row of importRows.filter((item) => existingNumbers.has(item.number))) {
+        const scene = scenes.find((item) => Number(item.scene_no) === Number(row.number))
+        if (!scene) continue
+        const incoming = formatSceneSummarySelected(row, targets)
+        const summary = mergeSummaryLines(scene.summary, incoming)
+        const { error } = await supabase.from('scenes').update({ title: targets.scenes ? row.title : scene.title, summary }).eq('id', scene.id)
+        if (!error) updated += 1
+      }
     }
-    const { error } = await supabase.from('scenes').insert(rows)
+    const { error } = rows.length ? await supabase.from('scenes').insert(rows) : { error: null }
     if (error) setNotice(`장면 저장 실패: ${error.message}`)
     else {
-      const nextCast = mergeCastFromScenes(castMembers, rows)
+      const importedSceneRows = importRows.map((row) => ({ scene_no: row.number, title: row.title, summary: formatSceneSummarySelected(row, targets) }))
+      const nextCast = targets.cast ? mergeCastFromScenes(castMembers, importedSceneRows) : castMembers
       const importedProps = importRows.flatMap((row) => (row.props || []).map((item) => ({
         id: crypto.randomUUID(),
         kind: item.kind === '대도구' ? '대도구' : '소품',
@@ -428,10 +440,12 @@ export default function App() {
         note: String(item.note || '').trim(),
         ready: false,
       }))).filter((item) => item.name && !propItems.some((value) => normalizeMatch(value.name) === normalizeMatch(item.name) && Number(value.sceneNo) === item.sceneNo))
-      await persistCastData(nextCast)
-      if (importedProps.length) await persistPropData([...propItems, ...importedProps])
+      if (targets.cast) await persistCastData(nextCast)
+      if (targets.props && importedProps.length) await persistPropData([...propItems, ...importedProps])
+      const archiveName = `${Date.now()}--${btoa(unescape(encodeURIComponent('표-자동정리'))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}.txt`
+      await supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${archiveName}`, new Blob([importText], { type: 'text/plain;charset=utf-8' }), { upsert: false, contentType: 'text/plain;charset=utf-8' })
       await loadScenes(selected.id)
-      setNotice(`${rows.length}개 장면과 배역 ${nextCast.length}명, 소품 ${importedProps.length}개, 대본 큐를 자동 연결했어요.`)
+      setNotice(`새 장면 ${rows.length}개 · 업데이트 ${updated}개를 적용했어요. 기존 자료는 삭제하지 않았어요.`)
       setProductionTab('scenes')
     }
     setBusy(false)
@@ -1205,7 +1219,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
-      {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -1325,14 +1339,27 @@ function SceneCard({ scene, update, remove }) {
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ text, setText, rows, analyze, analyzeWithAI, save, readPdf, loading, aiAnalyzing }) {
+function ImportPanel({ workspace, production, text, setText, rows, analyze, analyzeWithAI, save, readPdf, loading, aiAnalyzing }) {
+  const [mode, setMode] = useState('add')
+  const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
+  const [sources, setSources] = useState([])
+  async function loadSources() {
+    const base = `${workspace.id}/${production.id}/imports`
+    const { data } = await supabase.storage.from('stageflow-files').list(base, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } })
+    const next = await Promise.all((data || []).filter((item) => item.id).map(async (item) => { const { data: signed } = await supabase.storage.from('stageflow-files').createSignedUrl(`${base}/${item.name}`, 3600); return { ...item, url: signed?.signedUrl || '' } }))
+    setSources(next)
+  }
+  useEffect(() => { loadSources() }, [workspace.id, production.id])
+  async function applyImport() { await save({ mode, targets }); await loadSources() }
+  const toggleTarget = (key) => setTargets((value) => ({ ...value, [key]: !value[key] }))
   return <section className="import-panel">
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
     <textarea className="import-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder={'1. 가려진 진실\t앤더슨\t살인자 / 매춘부\t...\n2. 진정해 조심해\t앤더슨 / 먼로\t경찰 / 기자\t...'} />
     <div className="import-action-grid"><button className="secondary analyze-button" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyze}><WandSparkles size={18} /> 빠른 표 정리</button><button className="primary analyze-button ai-analyze" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyzeWithAI}><Sparkles size={18} /> {aiAnalyzing ? 'AI 분석 중…' : 'AI로 대본 분석'}</button></div>
-    {!!rows.length && <><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 장면을 찾았어요</h3></div><button className="primary compact" disabled={loading} onClick={save}><CheckCircle2 size={18} /> 공연에 저장</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
+    {!!rows.length && <><section className="import-apply-options"><div><span>저장 방식</span><button className={mode === 'add' ? 'active' : ''} onClick={() => setMode('add')}>새 항목만 추가</button><button className={mode === 'update' ? 'active' : ''} onClick={() => setMode('update')}>기존 항목 업데이트</button></div><fieldset><legend>적용할 정보</legend>{[['scenes','장면'],['cast','배역·등장인물'],['props','소품·대도구'],['costumes','의상'],['cues','큐']].map(([key,label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => toggleTarget(key)} /><span>{label}</span></label>)}</fieldset><p>기존 데이터는 삭제하지 않으며, 업데이트 모드도 새 정보만 합칩니다.</p></section><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 행을 장면으로 인식했어요</h3></div><button className="primary compact" disabled={loading || !Object.values(targets).some(Boolean)} onClick={applyImport}><CheckCircle2 size={18} /> 선택대로 적용</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}{row.costumes?.length > 0 && <span>의상 {row.costumes.length}개</span>}{row.cues?.length > 0 && <span>큐 {row.cues.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
+    <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
 }
 function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, loading }) {
@@ -1941,7 +1968,8 @@ function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
 function Loading() { return <div className="center"><div className="spinner" /><span>StageFlow 불러오는 중…</span></div> }
 
 function splitCells(value) {
-  return value.split(/\t+| {2,}/).map((cell) => cell.trim()).filter(Boolean)
+  const delimiter = value.includes('\t') ? /\t+/ : value.includes('|') ? /\s*\|\s*/ : / {2,}|,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/
+  return value.split(delimiter).map((cell) => cell.trim().replace(/^\"|\"$/g, '')).filter(Boolean)
 }
 
 function normalizeMatch(value) {
@@ -2137,5 +2165,26 @@ function formatSceneSummary(row) {
     lines.push('큐:')
     row.cues.forEach((item) => lines.push(`- [${item.type || '무대'}] ${item.label || '큐 확인 필요'}${item.trigger ? ` · 큐사인 ${item.trigger}` : ''}`))
   }
+  return lines.join('\n')
+}
+
+function formatSceneSummarySelected(row, targets) {
+  return formatSceneSummary({
+    ...row,
+    main: targets.scenes || targets.cast ? row.main : '',
+    ensemble: targets.scenes || targets.cast ? row.ensemble : '',
+    backstage: targets.scenes || targets.cast ? row.backstage : '',
+    music: targets.scenes ? row.music : '', movement: targets.scenes ? row.movement : '', status: targets.scenes ? row.status : '',
+    props: targets.props ? (row.props || []) : [], costumes: targets.costumes ? (row.costumes || []) : [], cues: targets.cues ? (row.cues || []) : [],
+  })
+}
+
+function mergeSummaryLines(existing = '', incoming = '') {
+  const lines = String(existing || '').split('\n').map((line) => line.trim()).filter(Boolean)
+  const keys = new Set(lines.map(normalizeMatch))
+  String(incoming || '').split('\n').map((line) => line.trim()).filter(Boolean).forEach((line) => {
+    const key = normalizeMatch(line)
+    if (key && !keys.has(key)) { lines.push(line); keys.add(key) }
+  })
   return lines.join('\n')
 }
