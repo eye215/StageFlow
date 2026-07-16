@@ -543,7 +543,7 @@ export default function App() {
       const pdfjs = await loadPdfRuntime()
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pageTexts = Array(pdf.numPages).fill('')
-      const scannedPages = []
+      const ocrPageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)
       const tableRows = []
       let textRows = 0
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
@@ -554,11 +554,10 @@ export default function App() {
         textRows += layout.rows.length
         layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
         pageTexts[pageNo - 1] = layout.text
-        if (layout.text.replace(/\s/g, '').length < 12) scannedPages.push(pageNo)
       }
       let ocrPages = 0
-      if (scannedPages.length) {
-        setNotice(`스캔 페이지 ${scannedPages.length}쪽 발견 · 한국어 OCR 준비 중…`)
+      if (ocrPageNumbers.length) {
+        setNotice(`전체 ${ocrPageNumbers.length}쪽 · 저해상도 한국어 OCR 준비 중…`)
         const { createWorker } = await import('tesseract.js')
         const worker = await createWorker('kor+eng', 1, {
           logger: (message) => {
@@ -566,12 +565,15 @@ export default function App() {
           },
         })
         try {
-          for (let index = 0; index < scannedPages.length; index += 1) {
-            const pageNo = scannedPages[index]
-            setNotice(`스캔 PDF OCR 중 · ${index + 1}/${scannedPages.length}쪽`)
+          for (let index = 0; index < ocrPageNumbers.length; index += 1) {
+            const pageNo = ocrPageNumbers[index]
+            setNotice(`전체 PDF 빠른 OCR · ${index + 1}/${ocrPageNumbers.length}쪽`)
             const page = await pdf.getPage(pageNo)
             const baseViewport = page.getViewport({ scale: 1 })
-            const scale = Math.max(1.2, Math.min(1.8, Math.sqrt(4000000 / Math.max(1, baseViewport.width * baseViewport.height))))
+            // Mobile-first fast OCR: roughly one megapixel per page. This is
+            // about 1/4 of the previous render work while remaining readable
+            // for ordinary Korean scripts and rehearsal tables.
+            const scale = Math.max(0.75, Math.min(1.25, Math.sqrt(1000000 / Math.max(1, baseViewport.width * baseViewport.height))))
             const viewport = page.getViewport({ scale })
             const canvas = document.createElement('canvas')
             canvas.width = Math.ceil(viewport.width)
@@ -580,11 +582,12 @@ export default function App() {
             await page.render({ canvasContext: context, viewport }).promise
             const result = await worker.recognize(canvas)
             const recognized = String(result.data?.text || '').trim()
-            if (recognized) {
+            const originalText = pageTexts[pageNo - 1]
+            if (recognized.replace(/\s/g, '').length >= 8) {
               pageTexts[pageNo - 1] = recognized
               ocrPages += 1
               textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
-            }
+            } else pageTexts[pageNo - 1] = originalText
             canvas.width = 0
             canvas.height = 0
           }
