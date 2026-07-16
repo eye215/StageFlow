@@ -13,6 +13,7 @@ import './props.css'
 import './cues.css'
 import './rehearsal.css'
 import './materials.css'
+import './tasks.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -836,8 +837,9 @@ function ProductionView(props) {
     <header className="topbar"><button className="icon-button" onClick={goBack} aria-label="홈으로"><ChevronLeft /></button><div className="topbar-title"><strong>{production.title}</strong><span>{workspace.name}</span></div><span className="header-spacer" /></header>
     <main className="content production-content">
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
-      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'cues' ? 'active' : ''} onClick={() => setTab('cues')}>큐</button><button className={tab === 'rehearsal' ? 'active' : ''} onClick={() => setTab('rehearsal')}>리허설</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>자료</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
+      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>할 일</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'cues' ? 'active' : ''} onClick={() => setTab('cues')}>큐</button><button className={tab === 'rehearsal' ? 'active' : ''} onClick={() => setTab('rehearsal')}>리허설</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>자료</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
+      {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
@@ -1107,6 +1109,61 @@ function formatBytes(bytes) {
   if (!bytes) return '크기 정보 없음'
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+function TasksPanel({ workspace, production }) {
+  const [tasks, setTasks] = useState([])
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ title: '', category: '연출', assignee: '', dueDate: '' })
+  const [status, setStatus] = useState('')
+  const path = `${workspace.id}/${production.id}/data/tasks.json`
+
+  useEffect(() => {
+    supabase.storage.from('stageflow-files').download(path).then(async ({ data }) => {
+      if (!data) return
+      try {
+        const parsed = JSON.parse(await data.text())
+        setTasks(Array.isArray(parsed.tasks) ? parsed.tasks : [])
+      } catch { /* 새 공연은 할 일이 없을 수 있어요. */ }
+    })
+  }, [path])
+
+  async function persist(next, message) {
+    const body = new Blob([JSON.stringify({ tasks: next, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(path, body, { upsert: true, contentType: 'application/json' })
+    if (error) {
+      setStatus(`저장 실패: ${error.message}`)
+      return false
+    }
+    setTasks(next)
+    setStatus(message)
+    return true
+  }
+
+  async function addTask(event) {
+    event.preventDefault()
+    if (!form.title.trim()) return
+    const task = { id: crypto.randomUUID(), ...form, title: form.title.trim(), assignee: form.assignee.trim(), done: false, createdAt: new Date().toISOString() }
+    if (await persist([...tasks, task], '할 일을 추가했어요.')) {
+      setForm({ title: '', category: form.category, assignee: '', dueDate: '' })
+      setShowForm(false)
+    }
+  }
+
+  const toggleTask = (id) => persist(tasks.map((task) => task.id === id ? { ...task, done: !task.done } : task), '진행 상태를 변경했어요.')
+  const removeTask = (id) => {
+    if (window.confirm('이 할 일을 삭제할까요?')) persist(tasks.filter((task) => task.id !== id), '할 일을 삭제했어요.')
+  }
+  const ordered = [...tasks].sort((a, b) => Number(a.done) - Number(b.done) || String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999')))
+  const done = tasks.filter((task) => task.done).length
+  return <section className="tasks-panel"><div className="section-heading"><div><p className="eyebrow">PRODUCTION CHECKLIST</p><h2>공연 준비 할 일</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={17} /> 할 일</button></div><section className="task-summary"><article><strong>{tasks.length - done}</strong><span>남은 일</span></article><article><strong>{done}</strong><span>완료</span></article><article><strong>{tasks.length ? Math.round((done / tasks.length) * 100) : 0}%</strong><span>완료율</span></article></section>{showForm && <form className="panel task-form" onSubmit={addTask}><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="해야 할 일" /><div className="two-col"><select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}><option>연출</option><option>배우</option><option>음악</option><option>의상</option><option>소품</option><option>무대</option><option>홍보</option><option>기타</option></select><input value={form.assignee} onChange={(event) => setForm({ ...form, assignee: event.target.value })} placeholder="담당자" /></div><input type="date" value={form.dueDate} onChange={(event) => setForm({ ...form, dueDate: event.target.value })} /><button className="primary">저장</button></form>}{status && <p className="notice">{status}</p>}<div className="task-list">{!ordered.length && <Empty icon={<CheckCircle2 />} title="등록된 할 일이 없어요" description="공연 준비 업무를 등록하고 팀과 진행상황을 공유하세요." action={() => setShowForm(true)} />}{ordered.map((task) => <article className={task.done ? 'task-card done' : 'task-card'} key={task.id}><button className="task-check" onClick={() => toggleTask(task.id)} aria-label="완료 상태 변경"><CheckCircle2 /></button><div><div><span>{task.category}</span>{task.dueDate && <small>{formatTaskDue(task.dueDate)}</small>}</div><strong>{task.title}</strong><p>{task.assignee ? `담당 ${task.assignee}` : '담당자 미정'}</p></div><button className="icon-button danger" onClick={() => removeTask(task.id)} aria-label="할 일 삭제"><Trash2 size={16} /></button></article>)}</div></section>
+}
+
+function formatTaskDue(date) {
+  const days = Math.ceil((new Date(`${date}T23:59:59`) - new Date()) / 86400000)
+  if (days < 0) return `${Math.abs(days)}일 지남`
+  if (days === 0) return '오늘 마감'
+  return `D-${days}`
 }
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
 function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
