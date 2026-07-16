@@ -60,3 +60,7 @@
 .wake-lock > span { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
 .wake-lock.active { color: #93c5fd; }
 .wake-lock.active > span { background: #60a5fa; box-shadow: 0 0 0 3px rgba(96,165,250,.1); }
+.cursor-sync { display: flex; align-items: center; gap: 5px; margin: 0; color: #64748b; font-size: 8px; }
+.cursor-sync > span { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
+.cursor-sync.active { color: #c4b5fd; }
+.cursor-sync.active > span { background: #a78bfa; box-shadow: 0 0 0 3px rgba(167,139,250,.1); }
