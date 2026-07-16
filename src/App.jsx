@@ -1942,6 +1942,7 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
     <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
     {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}
     {!!rows.length && <ImportAudit audit={audit} />}
+    {!!rows.length && <ImportCastPreview rows={rows} />}
     {!!rows.length && <ImportPlan rows={rows} excluded={excludedRows} existing={existingImportNumbers} mode={mode} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} existing={existingImportNumbers} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
@@ -1955,6 +1956,37 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
 }
 function ImportAudit({ audit }) {
   return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
+}
+
+function buildImportedCastAssignments(rows) {
+  const assignments = []
+  rows.forEach((row) => {
+    ;[['주연', row.main], ['앙상블', row.ensemble], ['백 앙상블', row.backstage]].forEach(([type, value]) => {
+      splitRoleEntries(value).forEach((entry) => {
+        const paired = entry.match(/^(.+?)\s*\((.+)\)\s*$/)
+        if (paired) {
+          const role = paired[1].trim()
+          splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => assignments.push({ actor, role, type, sceneNo: row.number, sceneTitle: row.title }))
+        } else if (entry.trim()) assignments.push({ actor: entry.trim(), role: entry.trim(), type, sceneNo: row.number, sceneTitle: row.title })
+      })
+    })
+  })
+  const unique = new Map()
+  assignments.forEach((item) => {
+    const key = `${canonicalActor(item.actor)}::${normalizeMatch(item.role)}`
+    if (!unique.has(key)) unique.set(key, { ...item, scenes: [] })
+    const target = unique.get(key)
+    if (!target.scenes.some((scene) => Number(scene.number) === Number(item.sceneNo))) target.scenes.push({ number: item.sceneNo, title: item.sceneTitle })
+  })
+  return [...unique.values()].sort((a, b) => a.actor.localeCompare(b.actor, 'ko') || a.role.localeCompare(b.role, 'ko'))
+}
+
+function ImportCastPreview({ rows }) {
+  const [open, setOpen] = useState(false)
+  const assignments = useMemo(() => buildImportedCastAssignments(rows), [rows])
+  if (!assignments.length) return null
+  const actors = new Set(assignments.map((item) => canonicalActor(item.actor))).size
+  return <section className={open ? 'import-cast-preview open' : 'import-cast-preview'}><button className="import-cast-preview-head" onClick={() => setOpen((value) => !value)}><Users /><span><b>배우·배역 매칭 미리보기</b><small>{actors}명 · {assignments.length}개 배역 연결</small></span><ChevronRight /></button>{open && <div className="import-cast-preview-list">{assignments.map((item) => <article key={`${item.actor}-${item.role}`}><span className="cast-preview-avatar"><UserRound /></span><div><strong>{item.actor}</strong><small>{item.role} · {item.type}</small><p>{item.scenes.map((scene) => `${scene.number}. ${scene.title}`).join(' · ')}</p></div><em>{item.scenes.length}장면</em></article>)}</div>}</section>
 }
 
 function SourceReanalyze({ sources, reanalyze, loading }) {
