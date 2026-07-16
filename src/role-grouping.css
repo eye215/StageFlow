@@ -1,0 +1,8 @@
+.cast-role-heading small { display: block; margin-top: 3px; color: #64748b; font-size: 9px; }
+.role-regroup-button { width: 100%; display: flex; align-items: center; gap: 11px; margin: 10px 0; padding: 13px; border: 1px solid rgba(165,180,252,.16); border-radius: 15px; background: rgba(99,102,241,.07); color: #e2e8f0; text-align: left; }
+.role-regroup-button > svg:first-child { color: #c4b5fd; }
+.role-regroup-button > div { display: grid; flex: 1; gap: 2px; }
+.role-regroup-button strong { font-size: 12px; }
+.role-regroup-button span { color: #94a3b8; font-size: 10px; }
+.role-regroup-button > svg:last-child { color: #64748b; }
+.role-group-notice { margin-top: 8px; }
