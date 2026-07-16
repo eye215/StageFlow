@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, FileAudio, Home, ListChecks, ListMusic, MapPin,
-  Music, Package, Pencil, Play, Plus, Save, Settings, Sparkles, Theater, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  Music, Package, Pencil, Play, Plus, Save, Settings, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -11,6 +11,7 @@ import './dashboard.css'
 import './cast.css'
 import './props.css'
 import './cues.css'
+import './rehearsal.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -834,12 +835,13 @@ function ProductionView(props) {
     <header className="topbar"><button className="icon-button" onClick={goBack} aria-label="홈으로"><ChevronLeft /></button><div className="topbar-title"><strong>{production.title}</strong><span>{workspace.name}</span></div><span className="header-spacer" /></header>
     <main className="content production-content">
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
-      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'cues' ? 'active' : ''} onClick={() => setTab('cues')}>큐</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
+      <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'cues' ? 'active' : ''} onClick={() => setTab('cues')}>큐</button><button className={tab === 'rehearsal' ? 'active' : ''} onClick={() => setTab('rehearsal')}>리허설</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} />}
+      {tab === 'rehearsal' && <RehearsalPanel workspace={workspace} production={production} scenes={scenes} />}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2></article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span key={member.id}><b>{member.roleName || member.name}</b>{member.name !== member.roleName && <small>{member.name}</small>}</span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Package /><strong>소품·대도구</strong><span>{currentProps.filter((item) => item.ready).length}/{currentProps.length}</span></div>{currentProps.length ? <div className="show-prop-list">{currentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>연결된 소품이 없어요.</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong></article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
@@ -973,6 +975,71 @@ function parseSceneCues(summary = '') {
     const parts = match[2].split(/\s*·\s*큐사인\s*/)
     return { type: match[1], label: parts[0].trim(), trigger: parts[1]?.trim() || '', rawLine: line.trim() }
   }).filter(Boolean)
+}
+
+function RehearsalPanel({ workspace, production, scenes }) {
+  const [sceneNo, setSceneNo] = useState(scenes[0]?.scene_no || '')
+  const [startedAt, setStartedAt] = useState(null)
+  const [elapsed, setElapsed] = useState(0)
+  const [records, setRecords] = useState([])
+  const [status, setStatus] = useState('')
+  const path = `${workspace.id}/${production.id}/data/rehearsals.json`
+
+  useEffect(() => {
+    let active = true
+    supabase.storage.from('stageflow-files').download(path).then(async ({ data }) => {
+      if (!active || !data) return
+      try {
+        const parsed = JSON.parse(await data.text())
+        setRecords(Array.isArray(parsed.records) ? parsed.records : [])
+      } catch { /* 새 공연은 기록이 없을 수 있어요. */ }
+    })
+    return () => { active = false }
+  }, [path])
+
+  useEffect(() => {
+    if (!startedAt) return undefined
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 250)
+    return () => window.clearInterval(timer)
+  }, [startedAt])
+
+  async function persist(next) {
+    const body = new Blob([JSON.stringify({ records: next, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(path, body, { upsert: true, contentType: 'application/json' })
+    if (error) {
+      setStatus(`기록 저장 실패: ${error.message}`)
+      return false
+    }
+    setRecords(next)
+    return true
+  }
+
+  function start() {
+    if (!sceneNo) return
+    setElapsed(0)
+    setStartedAt(Date.now())
+    setStatus('')
+  }
+
+  async function stop() {
+    if (!startedAt) return
+    const scene = scenes.find((item) => Number(item.scene_no) === Number(sceneNo))
+    const duration = Math.max(1, Math.floor((Date.now() - startedAt) / 1000))
+    setStartedAt(null)
+    setElapsed(duration)
+    const record = { id: crypto.randomUUID(), sceneNo: Number(sceneNo), sceneTitle: scene?.title || '장면', duration, createdAt: new Date().toISOString() }
+    if (await persist([record, ...records].slice(0, 100))) setStatus(`${record.sceneTitle} 리허설 시간을 저장했어요.`)
+  }
+
+  const sceneRecords = records.filter((record) => Number(record.sceneNo) === Number(sceneNo))
+  const average = sceneRecords.length ? Math.round(sceneRecords.reduce((sum, record) => sum + record.duration, 0) / sceneRecords.length) : 0
+  return <section className="rehearsal-panel"><div className="section-heading"><div><p className="eyebrow">REHEARSAL TIMER</p><h2>리허설</h2></div><span className="rehearsal-count">{records.length}회 기록</span></div>{!scenes.length ? <Empty icon={<Timer />} title="측정할 장면이 없어요" description="장면을 먼저 등록해주세요." /> : <><article className={startedAt ? 'rehearsal-timer running' : 'rehearsal-timer'}><select disabled={!!startedAt} value={sceneNo} onChange={(event) => { setSceneNo(event.target.value); setElapsed(0) }}>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><div className="timer-display">{formatDuration(elapsed)}</div><div className="timer-meta"><span>최근 {sceneRecords[0] ? formatDuration(sceneRecords[0].duration) : '-'}</span><span>평균 {average ? formatDuration(average) : '-'}</span></div>{startedAt ? <button className="stop-timer" onClick={stop}><Square fill="currentColor" /> 측정 종료</button> : <button className="primary start-timer" onClick={start}><Play fill="currentColor" /> 측정 시작</button>}</article>{status && <p className="notice">{status}</p>}<div className="rehearsal-history"><div className="compact-heading"><div><span>HISTORY</span><h2>최근 기록</h2></div></div>{records.length ? records.slice(0, 12).map((record) => <article key={record.id}><div><strong>{record.sceneNo}. {record.sceneTitle}</strong><span>{new Date(record.createdAt).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></div><b>{formatDuration(record.duration)}</b></article>) : <p>아직 측정 기록이 없어요.</p>}</div></>}</section>
+}
+
+function formatDuration(seconds) {
+  const minutes = Math.floor(seconds / 60)
+  const rest = seconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`
 }
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
 function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
