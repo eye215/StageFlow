@@ -2253,9 +2253,9 @@ function parseStructuredProductionTable(source) {
     if (!current) continue
     const map = columns || {}
     const offset = lead ? cells.findIndex((cell) => /^(\d{1,3})(?:\s*[.)-]|$)/.test(cell)) + 1 : 0
-    put(current, 'main', map.main !== undefined ? cells[map.main] : cells[offset])
-    put(current, 'ensemble', map.ensemble !== undefined ? cells[map.ensemble] : cells[offset + 1])
-    put(current, 'backstage', map.backstage !== undefined ? cells[map.backstage] : cells[offset + 2])
+    put(current, 'main', map.main !== undefined ? cells[map.main] : columns ? '' : cells[offset])
+    put(current, 'ensemble', map.ensemble !== undefined ? cells[map.ensemble] : columns ? '' : cells[offset + 1])
+    put(current, 'backstage', map.backstage !== undefined ? cells[map.backstage] : columns ? '' : cells[offset + 2])
     put(current, 'music', map.music !== undefined ? cells[map.music] : '')
     put(current, 'movement', map.movement !== undefined ? cells[map.movement] : '')
     put(current, 'status', map.status !== undefined ? cells[map.status] : '')
