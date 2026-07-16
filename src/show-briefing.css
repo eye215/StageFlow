@@ -76,3 +76,18 @@
 .follow-lock { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 7px 0 0; color: #64748b; font-size: 8px; }
 .follow-lock svg { width: 13px; }
 .show-mode .show-actions button:disabled { cursor: not-allowed; filter: saturate(.35); opacity: .32; }
+.show-hold-alert { display: flex; align-items: center; gap: 11px; margin-top: 10px; padding: 14px; border: 1px solid rgba(248,113,113,.42); border-radius: 16px; background: rgba(127,29,29,.22); box-shadow: inset 3px 0 #ef4444; }
+.show-hold-alert > svg { color: #f87171; animation: holdPulse 1s ease-in-out infinite; }
+.show-hold-alert > div { display: grid; gap: 2px; }
+.show-hold-alert span { color: #f87171; font-size: 8px; font-weight: 950; letter-spacing: .16em; }
+.show-hold-alert strong { font-size: 12px; }
+.show-hold-alert small { color: #fca5a5; font-size: 9px; }
+@keyframes holdPulse { 50% { opacity: .35; transform: scale(.92); } }
+.hold-control { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px; padding: 11px 12px; border: 1px solid rgba(248,113,113,.24); border-radius: 14px; background: rgba(127,29,29,.14); color: #fecaca; text-align: left; }
+.hold-control > svg { width: 18px; color: #f87171; }
+.hold-control > span { display: grid; gap: 2px; }
+.hold-control b { font-size: 10px; }
+.hold-control small { color: #fca5a5; font-size: 8px; }
+.hold-control.resume { border-color: rgba(52,211,153,.28); background: rgba(6,78,59,.18); color: #a7f3d0; }
+.hold-control.resume > svg { color: #34d399; }
+.hold-control.resume small { color: #6ee7b7; }
