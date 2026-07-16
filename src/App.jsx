@@ -35,6 +35,7 @@ import './run-analysis.css'
 import './import-options.css'
 import './ux-pass.css'
 import './navigation-hotfix.css'
+import './preparation-health.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -1211,6 +1212,12 @@ function ProductionView(props) {
   const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && assignmentMatches(item.inBy, briefingMember)) : []
   const upcomingCast = next ? castMembers.filter((member) => (member.sceneNumbers || []).includes(next.scene_no)) : []
   const upcomingReadyCount = next ? upcomingCast.filter((member) => personalReady[`${member.id}-${next.scene_no}`]).length : 0
+  const preparationAlerts = [
+    { key: 'music', tab: 'music', icon: 'music', count: scenes.filter((scene) => !(musicByScene[scene.scene_no] || []).length).length, title: '음악 미연결 장면', detail: '넘버 파일을 장면에 연결해 주세요.' },
+    { key: 'props', tab: 'props', icon: 'props', count: propItems.filter((item) => !item.ready).length, title: '준비 안 된 소품', detail: '담당자와 IN·OUT을 확인해 주세요.' },
+    { key: 'cast', tab: 'cast', icon: 'cast', count: scenes.filter((scene) => !castMembers.some((member) => (member.sceneNumbers || []).includes(scene.scene_no))).length, title: '배역 미연결 장면', detail: '등장 배우와 배역을 지정해 주세요.' },
+    { key: 'cues', tab: 'cues', icon: 'cues', count: scenes.filter((scene) => !parseSceneCues(scene.summary).length).length, title: '큐 미등록 장면', detail: '조명·음향·영상 큐를 확인해 주세요.' },
+  ].filter((item) => item.count > 0)
   const actNumbers = [...new Set(scenes.map((scene) => Number(scene.act_no)))].sort((a, b) => a - b)
   const visibleScenes = scenes.filter((scene) => {
     const matchesAct = actFilter === '전체' || Number(scene.act_no) === Number(actFilter)
@@ -1242,6 +1249,7 @@ function ProductionView(props) {
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}><CheckCircle2 /><span>할 일</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>공연</span></button><button className={['props', 'costumes', 'cues', 'rehearsal', 'materials', 'schedule', 'backup', 'import', 'music'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
+      {tab === 'overview' && <PreparationHealth alerts={preparationAlerts} open={setTab} />}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
@@ -1268,6 +1276,11 @@ function ProductionView(props) {
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
   </div>
+}
+
+function PreparationHealth({ alerts, open }) {
+  const icons = { music: FileAudio, props: Package, cast: Users, cues: ListChecks }
+  return <section className="preparation-health"><div className="preparation-health-head"><div><span>PRE-FLIGHT CHECK</span><h2>공연 전 확인</h2></div><strong className={alerts.length ? 'warning' : 'ready'}>{alerts.length ? `${alerts.length}개 항목` : '준비 완료'}</strong></div>{alerts.length ? <div className="preparation-alert-list">{alerts.map((alert) => { const Icon = icons[alert.icon]; return <button key={alert.key} onClick={() => open(alert.tab)}><span className="alert-icon"><Icon /></span><div><b>{alert.title}</b><small>{alert.detail}</small></div><strong>{alert.count}</strong><ChevronRight /></button> })}</div> : <div className="preparation-clear"><CheckCircle2 /><div><b>필수 준비 항목을 모두 확인했어요</b><small>공연모드에서 최종 큐를 점검해 주세요.</small></div></div>}</section>
 }
 
 function RunControl({ type, setType, session, elapsed, history, current, start, finish, enabled, isLast }) {
