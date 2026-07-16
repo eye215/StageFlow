@@ -1283,6 +1283,17 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
   const pendingTasks = [...scopedTasks].filter((task) => !task.done).sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'))).slice(0, 3)
   const today = new Date().toISOString().slice(0, 10)
   const upcomingEvents = [...events].filter((event) => event.date >= today).sort((a, b) => `${a.date}T${a.time || '23:59'}`.localeCompare(`${b.date}T${b.time || '23:59'}`)).slice(0, 3)
+  return <ActorHome
+    session={session} workspace={workspace} productions={productions} production={defaultProduction}
+    daysLeft={daysLeft} progress={progress} scenes={scenes} musicCount={musicCount} propStats={propStats}
+    nextEvent={upcomingEvents[0]} pendingTasks={pendingTasks} attentionScenes={attentionScenes}
+    openAt={openAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen} chooseDefaultProduction={chooseDefaultProduction}
+    notice={notice} showForm={showForm} setShowForm={setShowForm} productionForm={productionForm} setProductionForm={setProductionForm}
+    createProduction={createProduction} busy={busy} createTeamInvite={createTeamInvite} showRoleClaim={showRoleClaim}
+    inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole}
+  />
+  /* Legacy home is kept temporarily for migration comparison. */
+  /* c8 ignore next */
   return <div className="app-shell home-v2">
     <header className="topbar home-topbar">
       <div className="brand-inline"><Theater size={22} /><div><strong>StageFlow</strong><span>{workspace.name}</span></div></div>
@@ -1309,6 +1320,25 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
+    {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
+  </div>
+}
+
+function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, nextEvent, pendingTasks, attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
+  return <div className="app-shell actor-home">
+    <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>배우 연습</span></div></div><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></header>
+    <main className="content actor-home-content">
+      {showForm && <section className="inline-create"><div className="compact-heading"><div><span>NEW PRODUCTION</span><h2>새 공연</h2></div><button className="icon-button" onClick={() => setShowForm(false)}><X /></button></div><ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} /></section>}
+      {production ? <>
+        <section className="actor-home-focus"><div className="focus-label"><span>현재 공연</span>{daysLeft !== null && <b>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</b>}</div><h1>{production.title}</h1><p><MapPin /> {production.venue || '공연 장소 미정'}</p><div className="focus-progress"><span>연습 준비도 <b>{progress}%</b></span><div className="progress"><i style={{ width: `${progress}%` }} /></div></div><button onClick={() => openAt('overview')}>공연 열기 <ChevronRight /></button></section>
+        <section className="actor-home-next"><div className="actor-home-title"><span>NEXT REHEARSAL</span><h2>다음 연습</h2></div>{nextEvent ? <button onClick={() => openAt('schedule')}><span className="next-date"><b>{new Date(`${nextEvent.date}T00:00:00`).getDate()}</b><small>{new Date(`${nextEvent.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</small></span><div><strong>{nextEvent.title}</strong><small>{[formatScheduleTimeRange(nextEvent), nextEvent.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</small>{nextEvent.sceneNumbers?.length > 0 && <p>장면 {nextEvent.sceneNumbers.join(' · ')}</p>}</div><ChevronRight /></button> : <button className="empty-next" onClick={() => openAt('schedule')}><CalendarDays /><div><strong>다음 연습을 등록하세요</strong><small>연습할 장면과 시간을 한 번에 공유해요.</small></div><Plus /></button>}</section>
+        <section className="actor-home-actions"><div className="actor-home-title"><span>QUICK START</span><h2>바로 시작</h2></div><div><button className="primary-action" onClick={() => openAt('show')}><Play fill="currentColor" /><span><b>준비/공연</b><small>페어 선택 · 런 시작</small></span><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><span><b>장면</b><small>{scenes.length}개</small></span></button><button onClick={() => openAt('cast')}><Users /><span><b>배우</b><small>배역·등장 연결</small></span></button><button onClick={() => openAt('import')}><WandSparkles /><span><b>공연데이터</b><small>PDF·표 자동정리</small></span></button></div></section>
+        <section className="actor-home-check"><div className="actor-home-title"><span>MY CHECK</span><h2>확인할 것</h2></div><div className="check-summary"><button onClick={() => openAt('tasks')}><CheckCircle2 /><span>남은 할 일</span><b>{pendingTasks.length}</b></button><button onClick={() => openAt('props')}><Package /><span>소품 준비</span><b>{propStats.ready}/{propStats.total}</b></button><button onClick={() => openAt('music')}><FileAudio /><span>음악 파일</span><b>{musicCount}</b></button></div>{attentionScenes.length > 0 && <button className="attention-summary" onClick={() => openAt('scenes')}><AlertTriangle /><div><b>확인 필요한 장면 {attentionScenes.length}개</b><small>{attentionScenes.map((scene) => `${scene.scene_no}. ${scene.title}`).join(' · ')}</small></div><ChevronRight /></button>}</section>
+      </> : <section className="actor-home-empty"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본과 배역, 장면, 음악을 연결해서 연습할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
+      {notice && <p className="notice">{notice}</p>}
+    </main>
+    <button className="actor-home-add" onClick={() => setShowForm(true)} aria-label="새 공연 만들기"><Plus /></button>
+    {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={production?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
     {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
   </div>
 }

@@ -20,6 +20,7 @@ import './cast-cleanup-preview.css'
 import './cast-status-filter.css'
 import './actor-run-flow.css'
 import './connected-overview.css'
+import './actor-home.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
