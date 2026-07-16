@@ -175,6 +175,16 @@ export default function App() {
     if (!selected && defaultProductionId && productions.some((item) => item.id === defaultProductionId)) loadHomeOverview(defaultProductionId)
   }, [defaultProductionId, productions, selected])
 
+  useEffect(() => {
+    if (selected || !productions.length) return
+    const params = new URLSearchParams(window.location.search)
+    const requestedId = params.get('openProduction')
+    const requested = productions.find((item) => item.id === requestedId)
+    if (!requested) return
+    setSelected(requested)
+    window.setTimeout(() => setProductionTab(params.get('tab') || 'overview'), 0)
+  }, [productions, selected])
+
   async function submitAuth(event) {
     event.preventDefault()
     if (authMode === 'signup' && password !== passwordConfirm) {
@@ -1707,6 +1717,19 @@ function ProductionDangerPanel({ workspace, production, session, clearUploads, d
     setStatus('공연 삭제 요청을 취소했어요.')
   }
 
+  async function shareDeletionRequest() {
+    const url = new URL(window.location.href)
+    url.search = ''
+    url.searchParams.set('openProduction', production.id)
+    url.searchParams.set('tab', 'settings')
+    const shareData = { title: `${production.title} 삭제 승인 요청`, text: `StageFlow에서 '${production.title}' 공연 삭제 요청을 확인하고 승인해주세요.`, url: url.toString() }
+    try {
+      if (navigator.share) await navigator.share(shareData)
+      else await navigator.clipboard.writeText(url.toString())
+      setStatus(navigator.share ? '삭제 승인 링크를 공유했어요.' : '삭제 승인 링크를 복사했어요.')
+    } catch (error) { if (error?.name !== 'AbortError') setStatus('승인 링크를 공유하지 못했어요.') }
+  }
+
   const requiredIds = request?.requiredUserIds?.length ? request.requiredUserIds : members.map((member) => member.user_id)
   const approvedCount = requiredIds.filter((id) => request?.approvals?.[id]).length
   const alreadyApproved = Boolean(request?.approvals?.[currentUserId])
@@ -1715,7 +1738,7 @@ function ProductionDangerPanel({ workspace, production, session, clearUploads, d
   return <section className="production-danger-panel">
     <div className="danger-panel-head"><Settings /><div><p className="eyebrow">PRODUCTION SETTINGS</p><h2>공연 데이터 관리</h2><p>현재 공연에만 적용되며 다른 공연 자료에는 영향을 주지 않아요.</p></div></div>
     <article className="reset-upload-card"><div><Upload /><span><strong>업로드 자료 초기화</strong><small>삭제할 자료 종류만 선택할 수 있어요.</small></span></div><div className="reset-target-list">{[['imports','대본·표 원본','PDF, 엑셀, 빠른 표정리 원본'],['music','음악파일','넘버별로 연결된 모든 재생 파일'],['materials','자료실','악보, 영상, 이미지 및 기타 파일']].map(([folder, label, description]) => <button className={resetTargets[folder] ? 'selected' : ''} key={folder} onClick={() => toggleResetTarget(folder)}><CheckCircle2 /><span><b>{label}</b><small>{description}</small></span></button>)}</div><ul><li>항상 유지: 장면, 배우·배역, 소품, 의상, 큐</li><li>초기화 후에도 새 파일을 다시 업로드할 수 있어요.</li></ul><button disabled={busy || !selectedResetTargets.length} onClick={() => clearUploads(production.id, selectedResetTargets)}>선택한 자료 초기화 · {selectedResetTargets.length}종</button></article>
-    <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{id === currentUserId ? '나' : `팀원 ${index + 1}`} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
+    <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{id === currentUserId ? '나' : `팀원 ${index + 1}`} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><button className="share-deletion-request" onClick={shareDeletionRequest}><Upload /> 승인 링크 공유</button><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
     {status && <p className="notice">{status}</p>}
   </section>
 }
