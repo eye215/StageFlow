@@ -1,0 +1,15 @@
+.backup-hero { display: flex; align-items: center; gap: 13px; padding: 19px; border: 1px solid rgba(165,180,252,.14); border-radius: 21px; background: linear-gradient(145deg,rgba(79,70,229,.15),rgba(15,23,42,.78)); }
+.backup-hero > svg { width: 34px; height: 34px; color: #a5b4fc; }
+.backup-hero h2 { margin: 4px 0 5px; }
+.backup-hero p:last-child { margin: 0; color: #94a3b8; font-size: 11px; }
+.backup-summary { display: grid; grid-template-columns: repeat(4,1fr); gap: 7px; margin-top: 11px; }
+.backup-summary article { display: grid; gap: 3px; padding: 11px 7px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(15,23,42,.68); text-align: center; }
+.backup-summary b { font-size: 18px; }
+.backup-summary span { color: #64748b; font-size: 8px; }
+.backup-info { display: flex; align-items: flex-start; gap: 10px; margin-top: 11px; padding: 14px; border-radius: 15px; background: rgba(148,163,184,.06); }
+.backup-info > svg { width: 19px; color: #a5b4fc; }
+.backup-info > div { display: grid; gap: 5px; }
+.backup-info strong { font-size: 11px; }
+.backup-info p { margin: 0; color: #94a3b8; font-size: 10px; line-height: 1.55; }
+.backup-info small { color: #fbbf24; font-size: 8px; }
+.backup-button { width: 100%; margin-top: 12px; }
