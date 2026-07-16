@@ -537,21 +537,60 @@ export default function App() {
     try {
       const pdfjs = await loadPdfRuntime()
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
-      const pages = []
+      const pageTexts = Array(pdf.numPages).fill('')
+      const scannedPages = []
       const tableRows = []
       let textRows = 0
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
+        setNotice(`PDF 텍스트 확인 중 · ${pageNo}/${pdf.numPages}쪽`)
         const page = await pdf.getPage(pageNo)
         const content = await page.getTextContent()
         const layout = extractPdfPageLayout(content)
         textRows += layout.rows.length
         layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
-        if (layout.text) pages.push(`--- PAGE ${pageNo} ---\n${layout.text}`)
+        pageTexts[pageNo - 1] = layout.text
+        if (layout.text.replace(/\s/g, '').length < 12) scannedPages.push(pageNo)
       }
-      const text = pages.join('\n')
+      let ocrPages = 0
+      if (scannedPages.length) {
+        setNotice(`스캔 페이지 ${scannedPages.length}쪽 발견 · 한국어 OCR 준비 중…`)
+        const { createWorker } = await import('tesseract.js')
+        const worker = await createWorker('kor+eng', 1, {
+          logger: (message) => {
+            if (message.status === 'recognizing text') setNotice(`OCR 문자 인식 중 · ${Math.round((message.progress || 0) * 100)}%`)
+          },
+        })
+        try {
+          for (let index = 0; index < scannedPages.length; index += 1) {
+            const pageNo = scannedPages[index]
+            setNotice(`스캔 PDF OCR 중 · ${index + 1}/${scannedPages.length}쪽`)
+            const page = await pdf.getPage(pageNo)
+            const baseViewport = page.getViewport({ scale: 1 })
+            const scale = Math.max(1.2, Math.min(1.8, Math.sqrt(4000000 / Math.max(1, baseViewport.width * baseViewport.height))))
+            const viewport = page.getViewport({ scale })
+            const canvas = document.createElement('canvas')
+            canvas.width = Math.ceil(viewport.width)
+            canvas.height = Math.ceil(viewport.height)
+            const context = canvas.getContext('2d', { alpha: false })
+            await page.render({ canvasContext: context, viewport }).promise
+            const result = await worker.recognize(canvas)
+            const recognized = String(result.data?.text || '').trim()
+            if (recognized) {
+              pageTexts[pageNo - 1] = recognized
+              ocrPages += 1
+              textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
+            }
+            canvas.width = 0
+            canvas.height = 0
+          }
+        } finally {
+          await worker.terminate()
+        }
+      }
+      const text = pageTexts.map((pageText, index) => `--- PAGE ${index + 1} ---\n${pageText}`).join('\n')
       const characterCount = text.replace(/--- PAGE \d+ ---/g, '').replace(/\s/g, '').length
       if (characterCount < Math.max(20, pdf.numPages * 4)) {
-        throw new Error('텍스트 레이어가 없는 스캔 이미지 PDF예요. 문자 선택이 가능한 PDF로 다시 저장하거나, 표 내용을 복사해 붙여넣어 주세요.')
+        throw new Error('OCR을 실행했지만 읽을 수 있는 글자가 너무 적어요. 해상도가 더 높은 PDF나 원본 이미지를 사용해 주세요.')
       }
       setImportText(text)
       if (archive) {
@@ -560,8 +599,9 @@ export default function App() {
       }
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
-      setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, preview: tableRows.slice(0, 8) })
-      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.` : `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.`)
+      setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, ocrPages, preview: tableRows.slice(0, 8) })
+      const ocrResult = ocrPages ? ` · OCR ${ocrPages}쪽` : ''
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.`)
     } catch (error) {
       setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
