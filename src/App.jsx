@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
-  MoreHorizontal, Music, Package, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -857,7 +857,7 @@ export default function App() {
       const { data } = await supabase.storage.from('stageflow-files').list(`${base}/${scene.scene_no}`, { limit: 100, sortBy: { column: 'name', order: 'asc' } })
       const files = (data || []).filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
       const signed = await Promise.all(files.map(async (file) => {
-        const { data: urlData } = await supabase.storage.from('stageflow-files').createSignedUrl(file.path, 3600)
+        const { data: urlData } = await supabase.storage.from('stageflow-files').createSignedUrl(file.path, 43200)
         return { ...file, url: urlData?.signedUrl || '' }
       }))
       return [scene.scene_no, signed]
@@ -1531,6 +1531,88 @@ function RoleClaimSheet({ members, choose, busy }) {
   return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배우 이름을 선택하세요</h2><p className="muted">한 배우에게 여러 배역이 묶여 있으면 모두 한 번에 선택돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{actorGroups.map((group) => <button key={group.key} disabled={busy} onClick={() => choose(group.members[0].id)}><UserRound /><span><b>{group.actor}</b><small>{group.members.map((member) => member.roleName || '배역 미정').join(' · ')} · {group.members.length}배역</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !actorGroups.length && <p className="notice">선택 가능한 배우가 없어요.</p>}</section></div>
 }
 
+function useSharedProductionPlayback({ production, session, playlist }) {
+  const audioRef = useRef(null)
+  const [playback, setPlayback] = useState(null)
+  const [error, setError] = useState('')
+  const activeFile = playlist.find((file) => file.path === playback?.file_path) || null
+
+  async function publish(patch) {
+    const audio = audioRef.current
+    const payload = {
+      production_id: production.id,
+      file_path: patch.file_path ?? playback?.file_path ?? '',
+      file_name: patch.file_name ?? playback?.file_name ?? '',
+      scene_no: patch.scene_no ?? playback?.scene_no ?? null,
+      is_playing: patch.is_playing ?? playback?.is_playing ?? false,
+      position_seconds: patch.position_seconds ?? Math.max(0, audio?.currentTime || 0),
+      command_seq: Date.now(),
+      updated_by: session.user.id,
+      updated_at: new Date().toISOString(),
+    }
+    if (!payload.file_path) return
+    setPlayback(payload)
+    const { error: saveError } = await supabase.from('production_playback').upsert(payload, { onConflict: 'production_id' })
+    if (saveError) setError(`공유 재생 연결 실패: ${saveError.message}`)
+  }
+
+  const playFile = (file) => publish({ file_path: file.path, file_name: cleanStoredFileName(file.name), scene_no: file.sceneNo, is_playing: true, position_seconds: 0 })
+  const toggle = () => playback?.file_path && publish({ is_playing: !playback.is_playing, position_seconds: audioRef.current?.currentTime || playback.position_seconds || 0 })
+  const seek = (seconds) => { if (audioRef.current) audioRef.current.currentTime = seconds; return publish({ position_seconds: seconds, is_playing: playback?.is_playing || false }) }
+
+  useEffect(() => {
+    let active = true
+    supabase.from('production_playback').select('*').eq('production_id', production.id).maybeSingle().then(({ data, error: loadError }) => {
+      if (!active) return
+      if (loadError) setError(`공유 플레이어 준비 실패: ${loadError.message}`)
+      if (data) setPlayback(data)
+    })
+    const channel = supabase.channel(`production-playback:${production.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'production_playback', filter: `production_id=eq.${production.id}` }, (event) => {
+        if (event.new?.production_id === production.id) setPlayback(event.new)
+      }).subscribe()
+    return () => { active = false; supabase.removeChannel(channel) }
+  }, [production.id])
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !playback?.file_path || !activeFile?.url) return
+    if (audio.src !== activeFile.url) audio.src = activeFile.url
+    const elapsed = playback.is_playing ? Math.max(0, (Date.now() - new Date(playback.updated_at).getTime()) / 1000) : 0
+    const desired = Math.max(0, Number(playback.position_seconds || 0) + elapsed)
+    const align = () => { if (Number.isFinite(desired) && Math.abs((audio.currentTime || 0) - desired) > 2) audio.currentTime = Math.min(desired, audio.duration || desired) }
+    if (audio.readyState >= 1) align(); else audio.addEventListener('loadedmetadata', align, { once: true })
+    if (playback.is_playing) audio.play().then(() => setError('')).catch(() => setError('이 기기에서 재생 버튼을 한 번 눌러 공유 재생을 허용해주세요.'))
+    else audio.pause()
+    if ('mediaSession' in navigator && 'MediaMetadata' in window) {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: playback.file_name || cleanStoredFileName(activeFile.name), artist: production.title, album: 'StageFlow 공유 플레이리스트' })
+      navigator.mediaSession.playbackState = playback.is_playing ? 'playing' : 'paused'
+    }
+  }, [playback?.command_seq, activeFile?.url])
+
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return undefined
+    const safe = (action, handler) => { try { navigator.mediaSession.setActionHandler(action, handler) } catch { /* 미지원 액션 */ } }
+    safe('play', () => publish({ is_playing: true, position_seconds: audioRef.current?.currentTime || 0 }))
+    safe('pause', () => publish({ is_playing: false, position_seconds: audioRef.current?.currentTime || 0 }))
+    safe('seekto', (detail) => seek(detail.seekTime || 0))
+    return () => { ['play', 'pause', 'seekto'].forEach((action) => safe(action, null)) }
+  }, [playback?.file_path, playback?.is_playing])
+
+  return { audioRef, playback, activeFile, error, playFile, toggle, seek }
+}
+
+function SharedMusicPlayer({ controller, playlist, visible = true }) {
+  const { audioRef, playback, activeFile, error, playFile, toggle, seek } = controller
+  return <section className={visible ? 'shared-music-player' : 'shared-music-player player-background-only'}>
+    <audio ref={audioRef} preload="auto" playsInline />
+    <div className="shared-player-head"><span><Music /></span><div><small>공유 플레이리스트</small><strong>{playback?.file_name || '재생할 음악을 선택하세요'}</strong>{activeFile && <em>{activeFile.sceneNo}장면</em>}</div><i className={playback?.is_playing ? 'live' : ''}>{playback?.is_playing ? 'LIVE' : 'READY'}</i></div>
+    {activeFile && <button className="shared-player-toggle" onClick={toggle}>{playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{playback?.is_playing ? '모두 일시정지' : '모두 재생'}</button>}
+    {error && <p>{error}</p>}
+    <div className="shared-playlist">{playlist.map((file) => <button className={file.path === playback?.file_path ? 'active' : ''} key={file.path} onClick={() => playFile(file)}><Play fill="currentColor" /><span><b>{cleanStoredFileName(file.name)}</b><small>{file.sceneNo}장면</small></span></button>)}</div>
+  </section>
+}
+
 function ProductionView(props) {
   const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const current = scenes[showIndex]
@@ -1569,6 +1651,20 @@ function ProductionView(props) {
   const [feedbackDrafts, setFeedbackDrafts] = useState({})
   const [feedbackStatus, setFeedbackStatus] = useState('')
   const previousShowState = useRef(null)
+  const sharedPlaylist = useMemo(() => Object.entries(musicByScene).flatMap(([sceneNo, files]) => (files || []).map((file) => ({ ...file, sceneNo: Number(sceneNo) }))), [musicByScene])
+  const sharedPlayback = useSharedProductionPlayback({ production, session, playlist: sharedPlaylist })
+  useEffect(() => {
+    if (tab !== 'show') return undefined
+    const redirectLegacyAudio = (event) => {
+      const audio = event.target
+      if (!(audio instanceof HTMLAudioElement) || !audio.closest('.show-music-list')) return
+      const file = sharedPlaylist.find((item) => item.url === audio.currentSrc || item.url === audio.src)
+      audio.pause()
+      if (file) sharedPlayback.playFile(file)
+    }
+    document.addEventListener('play', redirectLegacyAudio, true)
+    return () => document.removeEventListener('play', redirectLegacyAudio, true)
+  }, [tab, sharedPlaylist, sharedPlayback.playback?.file_path])
   useEffect(() => {
     if (['schedule', 'tasks', 'rehearsal'].includes(tab)) setTab('overview')
   }, [tab, setTab])
@@ -1862,6 +1958,7 @@ function ProductionView(props) {
       {tab === 'show' && !runSession && !!runHistory.length && <RunHistory runs={runHistory} />}
       {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>배우마다 한 칸씩 작성하며, 등록된 내용은 해당 배우에게만 전달돼요.</p></div><div className="run-feedback-list">{runPairMembers.map((member) => <label key={member.id}><span><UserRound /><b>{member.name}</b><small>{[member.roleName, member.subRoleName].filter(Boolean).join(' › ') || '배역 미정'}</small></span><textarea value={feedbackDrafts[member.id] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [member.id]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label>)}</div>{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary"><Upload size={16} /> 개인 피드백 전달</button></div></form>}
       {tab === 'show' && !!showEvents.length && <ShowEventLog events={showEvents} />}
+      <SharedMusicPlayer controller={sharedPlayback} playlist={sharedPlaylist} visible={tab === 'show'} />
       {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{castMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.id === briefingMemberId ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>

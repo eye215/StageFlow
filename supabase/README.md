@@ -4,6 +4,7 @@
 
 - `production_scoped_access.sql`: 공연별 멤버십·초대·RLS
 - `stageflow_v4_clean_schema.sql`: 배우·배역·페어·장면 연결·자료·런·피드백의 최종 구조
+- `shared_playback.sql`: 공연 참여자 공동 음악 재생·정지·곡 변경 실시간 상태
 - `audit_current_schema.sql`: 현재 DB 확인용 읽기 전용 쿼리
 
 ## Legacy 호환 파일

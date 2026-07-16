@@ -176,6 +176,18 @@ create table if not exists public.show_sessions (
   current_scene_id uuid references public.scenes(id) on delete set null
 );
 
+create table if not exists public.production_playback (
+  production_id uuid primary key references public.productions(id) on delete cascade,
+  file_path text not null default '',
+  file_name text not null default '',
+  scene_no numeric,
+  is_playing boolean not null default false,
+  position_seconds double precision not null default 0 check (position_seconds >= 0),
+  command_seq bigint not null default 0,
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.scene_runs (
   id uuid primary key default gen_random_uuid(),
   production_id uuid not null references public.productions(id) on delete cascade,
@@ -218,7 +230,7 @@ begin
   foreach table_name in array array[
     'production_invites','pairs','people','roles','cast_assignments','scene_cast',
     'items','scene_items','numbers','scene_numbers','cues','files','number_files',
-    'import_batches','import_candidates','show_sessions','scene_runs','readiness_states','feedback'
+    'import_batches','import_candidates','show_sessions','production_playback','scene_runs','readiness_states','feedback'
   ] loop
     execute format('alter table public.%I enable row level security', table_name);
     execute format('drop policy if exists %I on public.%I', table_name || '_production_access', table_name);
