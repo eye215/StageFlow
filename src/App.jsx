@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, FileAudio, FileText, Home, ListChecks, ListMusic, MapPin,
-  Music, Package, Pencil, Play, Plus, Save, Settings, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  Music, Package, Pencil, Play, Plus, Save, Search, Settings, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -14,6 +14,7 @@ import './cues.css'
 import './rehearsal.css'
 import './materials.css'
 import './tasks.css'
+import './scenes.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -834,10 +835,18 @@ function ProductionView(props) {
   const [completedCues, setCompletedCues] = useState({})
   const [editingProduction, setEditingProduction] = useState(false)
   const [productionDraft, setProductionDraft] = useState({ title: production.title, venue: production.venue || '', performance_start_date: production.performance_start_date || '' })
+  const [sceneQuery, setSceneQuery] = useState('')
+  const [actFilter, setActFilter] = useState('전체')
   const currentCast = current ? castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
   const currentCues = current ? parseSceneCues(current.summary) : []
+  const actNumbers = [...new Set(scenes.map((scene) => Number(scene.act_no)))].sort((a, b) => a - b)
+  const visibleScenes = scenes.filter((scene) => {
+    const matchesAct = actFilter === '전체' || Number(scene.act_no) === Number(actFilter)
+    const query = normalizeMatch(sceneQuery)
+    return matchesAct && (!query || normalizeMatch(`${scene.scene_no} ${scene.title} ${scene.summary || ''}`).includes(query))
+  })
   const toggleCue = (sceneNo, cueIndex) => setCompletedCues((value) => ({ ...value, [`${sceneNo}-${cueIndex}`]: !value[`${sceneNo}-${cueIndex}`] }))
   async function saveProduction(event) {
     event.preventDefault()
@@ -851,7 +860,7 @@ function ProductionView(props) {
       <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>할 일</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'cues' ? 'active' : ''} onClick={() => setTab('cues')}>큐</button><button className={tab === 'rehearsal' ? 'active' : ''} onClick={() => setTab('rehearsal')}>리허설</button><button className={tab === 'materials' ? 'active' : ''} onClick={() => setTab('materials')}>자료</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
-      {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
+      {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} />}
