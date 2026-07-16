@@ -1264,6 +1264,10 @@ function CastRoleGroup({ group, scenes, update, remove, toggleScene, busy, force
   const [shareStatus, setShareStatus] = useState('')
   const expanded = forceOpen || open
   const roles = [...new Set(group.members.map((member) => member.roleName || '배역 미정'))]
+  const actorCalls = scenes.filter((scene) => group.members.some((member) => (member.sceneNumbers || []).includes(scene.scene_no))).map((scene) => ({
+    ...scene,
+    roles: [...new Set(group.members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no)).map((member) => member.roleName || '배역 미정'))],
+  }))
   async function shareActorCall() {
     const lines = group.members.map((member) => {
       const calls = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no}. ${scene.title}`).join(', ')
@@ -1275,7 +1279,7 @@ function CastRoleGroup({ group, scenes, update, remove, toggleScene, busy, force
       else { await navigator.clipboard.writeText(text); setShareStatus('개인 콜시트를 복사했어요.') }
     } catch (error) { if (error?.name !== 'AbortError') setShareStatus('콜시트를 공유하지 못했어요.') }
   }
-  return <section className={expanded ? 'cast-role-group open' : 'cast-role-group'}><button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ACTOR</span><h3>{group.role}</h3>{group.aliases.length > 1 && <small>{group.aliases.join(' · ')}</small>}<p>{roles.join(' · ')}</p></div><strong>{roles.length}배역 <ChevronRight /></strong></button>{expanded && <div className="actor-group-body"><button className="actor-call-share" onClick={shareActorCall}><Upload /><span><b>개인 콜시트 공유</b><small>{group.role}의 배역·등장 장면을 한 번에 정리</small></span></button>{shareStatus && <p>{shareStatus}</p>}<div className="cast-list">{group.members.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} />)}</div></div>}</section>
+  return <section className={expanded ? 'cast-role-group open' : 'cast-role-group'}><button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ACTOR</span><h3>{group.role}</h3>{group.aliases.length > 1 && <small>{group.aliases.join(' · ')}</small>}<p>{roles.join(' · ')}</p></div><strong>{roles.length}배역 <ChevronRight /></strong></button>{expanded && <div className="actor-group-body"><div className="actor-call-preview"><div className="actor-call-preview-head"><span>등장 순서</span><strong>{actorCalls.length}장면</strong></div><div>{actorCalls.map((scene, index) => <article key={scene.id}><i>{index + 1}</i><span><b>{scene.scene_no}. {scene.title}</b><small>{scene.roles.join(' · ')}</small></span>{index < actorCalls.length - 1 && <em>{Number(actorCalls[index + 1].scene_no) - Number(scene.scene_no) > 1 ? `${Number(actorCalls[index + 1].scene_no) - Number(scene.scene_no) - 1}장면 대기` : '연속 등장'}</em>}</article>)}</div></div><button className="actor-call-share" onClick={shareActorCall}><Upload /><span><b>개인 콜시트 공유</b><small>{group.role}의 배역·등장 장면을 한 번에 정리</small></span></button>{shareStatus && <p>{shareStatus}</p>}<div className="cast-list">{group.members.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} />)}</div></div>}</section>
 }
 
 function canonicalActor(name = '') {
