@@ -56,6 +56,7 @@ export default function App() {
   const [homeScenes, setHomeScenes] = useState([])
   const [homeMusicCount, setHomeMusicCount] = useState(0)
   const [homePropStats, setHomePropStats] = useState({ total: 0, ready: 0 })
+  const [homeTasks, setHomeTasks] = useState([])
   const [castMembers, setCastMembers] = useState([])
   const [castForm, setCastForm] = useState({ name: '', roleName: '', type: '주연', notes: '' })
   const [showCastForm, setShowCastForm] = useState(false)
@@ -96,8 +97,8 @@ export default function App() {
   }, [selected, scenes.length])
 
   useEffect(() => {
-    if (defaultProductionId && productions.some((item) => item.id === defaultProductionId)) loadHomeOverview(defaultProductionId)
-  }, [defaultProductionId, productions])
+    if (!selected && defaultProductionId && productions.some((item) => item.id === defaultProductionId)) loadHomeOverview(defaultProductionId)
+  }, [defaultProductionId, productions, selected])
 
   async function submitAuth(event) {
     event.preventDefault()
@@ -194,6 +195,13 @@ export default function App() {
         setHomePropStats({ total: 0, ready: 0 })
       }
     } else setHomePropStats({ total: 0, ready: 0 })
+    const { data: taskFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/tasks.json`)
+    if (taskFile) {
+      try {
+        const payload = JSON.parse(await taskFile.text())
+        setHomeTasks(Array.isArray(payload.tasks) ? payload.tasks : [])
+      } catch { setHomeTasks([]) }
+    } else setHomeTasks([])
   }
 
   function openDefaultAt(tab = 'overview') {
@@ -664,7 +672,7 @@ export default function App() {
   return <HomeDashboardV2
     session={session} workspace={workspace} productions={productions}
     defaultProduction={defaultProduction} daysLeft={homeDaysLeft} progress={homeProgress}
-    scenes={homeScenes} musicCount={homeMusicCount} propStats={homePropStats}
+    scenes={homeScenes} musicCount={homeMusicCount} propStats={homePropStats} tasks={homeTasks}
     openAt={openDefaultAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen}
     chooseDefaultProduction={chooseDefaultProduction} notice={notice}
     showForm={showProductionForm} setShowForm={setShowProductionForm}
@@ -712,8 +720,9 @@ export default function App() {
   )
 }
 
-function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy }) {
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, propStats, tasks, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy }) {
   const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
+  const pendingTasks = [...tasks].filter((task) => !task.done).sort((a, b) => String(a.dueDate || '9999').localeCompare(String(b.dueDate || '9999'))).slice(0, 3)
   return <div className="app-shell home-v2">
     <header className="topbar home-topbar">
       <div className="brand-inline"><Theater size={22} /><div><strong>StageFlow</strong><span>{workspace.name}</span></div></div>
@@ -729,6 +738,8 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
         </button>
 
         <section className="home-workbench"><div className="compact-heading"><div><span>WORKSPACE</span><h2>지금 할 일</h2></div></div><div className="workbench-grid"><button className="work-main" onClick={() => openAt('import')}><WandSparkles /><div><strong>대본 자동정리</strong><span>PDF에서 장면·인물·소품 추출</span></div><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><div><strong>장면</strong><span>{scenes.length}개</span></div></button><button onClick={() => openAt('props')}><Package /><div><strong>소품</strong><span>{propStats.ready}/{propStats.total} 준비</span></div></button><button onClick={() => openAt('music')}><FileAudio /><div><strong>음악</strong><span>{musicCount}개 파일</span></div></button></div><button className="show-launch" onClick={() => openAt('show')}><Play fill="currentColor" /><div><strong>공연모드</strong><span>장면 순서대로 큐 진행</span></div><ChevronRight /></button></section>
+
+        <section className="home-task-block"><div className="compact-heading"><div><span>TO DO</span><h2>공연 준비 할 일</h2></div><button className="text-button" onClick={() => openAt('tasks')}>{tasks.filter((task) => !task.done).length}개 남음</button></div>{pendingTasks.length ? <div className="home-task-list">{pendingTasks.map((task) => <button key={task.id} onClick={() => openAt('tasks')}><CheckCircle2 /><div><strong>{task.title}</strong><span>{task.assignee ? `${task.assignee} · ` : ''}{task.dueDate ? formatTaskDue(task.dueDate) : '마감일 미정'}</span></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>남은 준비 업무가 없어요</strong><span>할 일 탭에서 새로운 공연 준비 업무를 추가할 수 있어요.</span></div></div>}</section>
 
         <section className="attention-block"><div className="compact-heading"><div><span>CHECK</span><h2>확인 필요한 장면</h2></div><button className="text-button" onClick={() => openAt('scenes')}>전체 장면</button></div>{attentionScenes.length ? <div className="attention-list">{attentionScenes.map((scene) => <button key={scene.id} onClick={() => openAt('scenes')}><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{extractAttention(scene.summary)}</small></div><ChevronRight /></button>)}</div> : <div className="clear-state"><CheckCircle2 /><div><strong>급한 확인 항목이 없어요</strong><span>장면 요약의 ‘미정·논의·확인 필요’를 자동으로 모읍니다.</span></div></div>}</section>
       </> : <section className="empty-home"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본, 장면, 배우, 소품과 음악을 한곳에서 정리할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
