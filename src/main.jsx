@@ -26,6 +26,7 @@ import './scene-card-polish.css'
 import './production-create-modal.css'
 import './mobile-system.css'
 import './visual-refresh.css'
+import './design-v5.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
