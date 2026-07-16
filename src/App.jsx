@@ -1197,6 +1197,7 @@ export default function App() {
       readPdf={readPdf} readSpreadsheet={readSpreadsheet} undoLastImport={undoLastImport} importingPdf={importingPdf}
       pendingMusic={pendingMusic} musicByScene={musicByScene}
       organizeMusicFiles={organizeMusicFiles} assignMusicScene={assignMusicScene} uploadOrganizedMusic={uploadOrganizedMusic} deleteMusicFile={deleteMusicFile}
+      autoLinkProductionCues={autoLinkProductionCues}
       uploadingMusic={uploadingMusic}
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
       showCastForm={showCastForm} setShowCastForm={setShowCastForm}
@@ -1522,6 +1523,7 @@ function ProductionView(props) {
   const pdfExtractionReport = props.pdfExtractionReport
   const consolidateCastDuplicates = props.consolidateCastDuplicates
   const undoCastNameCleanup = props.undoCastNameCleanup
+  const autoLinkProductionCues = props.autoLinkProductionCues
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
   const [completedCues, setCompletedCues] = useState({})
@@ -2661,7 +2663,7 @@ function PropCard({ item, scenes, sceneTitle, update, remove, toggleReady, busy 
   return <article className={item.ready ? 'prop-card ready' : 'prop-card'}><button className="ready-toggle" onClick={() => toggleReady(item.id)} aria-label="준비 상태 변경"><CheckCircle2 /></button><div className="prop-copy"><div><span className={`prop-kind ${item.kind === '대도구' ? 'set-piece' : ''}`}>{item.kind}</span>{item.sceneNo && <span className="prop-scene">{item.sceneNo}. {sceneTitle(item.sceneNo)}</span>}</div><h3>{item.name}</h3><div className="prop-assignees"><span><b>IN</b>{item.inBy || '미정'}</span><span><b>OUT</b>{item.outBy || '미정'}</span></div>{item.note && <p>{item.note}</p>}</div><button className="icon-button" onClick={() => setEditing(true)} aria-label="소품 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="소품 삭제"><Trash2 size={17} /></button></article>
 }
 
-function CuePanel({ scenes, completed, toggle, updateScene, autoLink, busy }) {
+function CuePanel({ scenes = [], completed = {}, toggle = () => {}, updateScene, autoLink = () => {}, busy }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ sceneNo: '', type: '조명', label: '', trigger: '' })
   const groups = scenes.map((scene) => ({ scene, cues: parseSceneCues(scene.summary) })).filter((group) => group.cues.length)
