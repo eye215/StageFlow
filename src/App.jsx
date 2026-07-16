@@ -2202,7 +2202,39 @@ function SchedulePanel({ workspace, production }) {
 }
 
 function ScheduleGroup({ title, events, remove, empty }) {
-  return <section className="schedule-group"><div className="compact-heading"><div><span>SCHEDULE</span><h2>{title}</h2></div><small>{events.length}개</small></div>{events.length ? <div className="schedule-list">{events.map((item) => <article key={item.id}><div className="schedule-date"><strong>{new Date(`${item.date}T00:00:00`).getDate()}</strong><span>{new Date(`${item.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</span></div><div><span>{item.type}</span><strong>{item.title}</strong><p>{[item.time, item.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</p>{item.note && <small>{item.note}</small>}</div><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="일정 삭제"><Trash2 size={16} /></button></article>)}</div> : <p className="schedule-empty">{empty}</p>}</section>
+  return <section className="schedule-group"><div className="compact-heading"><div><span>SCHEDULE</span><h2>{title}</h2></div><small>{events.length}개</small></div>{events.length ? <div className="schedule-list">{events.map((item) => <article key={item.id}><div className="schedule-date"><strong>{new Date(`${item.date}T00:00:00`).getDate()}</strong><span>{new Date(`${item.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</span></div><div><span>{item.type}</span><strong>{item.title}</strong><p>{[item.time, item.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</p>{item.note && <small>{item.note}</small>}</div><div className="schedule-actions"><button className="icon-button calendar" onClick={() => shareCalendarEvent(item)} aria-label="캘린더에 추가"><CalendarDays size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="일정 삭제"><Trash2 size={16} /></button></div></article>)}</div> : <p className="schedule-empty">{empty}</p>}</section>
+}
+async function shareCalendarEvent(item) {
+  const escapeIcs = (value = '') => String(value).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;')
+  const compactDate = item.date.replaceAll('-', '')
+  let starts
+  let ends
+  if (item.time) {
+    const start = new Date(`${item.date}T${item.time}:00`)
+    const end = new Date(start.getTime() + (2 * 60 * 60 * 1000))
+    const localStamp = (date) => `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}T${String(date.getHours()).padStart(2, '0')}${String(date.getMinutes()).padStart(2, '0')}00`
+    starts = `DTSTART:${localStamp(start)}`
+    ends = `DTEND:${localStamp(end)}`
+  } else {
+    const nextDay = new Date(`${item.date}T00:00:00`)
+    nextDay.setDate(nextDay.getDate() + 1)
+    const nextDate = `${nextDay.getFullYear()}${String(nextDay.getMonth() + 1).padStart(2, '0')}${String(nextDay.getDate()).padStart(2, '0')}`
+    starts = `DTSTART;VALUE=DATE:${compactDate}`
+    ends = `DTEND;VALUE=DATE:${nextDate}`
+  }
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StageFlow//Production Schedule//KO', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', `UID:${item.id}@stageflow`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`, starts, ends, `SUMMARY:${escapeIcs(`[${item.type}] ${item.title}`)}`, `LOCATION:${escapeIcs(item.location)}`, `DESCRIPTION:${escapeIcs(item.note || 'StageFlow 공연 일정')}`, 'END:VEVENT', 'END:VCALENDAR']
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' })
+  const safeName = item.title.replace(/[^0-9a-z가-힣_-]+/gi, '-') || 'stageflow-event'
+  const file = new File([blob], `${item.date}-${safeName}.ics`, { type: 'text/calendar' })
+  if (navigator.share && navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ title: item.title, files: [file] }); return } catch (error) { if (error?.name === 'AbortError') return }
+  }
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = file.name
+  anchor.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
 function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
