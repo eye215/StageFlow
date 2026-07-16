@@ -104,6 +104,11 @@ input::placeholder,textarea::placeholder{color:#656b74!important}
 .cast-field>small{color:var(--g-muted);font-size:11px;line-height:1.45}
 .pair-group-field{padding:13px;border:1px solid rgba(255,101,74,.3);border-radius:14px;background:rgba(255,101,74,.045)}
 .pair-group-field input{border-color:rgba(255,101,74,.36)!important}
+.connected-title{align-items:center!important}
+.connected-title>button{min-height:34px;padding:0 11px!important;border:1px solid var(--g-line)!important;border-radius:11px!important;background:#111316!important;color:var(--g-muted)!important;font-size:11px!important;font-weight:800!important}
+.connected-title>button.organize-action{display:flex;align-items:center;gap:7px;min-height:38px;padding:0 8px 0 12px!important;border-color:rgba(255,101,74,.28)!important;background:var(--g-accent-soft)!important;color:var(--g-accent-2)!important}
+.organize-action>span{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.organize-action svg{width:15px;height:15px}.organize-action>svg:last-child{width:14px;color:var(--g-accent)!important}
 
 @media(max-width:600px){
   .actor-home-title h2,.section-heading h2{font-weight:900}
