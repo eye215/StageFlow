@@ -61,9 +61,9 @@ async function loadPdfRuntime() {
   return pdfRuntimePromise
 }
 
-function extractPdfPageText(content) {
+function extractPdfPageLayout(content) {
   const items = (content.items || []).filter((item) => typeof item.str === 'string' && item.str.trim())
-  if (!items.length) return ''
+  if (!items.length) return { text: '', rows: [], tableRows: [] }
   const lines = []
   for (const item of items) {
     const x = Number(item.transform?.[4] || 0)
@@ -72,20 +72,24 @@ function extractPdfPageText(content) {
     if (!line) { line = { y, items: [] }; lines.push(line) }
     line.items.push({ text: item.str.trim(), x, width: Number(item.width || 0) })
   }
-  return lines.sort((a, b) => b.y - a.y).map((line) => {
+  const rows = lines.sort((a, b) => b.y - a.y).map((line) => {
     const ordered = line.items.sort((a, b) => a.x - b.x)
-    let result = ''
+    const cells = []
+    let current = ''
     let previousEnd = null
     for (const item of ordered) {
       if (previousEnd !== null) {
         const gap = item.x - previousEnd
-        result += gap > 18 ? '\t' : gap > 2 ? ' ' : ''
+        if (gap > 14) { if (current.trim()) cells.push(current.trim()); current = '' }
+        else if (gap > 2) current += ' '
       }
-      result += item.text
+      current += item.text
       previousEnd = item.x + item.width
     }
-    return result.trim()
-  }).filter(Boolean).join('\n')
+    if (current.trim()) cells.push(current.trim())
+    return { y: line.y, cells, text: cells.join('\t') }
+  }).filter((row) => row.text)
+  return { text: rows.map((row) => row.text).join('\n'), rows, tableRows: rows.filter((row) => row.cells.length >= 2) }
 }
 
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
@@ -113,6 +117,7 @@ export default function App() {
   const [showSceneForm, setShowSceneForm] = useState(false)
   const [importText, setImportText] = useState('')
   const [importRows, setImportRows] = useState([])
+  const [pdfExtractionReport, setPdfExtractionReport] = useState(null)
   const [importingPdf, setImportingPdf] = useState(false)
   const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [pendingMusic, setPendingMusic] = useState([])
@@ -533,11 +538,15 @@ export default function App() {
       const pdfjs = await loadPdfRuntime()
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pages = []
+      const tableRows = []
+      let textRows = 0
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
         const page = await pdf.getPage(pageNo)
         const content = await page.getTextContent()
-        const pageText = extractPdfPageText(content)
-        if (pageText) pages.push(`--- PAGE ${pageNo} ---\n${pageText}`)
+        const layout = extractPdfPageLayout(content)
+        textRows += layout.rows.length
+        layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
+        if (layout.text) pages.push(`--- PAGE ${pageNo} ---\n${layout.text}`)
       }
       const text = pages.join('\n')
       const characterCount = text.replace(/--- PAGE \d+ ---/g, '').replace(/\s/g, '').length
@@ -551,8 +560,10 @@ export default function App() {
       }
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
+      setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, preview: tableRows.slice(0, 8) })
       setNotice(parsed.length ? `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.` : `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.`)
     } catch (error) {
+      setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
         ? '암호가 설정된 PDF는 읽을 수 없어요. 암호를 해제한 복사본을 올려주세요.'
         : error.message
@@ -1043,6 +1054,7 @@ export default function App() {
       updateScene={updateScene} deleteScene={deleteScene} showForm={showSceneForm} setShowForm={setShowSceneForm}
       notice={notice} busy={busy}
       importText={importText} setImportText={setImportText} importRows={importRows} setImportRows={setImportRows}
+      pdfExtractionReport={pdfExtractionReport}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
       analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
       readPdf={readPdf} readSpreadsheet={readSpreadsheet} undoLastImport={undoLastImport} importingPdf={importingPdf}
@@ -1310,6 +1322,7 @@ function RoleClaimSheet({ members, choose, busy }) {
 function ProductionView(props) {
   const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const current = scenes[showIndex]
+  const pdfExtractionReport = props.pdfExtractionReport
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
   const [completedCues, setCompletedCues] = useState({})
@@ -1582,7 +1595,7 @@ function ProductionView(props) {
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -1845,7 +1858,7 @@ function SceneCard({ scene, update, remove }) {
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ workspace, production, scenes, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing }) {
+function ImportPanel({ workspace, production, scenes, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
@@ -1885,6 +1898,7 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
   const audit = useMemo(() => buildImportAudit(rows), [rows])
   const existingImportNumbers = useMemo(() => new Set(scenes.map((scene) => Number(scene.scene_no))), [scenes])
   return <section className="import-panel">
+    {pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}<p>추출한 표는 탭으로 구분되어 원문에 들어가며, 빠른 표정리가 행·열 헤더를 기준으로 장면·배역·소품을 연결합니다.</p></section>}
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
     {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}

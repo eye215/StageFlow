@@ -11,6 +11,7 @@ import './role-switch.css'
 import './task-filter.css'
 import './home-task-scope.css'
 import './task-urgency.css'
+import './pdf-extraction.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
