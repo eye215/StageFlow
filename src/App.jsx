@@ -45,10 +45,19 @@ import './import-plan.css'
 import './import-flow.css'
 import './source-reanalyze.css'
 import './import-flow-override.css'
-import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
-import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
-
-pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl
+let pdfRuntimePromise
+async function loadPdfRuntime() {
+  if (!pdfRuntimePromise) {
+    pdfRuntimePromise = Promise.all([
+      import('pdfjs-dist/legacy/build/pdf.mjs'),
+      import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'),
+    ]).then(([pdfjs, worker]) => {
+      pdfjs.GlobalWorkerOptions.workerSrc = worker.default
+      return pdfjs
+    })
+  }
+  return pdfRuntimePromise
+}
 
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
 const emptyScene = { title: '', act_no: 1, scene_no: 1, summary: '' }
@@ -378,6 +387,7 @@ export default function App() {
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
     try {
+      const pdfjs = await loadPdfRuntime()
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pages = []
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
