@@ -22,6 +22,9 @@ export default defineConfig({
       navigateFallback: '/StageFlow/index.html',
       globPatterns: ['**/*.{js,css,html,svg,mjs}'],
       maximumFileSizeToCacheInBytes: 2 * 1024 * 1024,
+      skipWaiting: true,
+      clientsClaim: true,
+      cleanupOutdatedCaches: true,
     },
   })],
 })

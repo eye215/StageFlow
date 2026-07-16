@@ -11,15 +11,12 @@ import './dashboard.css'
 import './cast.css'
 import './props.css'
 import './cues.css'
-import './rehearsal.css'
 import './materials.css'
-import './tasks.css'
 import './scenes.css'
 import './search.css'
 import './navigation.css'
 import './navigation-v2.css'
 import './ui-cleanup.css'
-import './schedule.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
 import './show-briefing.css'
@@ -46,7 +43,6 @@ import './import-flow.css'
 import './source-reanalyze.css'
 import './import-flow-override.css'
 import './install-app.css'
-import './home-schedule.css'
 let pdfRuntimePromise
 async function loadPdfRuntime() {
   if (!pdfRuntimePromise) {
@@ -130,8 +126,6 @@ export default function App() {
   const [homeMusicLinkedScenes, setHomeMusicLinkedScenes] = useState(0)
   const [homeMusicByScene, setHomeMusicByScene] = useState({})
   const [homePropStats, setHomePropStats] = useState({ total: 0, ready: 0 })
-  const [homeTasks, setHomeTasks] = useState([])
-  const [homeEvents, setHomeEvents] = useState([])
   const [homeCastMembers, setHomeCastMembers] = useState([])
   const [homePropItems, setHomePropItems] = useState([])
   const [castMembers, setCastMembers] = useState([])
@@ -309,8 +303,6 @@ export default function App() {
         setHomeMusicLinkedScenes(cached.musicLinkedScenes || 0)
         setHomeMusicByScene(cached.musicByScene || {})
         setHomePropStats(cached.propStats || { total: 0, ready: 0 })
-        setHomeTasks(cached.tasks || [])
-        setHomeEvents(cached.events || [])
         setHomeCastMembers(cached.castMembers || [])
         setHomePropItems(cached.propItems || [])
       }
@@ -319,15 +311,13 @@ export default function App() {
     const nextScenes = data || []
     setHomeScenes(nextScenes)
     if (!workspace) return
-    const [musicEntries, propResult, taskResult, scheduleResult, castResult] = await Promise.all([
+    const [musicEntries, propResult, castResult] = await Promise.all([
       Promise.all(nextScenes.map(async (scene) => {
         const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
         const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
         return [String(scene.scene_no), (files || []).filter((file) => file.id).map((file) => ({ name: file.name, path: `${path}/${file.name}` }))]
       })),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`),
-      supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/tasks.json`),
-      supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/schedule.json`),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/cast.json`),
     ])
     const homeMusic = Object.fromEntries(musicEntries)
@@ -351,22 +341,20 @@ export default function App() {
     setHomePropStats(propStats)
     setHomePropItems(homeProps)
     let tasks = []
-    const taskFile = taskResult.data
+    const taskFile = null
     if (taskFile) {
       try {
         const payload = JSON.parse(await taskFile.text())
         tasks = Array.isArray(payload.tasks) ? payload.tasks : []
       } catch { /* 빈 상태를 사용합니다. */ }
     }
-    setHomeTasks(tasks)
     let events = []
-    if (scheduleResult.data) {
+    if (false) {
       try {
-        const payload = JSON.parse(await scheduleResult.data.text())
+        const payload = { events: [] }
         events = Array.isArray(payload.events) ? payload.events : []
       } catch { /* 일정이 없거나 손상되면 빈 상태를 사용합니다. */ }
     }
-    setHomeEvents(events)
     let homeCast = []
     if (castResult.data) {
       try {
@@ -1228,7 +1216,7 @@ export default function App() {
   return <HomeDashboardV2
     session={session} workspace={workspace} productions={productions}
     defaultProduction={defaultProduction} daysLeft={homeDaysLeft} progress={homeProgress}
-    scenes={homeScenes} musicCount={homeMusicCount} musicByScene={homeMusicByScene} propStats={homePropStats} tasks={homeTasks} events={homeEvents} castMembers={homeCastMembers} propItems={homePropItems}
+    scenes={homeScenes} musicCount={homeMusicCount} musicByScene={homeMusicByScene} propStats={homePropStats} castMembers={homeCastMembers} propItems={homePropItems}
     openAt={openDefaultAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen}
     chooseDefaultProduction={chooseDefaultProduction} notice={notice}
     showForm={showProductionForm} setShowForm={setShowProductionForm}
@@ -1277,7 +1265,7 @@ export default function App() {
   )
 }
 
-function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, musicByScene, propStats, tasks, events, castMembers, propItems, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, musicByScene, propStats, tasks = [], events = [], castMembers, propItems, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
   const [taskScope, setTaskScope] = useState('mine')
   const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
   const myCast = castMembers.find((member) => member.userId === session.user.id)
@@ -1327,7 +1315,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
   </div>
 }
 
-function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, nextEvent, pendingTasks, attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
+function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, nextEvent = null, pendingTasks = [], attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
   return <div className="app-shell actor-home">
     <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>배우 연습</span></div></div><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></header>
     <main className="content actor-home-content">
