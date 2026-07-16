@@ -8,22 +8,22 @@
     grid-template-columns: repeat(5, minmax(0, 1fr));
     width: auto;
     margin: 0;
-    padding: 6px;
-    border: 1px solid rgba(148, 163, 184, 0.14);
-    border-radius: 22px;
-    background: rgba(9, 14, 27, 0.92);
-    box-shadow: 0 14px 45px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.018) inset;
-    backdrop-filter: blur(24px) saturate(140%);
+    padding: 5px 8px 4px;
+    border: 0;
+    border-radius: 24px;
+    background: rgba(248, 250, 252, 0.96);
+    box-shadow: 0 16px 45px rgba(0, 0, 0, 0.34), 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+    backdrop-filter: blur(24px) saturate(160%);
   }
 
   .production-primary-nav button {
-    min-height: 54px;
-    gap: 4px;
-    padding: 5px 1px 4px;
-    border-radius: 16px;
-    color: #66758f;
-    font-size: 9px;
-    font-weight: 750;
+    min-height: 55px;
+    gap: 3px;
+    padding: 6px 1px 3px;
+    border-radius: 0;
+    color: #8490a3;
+    font-size: 9.5px;
+    font-weight: 700;
     letter-spacing: -0.02em;
     transition: color 160ms ease, transform 160ms ease;
   }
@@ -31,7 +31,7 @@
   .production-primary-nav button svg {
     width: 19px;
     height: 19px;
-    stroke-width: 1.8;
+    stroke-width: 2;
   }
 
   .production-primary-nav button span {
@@ -44,16 +44,17 @@
 
   .production-primary-nav button.active {
     background: transparent;
-    color: #c7d2fe;
+    color: #5b4ce6;
   }
 
   .production-primary-nav button.active::before {
-    top: 3px;
-    width: 38px;
-    height: 30px;
-    border-radius: 11px;
-    background: linear-gradient(145deg, rgba(99, 102, 241, 0.25), rgba(79, 70, 229, 0.12));
-    box-shadow: 0 0 0 1px rgba(165, 180, 252, 0.12) inset;
+    top: auto;
+    bottom: 1px;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #6d5dfc;
+    box-shadow: none;
   }
 
   .production-primary-nav button.active svg,
