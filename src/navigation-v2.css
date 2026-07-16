@@ -1,0 +1,70 @@
+.production-shell-v2 .production-primary-nav {
+  position: fixed;
+  z-index: 20;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  width: min(680px, 100%);
+  margin: 0 auto;
+  padding: 7px 6px max(8px, env(safe-area-inset-bottom));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  background: rgba(7, 10, 18, 0.94);
+  box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(22px);
+}
+
+.production-primary-nav button {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 49px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 2px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.production-primary-nav button svg { width: 19px; height: 19px; }
+.production-primary-nav button span { display: block; }
+.production-primary-nav button.active { background: rgba(99, 102, 241, 0.11); color: #c7d2fe; }
+.production-primary-nav button.active::before { position: absolute; top: 2px; width: 18px; height: 2px; border-radius: 99px; background: #818cf8; content: ''; }
+.production-shell-v2 .content { padding-bottom: calc(96px + env(safe-area-inset-bottom)); }
+.production-topbar { min-height: 62px; }
+.production-bar { padding: 14px 2px 6px; }
+.production-bar h1 { margin-top: 2px; font-size: clamp(25px, 6.5vw, 36px); }
+.production-bar-actions { display: flex; align-items: center; gap: 7px; }
+.production-bar-actions .icon-button { width: 36px; height: 36px; border-radius: 11px; }
+
+@media (max-width: 759px) {
+  .production-content > .section-heading { margin-top: 20px; }
+  .production-content > .section-heading .eyebrow { display: none; }
+  .production-content > .section-heading h2 { margin: 0; font-size: 21px; }
+  .production-content .panel { padding: 15px; border-radius: 18px; }
+}
+
+@media (min-width: 760px) {
+  .production-shell-v2 .production-primary-nav {
+    position: sticky;
+    top: 70px;
+    width: 100%;
+    margin: 12px 0 20px;
+    padding: 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    box-shadow: none;
+  }
+  .production-primary-nav button { min-height: 43px; flex-direction: row; gap: 6px; font-size: 11px; }
+  .production-primary-nav button svg { width: 16px; height: 16px; }
+  .production-primary-nav button.active::before { display: none; }
+}
