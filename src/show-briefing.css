@@ -103,3 +103,9 @@
 .show-event-log li span { overflow: hidden; color: #cbd5e1; text-overflow: ellipsis; white-space: nowrap; }
 .show-event-log .event-hold b { color: #f87171; }
 .show-event-log .event-resume b { color: #34d399; }
+.show-report-summary { display: grid !important; grid-template-columns: repeat(3,1fr) auto; gap: 5px !important; margin-top: 9px; }
+.show-report-summary > span { display: grid; gap: 1px; padding: 7px; border-radius: 8px; background: rgba(99,102,241,.08); color: #64748b; font-size: 8px; text-align: center; }
+.show-report-summary > span b { color: #e0e7ff; font-size: 12px; }
+.show-report-summary button { display: flex; align-items: center; gap: 4px; padding: 7px 9px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font-size: 9px; font-weight: 850; }
+.show-report-summary button svg { width: 13px !important; color: #fff !important; }
+.show-event-log > p { margin: 7px 0 0; color: #93c5fd; font-size: 8px; }

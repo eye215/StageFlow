@@ -1063,8 +1063,21 @@ function ProductionView(props) {
 }
 
 function ShowEventLog({ events }) {
+  const [reportStatus, setReportStatus] = useState('')
   const recent = events.slice(-6).reverse()
-  return <section className="show-event-log"><div><Clock3 /><strong>최근 공연 기록</strong><span>{events.length}건</span></div><ol>{recent.map((event) => <li className={`event-${event.type.toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
+  const goCount = events.filter((event) => event.type === 'GO').length
+  const holdEvents = events.filter((event) => event.type === 'HOLD')
+  const startedAt = events[0] ? new Date(events[0].createdAt) : null
+  const endedAt = events.at(-1) ? new Date(events.at(-1).createdAt) : null
+  const durationMinutes = startedAt && endedAt ? Math.max(0, Math.round((endedAt - startedAt) / 60000)) : 0
+  async function shareReport() {
+    const report = [`[StageFlow 공연 리포트]`, `기록 시간: ${startedAt ? startedAt.toLocaleString('ko-KR') : '-'} ~ ${endedAt ? endedAt.toLocaleTimeString('ko-KR') : '-'}`, `진행 시간: 약 ${durationMinutes}분`, `장면 GO: ${goCount}회`, `HOLD: ${holdEvents.length}회`, '', '[HOLD 기록]', ...(holdEvents.length ? holdEvents.map((event) => `- ${new Date(event.createdAt).toLocaleTimeString('ko-KR')} · Scene ${event.sceneNo} · ${event.label}`) : ['- 없음'])].join('\n')
+    try {
+      if (navigator.share) { await navigator.share({ title: 'StageFlow 공연 리포트', text: report }); setReportStatus('공연 리포트를 공유했어요.') }
+      else { await navigator.clipboard.writeText(report); setReportStatus('공연 리포트를 복사했어요.') }
+    } catch (error) { if (error?.name !== 'AbortError') setReportStatus('리포트를 공유하지 못했어요.') }
+  }
+  return <section className="show-event-log"><div><Clock3 /><strong>공연 기록</strong><span>{events.length}건</span></div><div className="show-report-summary"><span><b>{durationMinutes}</b>분</span><span><b>{goCount}</b>GO</span><span><b>{holdEvents.length}</b>HOLD</span><button onClick={shareReport}><Upload /> 리포트</button></div>{reportStatus && <p>{reportStatus}</p>}<ol>{recent.map((event) => <li className={`event-${event.type.toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
 }
 
 function ProductionMoreSheet({ active, close, choose }) {
