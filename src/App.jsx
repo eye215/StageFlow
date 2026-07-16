@@ -1446,7 +1446,7 @@ function ProductionView(props) {
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
-      {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} scenes={scenes} />}
+      {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
@@ -2185,7 +2185,7 @@ function formatTaskDue(date) {
   return `D-${days}`
 }
 
-function SchedulePanel({ workspace, production, scenes }) {
+function SchedulePanel({ workspace, production, scenes, castMembers, propItems }) {
   const [events, setEvents] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState('')
@@ -2242,6 +2242,34 @@ function SchedulePanel({ workspace, production, scenes }) {
     setForm({ title: '', type: form.type, date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [] })
   }
 
+  async function shareCallSheet(item) {
+    const selected = new Set((item.sceneNumbers || []).map(Number))
+    const callScenes = scenes.filter((scene) => selected.has(Number(scene.scene_no)))
+    const callCast = castMembers.filter((member) => (member.sceneNumbers || []).some((number) => selected.has(Number(number))))
+    const callProps = propItems.filter((prop) => selected.has(Number(prop.sceneNo)))
+    const lines = [
+      `[StageFlow 연습 콜] ${production.title}`,
+      `${item.date}${formatScheduleTimeRange(item) ? ` · ${formatScheduleTimeRange(item)}` : ''}`,
+      item.location ? `장소: ${item.location}` : '장소: 미정',
+      '',
+      `연습 장면 (${callScenes.length})`,
+      ...(callScenes.length ? callScenes.map((scene) => `- ${scene.scene_no}. ${scene.title}`) : ['- 전체 또는 미지정']),
+      '',
+      `호출 배우·배역 (${callCast.length})`,
+      ...(callCast.length ? callCast.map((member) => `- ${member.roleName || '배역 미정'} · ${member.name}`) : ['- 지정 없음']),
+      '',
+      `필요 소품 (${callProps.length})`,
+      ...(callProps.length ? callProps.map((prop) => `- ${prop.name}${prop.inBy ? ` · IN ${prop.inBy}` : ''}`) : ['- 지정 없음']),
+      item.note ? `\n준비 메모\n${item.note}` : '',
+    ].filter((line) => line !== '').join('\n')
+    try {
+      if (navigator.share) await navigator.share({ title: `${production.title} 연습 콜`, text: lines })
+      else { await navigator.clipboard.writeText(lines); setStatus('연습 콜시트를 복사했어요.') }
+    } catch (error) {
+      if (error?.name !== 'AbortError') setStatus('콜시트를 공유하지 못했어요.')
+    }
+  }
+
   const removeEvent = (id) => {
     if (window.confirm('이 일정을 삭제할까요?')) persist(events.filter((item) => item.id !== id), '일정을 삭제했어요.')
   }
@@ -2249,11 +2277,11 @@ function SchedulePanel({ workspace, production, scenes }) {
   const now = new Date().toISOString().slice(0, 10)
   const upcoming = ordered.filter((item) => item.date >= now)
   const past = ordered.filter((item) => item.date < now).reverse()
-  return <section className="schedule-panel"><div className="section-heading"><div><p className="eyebrow">PRODUCTION CALENDAR</p><h2>일정</h2></div><button className="primary compact" onClick={() => showForm ? closeForm() : setShowForm(true)}>{showForm ? <X size={17} /> : <Plus size={17} />} {showForm ? '닫기' : '일정'}</button></div>{showForm && <form className="panel schedule-form" onSubmit={saveEvent}><div className="schedule-form-title"><strong>{editingId ? '일정 수정' : '새 일정'}</strong>{editingId && <span>내용을 고친 뒤 저장하세요.</span>}</div><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="일정 제목" /><div className="two-col"><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>연습</option><option>리허설</option><option>공연</option><option>회의</option><option>기타</option></select><input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="장소" /></div><input required type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /><div className="schedule-time-range"><label><span>시작</span><input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value, endTime: event.target.value ? form.endTime : '' })} /></label><label><span>종료</span><input type="time" disabled={!form.time} min={form.time || undefined} value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label></div>{!!scenes.length && <div className="schedule-scene-picker"><div><strong>연습 장면</strong><button type="button" onClick={() => setForm({ ...form, sceneNumbers: form.sceneNumbers.length === scenes.length ? [] : scenes.map((scene) => scene.scene_no) })}>{form.sceneNumbers.length === scenes.length ? '전체 해제' : '전체 선택'}</button></div><div>{scenes.map((scene) => { const selected = form.sceneNumbers.some((number) => Number(number) === Number(scene.scene_no)); return <button type="button" className={selected ? 'selected' : ''} key={scene.id} onClick={() => setForm({ ...form, sceneNumbers: selected ? form.sceneNumbers.filter((number) => Number(number) !== Number(scene.scene_no)) : [...form.sceneNumbers, scene.scene_no] })}><span>{scene.scene_no}</span>{scene.title}</button> })}</div></div>}<textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="준비물, 참여 인원, 메모" /><button className="primary"><Save size={17} /> {editingId ? '수정 저장' : '일정 저장'}</button></form>}{status && <p className="notice">{status}</p>}<ScheduleGroup title="다가오는 일정" events={upcoming} edit={editEvent} remove={removeEvent} empty="예정된 일정이 없어요." /><ScheduleGroup title="지난 일정" events={past.slice(0, 10)} edit={editEvent} remove={removeEvent} empty="지난 일정이 없어요." /></section>
+  return <section className="schedule-panel"><div className="section-heading"><div><p className="eyebrow">PRODUCTION CALENDAR</p><h2>일정</h2></div><button className="primary compact" onClick={() => showForm ? closeForm() : setShowForm(true)}>{showForm ? <X size={17} /> : <Plus size={17} />} {showForm ? '닫기' : '일정'}</button></div>{showForm && <form className="panel schedule-form" onSubmit={saveEvent}><div className="schedule-form-title"><strong>{editingId ? '일정 수정' : '새 일정'}</strong>{editingId && <span>내용을 고친 뒤 저장하세요.</span>}</div><input required value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="일정 제목" /><div className="two-col"><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>연습</option><option>리허설</option><option>공연</option><option>회의</option><option>기타</option></select><input value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} placeholder="장소" /></div><input required type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} /><div className="schedule-time-range"><label><span>시작</span><input type="time" value={form.time} onChange={(event) => setForm({ ...form, time: event.target.value, endTime: event.target.value ? form.endTime : '' })} /></label><label><span>종료</span><input type="time" disabled={!form.time} min={form.time || undefined} value={form.endTime} onChange={(event) => setForm({ ...form, endTime: event.target.value })} /></label></div>{!!scenes.length && <div className="schedule-scene-picker"><div><strong>연습 장면</strong><button type="button" onClick={() => setForm({ ...form, sceneNumbers: form.sceneNumbers.length === scenes.length ? [] : scenes.map((scene) => scene.scene_no) })}>{form.sceneNumbers.length === scenes.length ? '전체 해제' : '전체 선택'}</button></div><div>{scenes.map((scene) => { const selected = form.sceneNumbers.some((number) => Number(number) === Number(scene.scene_no)); return <button type="button" className={selected ? 'selected' : ''} key={scene.id} onClick={() => setForm({ ...form, sceneNumbers: selected ? form.sceneNumbers.filter((number) => Number(number) !== Number(scene.scene_no)) : [...form.sceneNumbers, scene.scene_no] })}><span>{scene.scene_no}</span>{scene.title}</button> })}</div></div>}<textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="준비물, 참여 인원, 메모" /><button className="primary"><Save size={17} /> {editingId ? '수정 저장' : '일정 저장'}</button></form>}{status && <p className="notice">{status}</p>}<ScheduleGroup title="다가오는 일정" events={upcoming} edit={editEvent} shareCall={shareCallSheet} remove={removeEvent} empty="예정된 일정이 없어요." /><ScheduleGroup title="지난 일정" events={past.slice(0, 10)} edit={editEvent} shareCall={shareCallSheet} remove={removeEvent} empty="지난 일정이 없어요." /></section>
 }
 
-function ScheduleGroup({ title, events, edit, remove, empty }) {
-  return <section className="schedule-group"><div className="compact-heading"><div><span>SCHEDULE</span><h2>{title}</h2></div><small>{events.length}개</small></div>{events.length ? <div className="schedule-list">{events.map((item) => <article key={item.id}><div className="schedule-date"><strong>{new Date(`${item.date}T00:00:00`).getDate()}</strong><span>{new Date(`${item.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</span></div><div><span>{item.type}</span><strong>{item.title}</strong><p>{[formatScheduleTimeRange(item), item.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</p>{!!item.sceneNumbers?.length && <div className="schedule-scene-summary"><Clapperboard /> 장면 {item.sceneNumbers.sort((a, b) => Number(a) - Number(b)).join(' · ')}</div>}{item.note && <small>{item.note}</small>}</div><div className="schedule-actions"><button className="icon-button edit" onClick={() => edit(item)} aria-label="일정 수정"><Pencil size={16} /></button><button className="icon-button calendar" onClick={() => shareCalendarEvent(item)} aria-label="캘린더에 추가"><CalendarDays size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="일정 삭제"><Trash2 size={16} /></button></div></article>)}</div> : <p className="schedule-empty">{empty}</p>}</section>
+function ScheduleGroup({ title, events, edit, shareCall, remove, empty }) {
+  return <section className="schedule-group"><div className="compact-heading"><div><span>SCHEDULE</span><h2>{title}</h2></div><small>{events.length}개</small></div>{events.length ? <div className="schedule-list">{events.map((item) => <article key={item.id}><div className="schedule-date"><strong>{new Date(`${item.date}T00:00:00`).getDate()}</strong><span>{new Date(`${item.date}T00:00:00`).toLocaleDateString('ko-KR', { month: 'short' })}</span></div><div><span>{item.type}</span><strong>{item.title}</strong><p>{[formatScheduleTimeRange(item), item.location].filter(Boolean).join(' · ') || '시간·장소 미정'}</p>{!!item.sceneNumbers?.length && <div className="schedule-scene-summary"><Clapperboard /> 장면 {item.sceneNumbers.sort((a, b) => Number(a) - Number(b)).join(' · ')}</div>}{item.note && <small>{item.note}</small>}</div><div className="schedule-actions"><button className="icon-button edit" onClick={() => edit(item)} aria-label="일정 수정"><Pencil size={16} /></button><button className="icon-button share-call" onClick={() => shareCall(item)} aria-label="콜시트 공유"><Upload size={16} /></button><button className="icon-button calendar" onClick={() => shareCalendarEvent(item)} aria-label="캘린더에 추가"><CalendarDays size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="일정 삭제"><Trash2 size={16} /></button></div></article>)}</div> : <p className="schedule-empty">{empty}</p>}</section>
 }
 function formatScheduleTimeRange(item) {
   if (!item.time) return ''
