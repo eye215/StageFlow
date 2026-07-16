@@ -45,6 +45,7 @@ import './import-plan.css'
 import './import-flow.css'
 import './source-reanalyze.css'
 import './import-flow-override.css'
+import './install-app.css'
 let pdfRuntimePromise
 async function loadPdfRuntime() {
   if (!pdfRuntimePromise) {
@@ -972,6 +973,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       <div className="topbar-actions"><button className="icon-button" onClick={() => setShowForm((value) => !value)} aria-label="새 공연 만들기"><Plus size={19} /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 기본 공연 설정">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div>
     </header>
     <main className="content home-dashboard-v2">
+      <InstallAppCard />
       {showForm && <section className="inline-create"><div className="compact-heading"><div><span>NEW PRODUCTION</span><h2>새 공연</h2></div><button className="icon-button" onClick={() => setShowForm(false)}><X size={18} /></button></div><ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} /></section>}
       {defaultProduction ? <>
         <button className="stage-summary" onClick={() => openAt('overview')}>
@@ -991,6 +993,54 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
     {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
   </div>
+}
+
+function InstallAppCard() {
+  const [installPrompt, setInstallPrompt] = useState(null)
+  const [showGuide, setShowGuide] = useState(false)
+  const [hidden, setHidden] = useState(() => window.localStorage.getItem('stageflow:install-card-hidden') === '1')
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true
+  const isIos = /iPad|iPhone|iPod/.test(window.navigator.userAgent)
+
+  useEffect(() => {
+    function capturePrompt(event) { event.preventDefault(); setInstallPrompt(event) }
+    function installed() { setHidden(true); window.localStorage.setItem('stageflow:install-card-hidden', '1') }
+    window.addEventListener('beforeinstallprompt', capturePrompt)
+    window.addEventListener('appinstalled', installed)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', capturePrompt)
+      window.removeEventListener('appinstalled', installed)
+    }
+  }, [])
+
+  if (standalone || hidden) return null
+
+  async function install() {
+    if (!installPrompt) { setShowGuide(true); return }
+    await installPrompt.prompt()
+    const result = await installPrompt.userChoice
+    if (result.outcome === 'accepted') setHidden(true)
+    setInstallPrompt(null)
+  }
+  function dismiss() {
+    setHidden(true)
+    window.localStorage.setItem('stageflow:install-card-hidden', '1')
+  }
+
+  return <>
+    <section className="install-app-card">
+      <span className="install-app-icon"><Theater /></span>
+      <div><strong>StageFlow를 앱으로 사용하기</strong><small>홈 화면에서 바로 열고 더 넓은 화면으로 공연을 진행하세요.</small></div>
+      <button className="install-app-action" onClick={install}><Download /> 설치</button>
+      <button className="install-app-close" onClick={dismiss} aria-label="설치 안내 닫기"><X /></button>
+    </section>
+    {showGuide && <div className="install-guide-backdrop" onClick={() => setShowGuide(false)}><section className="install-guide" onClick={(event) => event.stopPropagation()}>
+      <div className="install-guide-head"><span className="install-app-icon"><Theater /></span><button onClick={() => setShowGuide(false)} aria-label="닫기"><X /></button></div>
+      <h2>{isIos ? '아이폰 홈 화면에 추가' : '브라우저에서 앱 설치'}</h2>
+      {isIos ? <ol><li><b>Safari</b>에서 이 페이지를 열어요.</li><li>아래쪽 <b>공유</b> 버튼 <Upload />을 눌러요.</li><li><b>홈 화면에 추가</b>를 선택하고 ‘추가’를 눌러요.</li></ol> : <p>브라우저 메뉴에서 <b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 선택해 주세요.</p>}
+      <button className="primary" onClick={() => setShowGuide(false)}>확인</button>
+    </section></div>}
+  </>
 }
 
 function extractAttention(summary = '') {
