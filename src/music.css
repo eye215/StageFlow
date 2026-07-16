@@ -21,6 +21,7 @@
 .audio-list { padding: 0 12px 12px; }
 .audio-row { display: grid; gap: 9px; padding: 12px; border-radius: 14px; background: rgba(2,6,23,.6); }
 .audio-row>div { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.audio-file-head .icon-button { flex: 0 0 auto; margin-left: auto; }
 .audio-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1; font-size: 12px; }
 .audio-row audio { width: 100%; height: 36px; }
 @media(max-width:480px){.segmented-five button{font-size:10px}.music-scene-head{padding:13px}.import-result-head .compact{padding:10px 11px}}
