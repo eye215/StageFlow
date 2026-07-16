@@ -8,6 +8,8 @@
 .music-file-list article div { min-width: 0; display: grid; gap: 4px; }
 .music-file-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .music-file-list span { color: #86efac; font-size: 11px; }
+.music-file-list select { width: 100%; padding: 8px 10px; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; background: #0d1424; color: #cbd5e1; font-size: 11px; }
+.music-file-list .matched select { border-color: rgba(134,239,172,.25); color: #bbf7d0; }
 .music-file-list .unmatched { border-color: rgba(251,191,36,.22); }
 .music-file-list .unmatched span { color: #fbbf24; }
 .music-scene { overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 19px; background: rgba(15,23,42,.72); }
