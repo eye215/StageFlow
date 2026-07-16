@@ -2219,6 +2219,12 @@ function parseStructuredProductionTable(source) {
       const title = clean(cells[map.title])
       if (number) return { number, title }
     }
+    if (map?.title !== undefined) {
+      const reference = clean(cells[map.title])
+      const combined = reference.match(/^(\d{1,3})\s*[.)-]\s*(.+)$/)
+      if (combined) return { number: Number(combined[1]), title: clean(combined[2]) }
+      if (/^\d{1,3}$/.test(reference)) return null
+    }
     for (let index = 0; index < Math.min(3, cells.length); index += 1) {
       const match = clean(cells[index]).match(/^(\d{1,3})\s*[.)-]?\s*(.*)$/)
       if (match) {
