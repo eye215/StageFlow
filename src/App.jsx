@@ -985,6 +985,18 @@ export default function App() {
 
   async function changeMyProductionRole(memberId) {
     const target = castMembers.find((member) => member.id === memberId)
+    if (!target && !memberId) {
+      const released = castMembers.map((member) => {
+        if (member.userId !== session.user.id) return member
+        const { userId, email, claimedAt, ...available } = member
+        return available
+      })
+      setBusy(true)
+      const saved = await persistCastData(released)
+      setBusy(false)
+      if (saved) setNotice('내 배우·배역 선택을 해제했어요.')
+      return saved
+    }
     if (!target) return false
     const actorKey = canonicalActor(target.name)
     const actorRoles = castMembers.filter((member) => canonicalActor(member.name) === actorKey)
@@ -1816,7 +1828,8 @@ function BackupPanel({ workspace, production, scenes, castMembers, propItems, mu
 
 function ProductionTeamPanel({ workspace, production, session, castMembers, invite, changeMyRole, busy }) {
   const [members, setMembers] = useState([])
-  const myCast = castMembers.find((member) => member.userId === session.user.id)
+  const myCasts = castMembers.filter((member) => member.userId === session.user.id)
+  const myCast = myCasts.length ? { ...myCasts[0], roleName: [...new Set(myCasts.map((member) => member.roleName || '배역 미정'))].join(' · ') } : null
   const [selectedRoleId, setSelectedRoleId] = useState(myCast?.id || '')
   useEffect(() => setSelectedRoleId(myCast?.id || ''), [myCast?.id])
   useEffect(() => {
@@ -1824,10 +1837,16 @@ function ProductionTeamPanel({ workspace, production, session, castMembers, invi
   }, [workspace.id])
   const claimed = castMembers.filter((member) => member.userId)
   function identity(userId) {
-    const cast = claimed.find((member) => member.userId === userId)
-    return cast ? { name: cast.name, role: cast.roleName || '배역 미정' } : { name: userId === session.user.id ? '나' : '참여 팀원', role: '배역 미선택' }
+    const roles = claimed.filter((member) => member.userId === userId)
+    return roles.length ? { name: roles[0].name, role: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · ') } : { name: userId === session.user.id ? '나' : '참여 팀원', role: '배역 미선택' }
   }
-  const availableRoles = castMembers.filter((member) => !member.userId || member.userId === session.user.id)
+  const availableRoles = castMembers.filter((member) => !member.userId || member.userId === session.user.id).reduce((groups, member) => {
+    const key = canonicalActor(member.name) || member.id
+    const group = groups.find((item) => item.key === key)
+    if (group) group.roles.push(member.roleName || '배역 미정')
+    else groups.push({ key, member, roles: [member.roleName || '배역 미정'] })
+    return groups
+  }, []).map((group) => ({ ...group.member, roleName: [...new Set(group.roles)].join(' · ') }))
   async function saveMyRole() { if (await changeMyRole(selectedRoleId)) setSelectedRoleId(selectedRoleId) }
   return <section className="production-team-panel"><div className="team-panel-head"><Users /><div><p className="eyebrow">PRODUCTION TEAM</p><h2>참여 팀원</h2><p>{production.title} 공연에 참여하는 팀원과 배역을 관리해요.</p></div></div><button className="team-invite-button" onClick={() => invite(production.id)}><Upload /><span><b>팀원 초대 링크 공유</b><small>가입 후 이 공연의 배역을 직접 선택합니다.</small></span><ChevronRight /></button><article className="my-role-card"><div><UserRound /><span><b>내 배역</b><small>{myCast ? `${myCast.roleName || '배역 미정'} · ${myCast.name}` : '아직 선택하지 않았어요.'}</small></span></div><div className="my-role-controls"><select value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}><option value="">배역 선택 해제</option>{availableRoles.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}</option>)}</select><button disabled={busy || selectedRoleId === (myCast?.id || '')} onClick={saveMyRole}><Save /> 변경</button></div><small>다른 팀원이 선택한 배역은 목록에 표시되지 않아요.</small></article><div className="team-member-summary"><span><b>{members.length}</b> 참여 계정</span><span><b>{claimed.length}</b> 배역 선택</span><span><b>{Math.max(0, members.length - claimed.length)}</b> 미선택</span></div><div className="team-member-list">{members.map((member) => { const info = identity(member.user_id); return <article key={member.user_id}><span className="team-avatar"><UserRound /></span><div><strong>{info.name}{member.user_id === session.user.id ? ' · 나' : ''}</strong><small>{info.role}</small></div><em>{info.role === '배역 미선택' ? '선택 대기' : '참여 중'}</em></article> })}</div>{!members.length && <Empty icon={<Users />} title="참여 팀원이 없어요" description="초대 링크를 공유해 팀원을 추가해보세요." />}</section>
 }
