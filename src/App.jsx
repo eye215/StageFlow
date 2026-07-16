@@ -31,6 +31,7 @@ import './backup.css'
 import './invite.css'
 import './full-run.css'
 import './run-history.css'
+import './run-analysis.css'
 import './import-options.css'
 import './ux-pass.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
@@ -1275,8 +1276,15 @@ function RunControl({ type, setType, session, elapsed, history, current, start, 
 
 function RunHistory({ runs }) {
   const [open, setOpen] = useState(false)
-  const latest = runs[0]
-  return <section className="full-run-history"><button onClick={() => setOpen((value) => !value)}><Clock3 /><span><b>최근 전체 런 기록</b><small>{new Date(latest.startedAt).toLocaleString('ko-KR')} · {latest.segments?.length || 0}개 장면</small></span><strong>{formatDuration(latest.totalDuration || 0)}</strong><ChevronRight /></button>{open && <div>{(latest.segments || []).map((segment, index) => <article key={`${segment.sceneNo}-${index}`}><span>{segment.sceneNo}</span><div><b>{segment.sceneTitle}</b><small>{new Date(segment.endedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} GO</small></div><strong>{formatDuration(segment.duration)}</strong></article>)}</div>}</section>
+  const completed = runs.filter((run) => run.completed && run.segments?.length)
+  const [selectedId, setSelectedId] = useState(completed[0]?.id || runs[0]?.id)
+  const selected = runs.find((run) => run.id === selectedId) || runs[0]
+  const selectedIndex = completed.findIndex((run) => run.id === selected.id)
+  const previous = selectedIndex >= 0 ? completed[selectedIndex + 1] : null
+  const difference = previous ? (selected.totalDuration || 0) - (previous.totalDuration || 0) : null
+  const slowest = [...(selected.segments || [])].sort((a, b) => b.duration - a.duration)[0]
+  const sceneAverages = (selected.segments || []).map((segment) => { const values = completed.flatMap((run) => (run.segments || []).filter((item) => Number(item.sceneNo) === Number(segment.sceneNo)).map((item) => item.duration)); return { ...segment, average: values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : segment.duration } })
+  return <section className="full-run-history"><button onClick={() => setOpen((value) => !value)}><Clock3 /><span><b>전체 런 분석</b><small>{completed.length}회 완료 · 최근 {selected.segments?.length || 0}개 장면</small></span><strong>{formatDuration(selected.totalDuration || 0)}</strong><ChevronRight /></button>{open && <div className="run-analysis"><div className="run-history-tabs">{completed.slice(0, 5).map((run, index) => <button className={run.id === selected.id ? 'active' : ''} key={run.id} onClick={() => setSelectedId(run.id)}><b>{index === 0 ? '최근' : `${index + 1}회 전`}</b><small>{formatDuration(run.totalDuration || 0)}</small></button>)}</div><div className="run-insights"><span><small>전체 시간</small><b>{formatDuration(selected.totalDuration || 0)}</b></span><span className={difference !== null && difference > 0 ? 'slower' : 'faster'}><small>이전 런 대비</small><b>{difference === null ? '-' : `${difference > 0 ? '+' : ''}${difference}초`}</b></span><span><small>최장 장면</small><b>{slowest ? `${slowest.sceneNo}. ${formatDuration(slowest.duration)}` : '-'}</b></span></div><div className="run-scene-analysis">{sceneAverages.map((segment, index) => { const delta = segment.duration - segment.average; return <article key={`${segment.sceneNo}-${index}`}><span>{segment.sceneNo}</span><div><b>{segment.sceneTitle}</b><small>평균 {formatDuration(segment.average)} · {new Date(segment.endedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} GO</small></div><strong>{formatDuration(segment.duration)}</strong><em className={delta > 0 ? 'slower' : 'faster'}>{delta === 0 ? '평균' : `${delta > 0 ? '+' : ''}${delta}초`}</em></article> })}</div></div>}</section>
 }
 
 function ShowEventLog({ events }) {
