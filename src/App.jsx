@@ -2085,6 +2085,8 @@ function safeStorageFileName(value) {
 }
 
 function parseProductionSheet(source) {
+  const structuredRows = parseStructuredProductionTable(source)
+  if (structuredRows.length) return structuredRows
   const rows = new Map()
   let current = null
   let propsMode = false
@@ -2110,6 +2112,99 @@ function parseProductionSheet(source) {
     if (propsMode && cells.length) addProp(current, cells)
   }
   return [...rows.values()].filter((row) => row.title).sort((a, b) => a.number - b.number)
+}
+
+function parseStructuredProductionTable(source) {
+  if (!source.includes('\t') && !source.includes('|')) return []
+  const rows = new Map()
+  let current = null
+  let columns = null
+  const lines = source.replace(/\r/g, '').split('\n')
+
+  const clean = (value) => String(value || '').replace(/^"|"$/g, '').replace(/\s+/g, ' ').trim()
+  const split = (line) => (line.includes('\t') ? line.split('\t') : line.split('|')).map(clean)
+  const put = (row, key, value) => {
+    const next = clean(value)
+    if (!next || /^(없음|없음\?|미정|-|x)$/i.test(next)) return
+    if (!row[key]) row[key] = next
+    else if (!normalizeMatch(row[key]).includes(normalizeMatch(next))) row[key] += ` / ${next}`
+  }
+  const headerMap = (cells) => {
+    const result = {}
+    cells.forEach((cell, index) => {
+      const label = normalizeMatch(cell)
+      if (/^(번호|순번|no)$/.test(label)) result.number = index
+      else if (/^(넘버|장면|곡명|제목|number)$/.test(label)) result.title = index
+      else if (/메인배역|주요배역|주연/.test(label)) result.main = index
+      else if (/등장앙상블|등장인물|출연앙상블/.test(label)) result.ensemble = index
+      else if (/백앙상블|대기앙상블/.test(label)) result.backstage = index
+      else if (/^(음악|mr|ar)$/.test(label)) result.music = index
+      else if (/동선|안무/.test(label)) result.movement = index
+      else if (/진도|현황|상태/.test(label)) result.status = index
+      else if (/^(구분|종류|분류)$/.test(label)) result.kind = index
+      else if (/소품명|대도구명|품목명|물품명/.test(label)) result.propName = index
+      else if (/^in$|반입|등장/.test(label)) result.inBy = index
+      else if (/^out$|반출|퇴장/.test(label)) result.outBy = index
+      else if (/비고|메모|참고/.test(label)) result.note = index
+    })
+    return Object.keys(result).length >= 2 ? result : null
+  }
+  const sceneLead = (cells, map) => {
+    if (map?.number !== undefined) {
+      const number = Number(clean(cells[map.number]).match(/\d{1,3}/)?.[0])
+      const title = clean(cells[map.title])
+      if (number) return { number, title }
+    }
+    for (let index = 0; index < Math.min(3, cells.length); index += 1) {
+      const match = clean(cells[index]).match(/^(\d{1,3})\s*[.)-]?\s*(.*)$/)
+      if (match) {
+        const trailing = clean(match[2])
+        const title = trailing || clean(cells[index + 1])
+        if (title && !/^(o|x)$/i.test(title)) return { number: Number(match[1]), title }
+      }
+    }
+    return null
+  }
+
+  for (const rawLine of lines) {
+    if (!rawLine.trim()) continue
+    const cells = split(rawLine)
+    const detectedHeader = headerMap(cells)
+    if (detectedHeader) { columns = detectedHeader; continue }
+    const lead = sceneLead(cells, columns)
+    if (lead) {
+      current = rows.get(lead.number) || { number: lead.number, title: lead.title, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [], costumes: [], cues: [] }
+      if (lead.title) current.title = lead.title
+      rows.set(lead.number, current)
+    }
+    if (!current) continue
+    const map = columns || {}
+    const offset = lead ? cells.findIndex((cell) => /^(\d{1,3})(?:\s*[.)-]|$)/.test(cell)) + 1 : 0
+    put(current, 'main', map.main !== undefined ? cells[map.main] : cells[offset])
+    put(current, 'ensemble', map.ensemble !== undefined ? cells[map.ensemble] : cells[offset + 1])
+    put(current, 'backstage', map.backstage !== undefined ? cells[map.backstage] : cells[offset + 2])
+    put(current, 'music', map.music !== undefined ? cells[map.music] : '')
+    put(current, 'movement', map.movement !== undefined ? cells[map.movement] : '')
+    put(current, 'status', map.status !== undefined ? cells[map.status] : '')
+
+    let kind = map.kind !== undefined ? clean(cells[map.kind]) : ''
+    let name = map.propName !== undefined ? clean(cells[map.propName]) : ''
+    if (!name) {
+      const kindIndex = cells.findIndex((cell) => /^(소품|대도구)$/.test(clean(cell)))
+      if (kindIndex >= 0) { kind = clean(cells[kindIndex]); name = clean(cells[kindIndex + 1]) }
+    }
+    if (name && !/^(없음|미정|-)$/.test(name)) {
+      const item = {
+        kind: kind === '대도구' ? '대도구' : '소품',
+        name,
+        inBy: map.inBy !== undefined ? clean(cells[map.inBy]) : '',
+        outBy: map.outBy !== undefined ? clean(cells[map.outBy]) : '',
+        note: map.note !== undefined ? clean(cells[map.note]) : '',
+      }
+      if (!current.props.some((prop) => normalizeMatch(prop.name) === normalizeMatch(item.name) && prop.kind === item.kind)) current.props.push(item)
+    }
+  }
+  return [...rows.values()].filter((row) => row.number && row.title).sort((a, b) => a.number - b.number)
 }
 
 function applyCells(row, cells, propsMode) {
