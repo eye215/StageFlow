@@ -1696,8 +1696,17 @@ function ProductionView(props) {
   async function togglePersonalReady(sceneNo) {
     if (!briefingMember) return
     const actorMembers = briefingMembers.length ? briefingMembers : [briefingMember]
-    const isReady = actorMembers.some((member) => personalReady[`${member.id}-${sceneNo}`])
-    const nextValue = { ...personalReady }
+    let cloudReady = {}
+    const { data: latestFile } = await supabase.storage.from('stageflow-files').download(readinessPath)
+    if (latestFile) {
+      try {
+        const parsed = JSON.parse(await latestFile.text())
+        if (parsed && typeof parsed === 'object') cloudReady = parsed
+      } catch { /* 손상된 원격 파일은 현재 로컬 상태로 복구합니다. */ }
+    }
+    const latestReady = { ...personalReady, ...cloudReady }
+    const isReady = actorMembers.some((member) => latestReady[`${member.id}-${sceneNo}`])
+    const nextValue = { ...latestReady }
     actorMembers.forEach((member) => { nextValue[`${member.id}-${sceneNo}`] = !isReady })
     setPersonalReady(nextValue)
     window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, JSON.stringify(nextValue))
