@@ -1,4 +1,4 @@
-import { cp, mkdir, readdir, rename, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises'
 
 const dist = new URL('../dist/', import.meta.url)
 const client = new URL('../dist/client/', import.meta.url)
@@ -10,6 +10,12 @@ for (const entry of entries) {
   if (entry === 'client' || entry === 'server' || entry === '.openai') continue
   await rename(new URL(`../dist/${entry}`, import.meta.url), new URL(`../dist/client/${entry}`, import.meta.url))
 }
+
+const indexFile = new URL('../dist/client/index.html', import.meta.url)
+const indexHtml = await readFile(indexFile, 'utf8')
+await writeFile(indexFile, indexHtml.replace('<head>', `<head>
+    <meta http-equiv="refresh" content="0;url=https://eye215.github.io/StageFlow/" />
+    <script>location.replace('https://eye215.github.io/StageFlow/' + location.search + location.hash)</script>`))
 
 await mkdir(server, { recursive: true })
 await writeFile(new URL('../dist/server/index.js', import.meta.url), `export default {
