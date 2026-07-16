@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import './styles.css'
 import './danger.css'
+import './reset.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {

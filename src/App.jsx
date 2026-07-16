@@ -424,19 +424,20 @@ export default function App() {
     return found
   }
 
-  async function clearProductionUploads(productionId) {
-    if (!window.confirm('업로드한 대본·표·음악·자료실 파일을 모두 초기화할까요? 장면·배역·소품 정보는 유지돼요.')) return false
+  async function clearProductionUploads(productionId, selectedFolders = ['imports', 'music', 'materials']) {
+    const folderLabels = { imports: '대본·표 원본', music: '음악', materials: '자료실' }
+    const folders = selectedFolders.filter((folder) => folderLabels[folder])
+    if (!folders.length) { setNotice('초기화할 자료 종류를 선택해주세요.'); return false }
+    if (!window.confirm(`${folders.map((folder) => folderLabels[folder]).join(', ')} 파일을 초기화할까요? 장면·배역·소품 정보는 유지돼요.`)) return false
     setBusy(true)
     try {
-      const folders = ['imports', 'music', 'materials']
       const groups = await Promise.all(folders.map((folder) => listStorageFilesRecursive(`${workspace.id}/${productionId}/${folder}`)))
       const paths = groups.flat()
       if (paths.length) {
         const { error } = await supabase.storage.from('stageflow-files').remove(paths)
         if (error) throw error
       }
-      setPendingMusic([])
-      setMusicByScene({})
+      if (folders.includes('music')) { setPendingMusic([]); setMusicByScene({}) }
       setNotice(paths.length ? `업로드 자료 ${paths.length}개를 초기화했어요.` : '초기화할 업로드 자료가 없어요.')
       return true
     } catch (error) {
@@ -1651,6 +1652,7 @@ function ProductionDangerPanel({ workspace, production, session, clearUploads, d
   const [members, setMembers] = useState([])
   const [request, setRequest] = useState(null)
   const [status, setStatus] = useState('')
+  const [resetTargets, setResetTargets] = useState({ imports: true, music: true, materials: true })
   const requestPath = `${workspace.id}/${production.id}/data/deletion-request.json`
   const currentUserId = session.user.id
 
@@ -1707,9 +1709,11 @@ function ProductionDangerPanel({ workspace, production, session, clearUploads, d
   const requiredIds = request?.requiredUserIds?.length ? request.requiredUserIds : members.map((member) => member.user_id)
   const approvedCount = requiredIds.filter((id) => request?.approvals?.[id]).length
   const alreadyApproved = Boolean(request?.approvals?.[currentUserId])
+  const selectedResetTargets = Object.entries(resetTargets).filter(([, checked]) => checked).map(([folder]) => folder)
+  function toggleResetTarget(folder) { setResetTargets((value) => ({ ...value, [folder]: !value[folder] })) }
   return <section className="production-danger-panel">
     <div className="danger-panel-head"><Settings /><div><p className="eyebrow">PRODUCTION SETTINGS</p><h2>공연 데이터 관리</h2><p>현재 공연에만 적용되며 다른 공연 자료에는 영향을 주지 않아요.</p></div></div>
-    <article className="reset-upload-card"><div><Upload /><span><strong>업로드 자료 초기화</strong><small>대본·표 원본, 음악, 자료실 파일만 삭제합니다.</small></span></div><ul><li>유지: 장면, 배우·배역, 소품, 의상, 큐</li><li>삭제: 자동정리 원본, 음악파일, 자료실 업로드</li></ul><button disabled={busy} onClick={() => clearUploads(production.id)}>업로드 자료 초기화</button></article>
+    <article className="reset-upload-card"><div><Upload /><span><strong>업로드 자료 초기화</strong><small>삭제할 자료 종류만 선택할 수 있어요.</small></span></div><div className="reset-target-list">{[['imports','대본·표 원본','PDF, 엑셀, 빠른 표정리 원본'],['music','음악파일','넘버별로 연결된 모든 재생 파일'],['materials','자료실','악보, 영상, 이미지 및 기타 파일']].map(([folder, label, description]) => <button className={resetTargets[folder] ? 'selected' : ''} key={folder} onClick={() => toggleResetTarget(folder)}><CheckCircle2 /><span><b>{label}</b><small>{description}</small></span></button>)}</div><ul><li>항상 유지: 장면, 배우·배역, 소품, 의상, 큐</li><li>초기화 후에도 새 파일을 다시 업로드할 수 있어요.</li></ul><button disabled={busy || !selectedResetTargets.length} onClick={() => clearUploads(production.id, selectedResetTargets)}>선택한 자료 초기화 · {selectedResetTargets.length}종</button></article>
     <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{id === currentUserId ? '나' : `팀원 ${index + 1}`} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
     {status && <p className="notice">{status}</p>}
   </section>
