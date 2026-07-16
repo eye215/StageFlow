@@ -5,6 +5,7 @@
 ## 제품 문서
 
 - [제품·기능 명세서](docs/PRODUCT_SPEC.md)
+- [데이터베이스 구조](docs/DATABASE_STRUCTURE.md)
 
 ## 현재 구현
 
