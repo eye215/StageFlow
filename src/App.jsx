@@ -923,11 +923,23 @@ function CuePanel({ scenes, completed, toggle, updateScene }) {
       setShowForm(false)
     }
   }
-  return <section className="cue-panel"><div className="section-heading"><div><p className="eyebrow">CUE SHEET</p><h2>큐시트</h2></div><div className="cue-heading-actions"><span className="cue-progress">{done}/{total} 완료</span><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={17} /> 큐</button></div></div>{showForm && <form className="panel cue-form" onSubmit={addCue}><div className="two-col"><select required value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 선택</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>조명</option><option>음향</option><option>영상</option><option>무대</option><option>마이크</option></select></div><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="큐 내용 (예: 음악 시작)" /><input value={form.trigger} onChange={(event) => setForm({ ...form, trigger: event.target.value })} placeholder="큐사인 (선택)" /><button className="primary">큐 추가</button></form>}{!groups.length ? <Empty icon={<ListChecks />} title="등록된 큐가 없어요" description="위의 큐 추가 버튼을 눌러 첫 큐를 등록하세요." action={() => setShowForm(true)} /> : <div className="cue-groups">{groups.map(({ scene, cues }) => <article key={scene.id}><div className="cue-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{cues.length}개 큐</small></div></div><CueList cues={cues} sceneNo={scene.scene_no} completed={completed} toggle={toggle} /></article>)}</div>}</section>
+  async function removeCue(scene, cue) {
+    if (!window.confirm(`${cue.type} 큐 '${cue.label}'을 삭제할까요?`)) return
+    let removed = false
+    const summary = String(scene.summary || '').split('\n').filter((line) => {
+      if (!removed && line.trim() === cue.rawLine) {
+        removed = true
+        return false
+      }
+      return true
+    }).join('\n').trim()
+    if (removed) await updateScene(scene.id, { ...scene, summary })
+  }
+  return <section className="cue-panel"><div className="section-heading"><div><p className="eyebrow">CUE SHEET</p><h2>큐시트</h2></div><div className="cue-heading-actions"><span className="cue-progress">{done}/{total} 완료</span><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={17} /> 큐</button></div></div>{showForm && <form className="panel cue-form" onSubmit={addCue}><div className="two-col"><select required value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 선택</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>조명</option><option>음향</option><option>영상</option><option>무대</option><option>마이크</option></select></div><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="큐 내용 (예: 음악 시작)" /><input value={form.trigger} onChange={(event) => setForm({ ...form, trigger: event.target.value })} placeholder="큐사인 (선택)" /><button className="primary">큐 추가</button></form>}{!groups.length ? <Empty icon={<ListChecks />} title="등록된 큐가 없어요" description="위의 큐 추가 버튼을 눌러 첫 큐를 등록하세요." action={() => setShowForm(true)} /> : <div className="cue-groups">{groups.map(({ scene, cues }) => <article key={scene.id}><div className="cue-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{cues.length}개 큐</small></div></div><CueList cues={cues} sceneNo={scene.scene_no} completed={completed} toggle={toggle} remove={(cue) => removeCue(scene, cue)} /></article>)}</div>}</section>
 }
 
-function CueList({ cues, sceneNo, completed, toggle, compact = false }) {
-  return <div className={compact ? 'cue-list compact-cues' : 'cue-list'}>{cues.map((cue, index) => { const key = `${sceneNo}-${index}`; return <button className={completed[key] ? 'done' : ''} key={key} onClick={() => toggle(sceneNo, index)}><CheckCircle2 /><span className={`cue-type cue-${cue.type}`}>{cue.type}</span><div><strong>{cue.label}</strong>{cue.trigger && <small>큐사인 · {cue.trigger}</small>}</div></button> })}</div>
+function CueList({ cues, sceneNo, completed, toggle, remove, compact = false }) {
+  return <div className={compact ? 'cue-list compact-cues' : 'cue-list'}>{cues.map((cue, index) => { const key = `${sceneNo}-${index}`; return <div className={completed[key] ? 'cue-row done' : 'cue-row'} key={key}><button className="cue-toggle" onClick={() => toggle(sceneNo, index)}><CheckCircle2 /><span className={`cue-type cue-${cue.type}`}>{cue.type}</span><div><strong>{cue.label}</strong>{cue.trigger && <small>큐사인 · {cue.trigger}</small>}</div></button>{remove && <button className="cue-remove" onClick={() => remove(cue)} aria-label={`${cue.label} 큐 삭제`}><Trash2 size={15} /></button>}</div> })}</div>
 }
 
 function parseSceneCues(summary = '') {
@@ -935,7 +947,7 @@ function parseSceneCues(summary = '') {
     const match = line.trim().match(/^-\s*\[([^\]]+)]\s*(.+)$/)
     if (!match || /^(소품|대도구)$/.test(match[1])) return null
     const parts = match[2].split(/\s*·\s*큐사인\s*/)
-    return { type: match[1], label: parts[0].trim(), trigger: parts[1]?.trim() || '' }
+    return { type: match[1], label: parts[0].trim(), trigger: parts[1]?.trim() || '', rawLine: line.trim() }
   }).filter(Boolean)
 }
 function Empty({ icon, title, description, action }) { return <div className="empty">{icon}<strong>{title}</strong><span>{description}</span>{action && <button className="primary compact" onClick={action}><Plus size={17} /> 추가하기</button>}</div> }
