@@ -757,7 +757,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <button className={showController ? 'show-control-toggle controller' : 'show-control-toggle'} onClick={toggleShowController}><Clapperboard /><span><b>{showController ? '진행 제어 중' : '무대감독 장면 따라가기'}</b><small>{showController ? '이 기기의 이전·GO 이동을 팀에 전송합니다.' : '팀에서 공유된 현재 장면으로 자동 이동합니다.'}</small></span><strong>{showController ? 'CONTROL' : 'FOLLOW'}</strong></button>}
       {tab === 'show' && !showController && <p className="follow-lock"><Clapperboard />FOLLOW 모드 · 장면 이동은 무대감독 기기에서 제어합니다.</p>}
-      {tab === 'show' && showHold && <section className="show-hold-alert"><Bell /><div><span>SHOW HOLD</span><strong>공연 진행 일시 정지</strong><small>무대감독의 재개 신호를 기다려주세요.</small></div></section>}
+      {tab === 'show' && showHold && <section className="show-hold-alert"><Bell /><div><span>SHOW HOLD</span><strong>{showHoldMessage || '공연 진행 일시 정지'}</strong><small>무대감독의 재개 신호를 기다려주세요.</small></div></section>}
       {tab === 'show' && showController && <button className={showHold ? 'hold-control resume' : 'hold-control'} onClick={toggleShowHold}>{showHold ? <Play /> : <Square />}<span><b>{showHold ? '공연 재개' : '긴급 HOLD'}</b><small>{showHold ? '팀 화면의 정지를 해제하고 GO를 활성화합니다.' : '팀 전체 화면을 정지하고 장면 이동을 잠급니다.'}</small></span></button>}
       {notice && <p className="notice">{notice}</p>}
     </main>
@@ -864,6 +864,7 @@ function ProductionView(props) {
   const [showCursorSyncedAt, setShowCursorSyncedAt] = useState(null)
   const [showController, setShowController] = useState(() => window.localStorage.getItem(`stageflow-show-controller-${production.id}`) === 'true')
   const [showHold, setShowHold] = useState(false)
+  const [showHoldMessage, setShowHoldMessage] = useState('')
   const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
@@ -875,7 +876,16 @@ function ProductionView(props) {
     })
   }
   function toggleShowHold() {
-    if (showController) setShowHold((value) => !value)
+    if (!showController) return
+    if (showHold) {
+      setShowHold(false)
+      setShowHoldMessage('')
+      return
+    }
+    const reason = window.prompt('HOLD 사유를 입력해주세요.\n예: 음향 확인, 배우 대기, 무대 점검', '')
+    if (reason === null) return
+    setShowHoldMessage(reason.trim() || '상황 확인 중')
+    setShowHold(true)
   }
   useEffect(() => {
     let active = true
@@ -930,6 +940,7 @@ function ProductionView(props) {
           const cursor = JSON.parse(await data.text())
           if (Number.isInteger(cursor.index) && scenes.length) setShowIndex(Math.max(0, Math.min(scenes.length - 1, cursor.index)))
           setShowHold(Boolean(cursor.hold))
+          setShowHoldMessage(String(cursor.holdMessage || ''))
           setShowCursorSyncedAt(new Date())
         } catch { /* 진행 상태가 없으면 현재 기기의 장면에서 시작합니다. */ }
       }
@@ -941,11 +952,11 @@ function ProductionView(props) {
   }, [tab, showCursorPath, scenes.length, setShowIndex, showController])
   useEffect(() => {
     if (tab !== 'show' || !showController || !showCursorLoaded || !scenes[showIndex]) return
-    const payload = { index: showIndex, sceneNo: scenes[showIndex].scene_no, hold: showHold, updatedAt: new Date().toISOString() }
+    const payload = { index: showIndex, sceneNo: scenes[showIndex].scene_no, hold: showHold, holdMessage: showHold ? showHoldMessage : '', updatedAt: new Date().toISOString() }
     supabase.storage.from('stageflow-files').upload(showCursorPath, new Blob([JSON.stringify(payload)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' }).then(({ error }) => {
       if (!error) setShowCursorSyncedAt(new Date())
     })
-  }, [showIndex, showHold, showController, showCursorLoaded, showCursorPath, tab, scenes])
+  }, [showIndex, showHold, showHoldMessage, showController, showCursorLoaded, showCursorPath, tab, scenes])
   useEffect(() => {
     if (tab !== 'show') return undefined
     const controls = [...document.querySelectorAll('.show-mode .show-actions button')]
