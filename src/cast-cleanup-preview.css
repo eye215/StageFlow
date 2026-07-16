@@ -12,6 +12,9 @@
 .cast-cleanup-preview-list article div { min-width: 0; }
 .cast-cleanup-preview-list b, .cast-cleanup-preview-list small { display: block; }
 .cast-cleanup-preview-list small { margin-top: 2px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-cleanup-role-input { width: 100%; min-height: 38px; margin-top: 7px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: inherit; }
+.cast-cleanup-role-input:focus { border-color: var(--accent); outline: 2px solid var(--accent-soft); }
+.cast-cleanup-role-input:disabled { opacity: .5; }
 .cast-cleanup-preview-list p { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; }
 .cast-cleanup-preview-list p span { padding: 4px 7px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-weight: 800; }
 .cast-cleanup-preview-list em { color: var(--muted); font-size: 11px; font-style: normal; }

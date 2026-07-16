@@ -901,13 +901,22 @@ export default function App() {
     setBusy(false)
   }
 
-  async function consolidateCastDuplicates(memberIds = null) {
+  async function consolidateCastDuplicates(options = null) {
     const grouped = new Map()
     let splitCount = 0
+    let renameCount = 0
+    const memberIds = Array.isArray(options) ? options : options?.memberIds
+    const roleOverrides = !Array.isArray(options) && options?.roleOverrides ? options.roleOverrides : {}
     const selectedMemberIds = Array.isArray(memberIds) ? new Set(memberIds) : null
     const expandedMembers = castMembers.flatMap((member) => {
-      const roles = selectedMemberIds && !selectedMemberIds.has(member.id) ? [member.roleName || ''] : splitRoleEntries(member.roleName || '')
-      if (roles.length <= 1) return [member]
+      const selectedForCleanup = !selectedMemberIds || selectedMemberIds.has(member.id)
+      const sourceRole = selectedForCleanup && typeof roleOverrides[member.id] === 'string' ? roleOverrides[member.id] : member.roleName || ''
+      const roles = selectedForCleanup ? splitRoleEntries(sourceRole) : [member.roleName || '']
+      if (roles.length <= 1) {
+        const roleName = roles[0]?.trim() || member.roleName || ''
+        if (selectedForCleanup && roleName !== (member.roleName || '')) renameCount += 1
+        return [{ ...member, roleName }]
+      }
       splitCount += roles.length - 1
       return roles.map((roleName, index) => ({
         ...member,
@@ -927,7 +936,7 @@ export default function App() {
     }
     const next = [...grouped.values()]
     const mergedCount = expandedMembers.length - next.length
-    const changes = splitCount + mergedCount
+    const changes = splitCount + mergedCount + renameCount
     if (!changes) { setNotice('정리할 배역 이름이나 중복 배우가 없어요.'); return 0 }
     setBusy(true)
     const backupBody = new Blob([JSON.stringify({ members: castMembers, createdAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
@@ -939,7 +948,7 @@ export default function App() {
     }
     const saved = await persistCastData(next)
     setBusy(false)
-    if (saved) setNotice(`붙어 있던 배역 ${splitCount}개를 나누고 중복 ${mergedCount}개를 합쳤어요. 등장 장면 연결은 유지했어요.`)
+    if (saved) setNotice(`붙어 있던 배역 ${splitCount}개를 나누고 이름 ${renameCount}개를 수정했으며 중복 ${mergedCount}개를 합쳤어요. 등장 장면 연결은 유지했어요.`)
     return saved ? changes : 0
   }
 
@@ -2147,6 +2156,7 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
   const [viewMode, setViewMode] = useState('roles')
   const [cleanupPreviewOpen, setCleanupPreviewOpen] = useState(false)
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState([])
+  const [cleanupRoleDrafts, setCleanupRoleDrafts] = useState({})
   const actorCount = new Set(members.map((member) => canonicalActor(member.name)).filter(Boolean)).size
   const roleCount = new Set(members.map((member) => normalizeMatch(member.roleName || '')).filter(Boolean)).size
   const linkedSceneCount = new Set(members.flatMap((member) => member.sceneNumbers || [])).size
@@ -2170,7 +2180,7 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     return groups
   }, []).sort((a, b) => a.role === '이름 미정' ? 1 : b.role === '이름 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
   async function regroupRoles() {
-    const changed = await consolidate(cleanupSelectedIds)
+    const changed = await consolidate({ memberIds: cleanupSelectedIds, roleOverrides: cleanupRoleDrafts })
     setCleanupPreviewOpen(false)
     setGroupNotice(changed ? `배역 이름 ${changed}건을 구분자 기준으로 정리하고 등장 장면을 보존했어요.` : '현재 정리할 배역 이름이나 중복 배우가 없어요.')
   }
@@ -2181,7 +2191,10 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
   function toggleCleanupPreview() {
     setCleanupPreviewOpen((value) => {
       const next = !value
-      if (next) setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))
+      if (next) {
+        setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))
+        setCleanupRoleDrafts(Object.fromEntries(cleanupPreview.map(({ member }) => [member.id, member.roleName || ''])))
+      }
       return next
     })
   }
@@ -2193,7 +2206,7 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     <section className="cast-summary compact-summary"><article><strong>{actorCount}</strong><span>배우</span></article><article><strong>{roleCount}</strong><span>배역</span></article><article><strong>{linkedSceneCount}</strong><span>연결 장면</span></article></section>
     <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배우별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
     <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>구분자 분석 · 배우·배역 연결</small></span></button>{!!members.length && <button disabled={busy} onClick={toggleCleanupPreview}><Sparkles /><span><b>이름 정리</b><small>, | / - _ + 로 붙은 배역 분리·중복 병합</small></span></button>}{!!members.length && <button disabled={busy} onClick={undoRegroupRoles}><RotateCcw /><span><b>정리 되돌리기</b><small>마지막 이름 정리 직전 상태 복원</small></span></button>}</div>
-    {cleanupPreviewOpen && <section className="cast-cleanup-preview"><div className="cast-cleanup-preview-head"><div><span>NAME CLEANUP</span><h3>정리 결과 미리보기</h3></div><strong>{cleanupSelectedIds.length}/{cleanupPreview.length}명 선택</strong></div>{cleanupPreview.length ? <><div className="cast-cleanup-select-actions"><button onClick={() => setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))}>전체 선택</button><button onClick={() => setCleanupSelectedIds([])}>전체 해제</button></div><div className="cast-cleanup-preview-list">{cleanupPreview.slice(0, 20).map(({ member, roles }) => { const checked = cleanupSelectedIds.includes(member.id); return <article className={checked ? 'selected' : ''} key={member.id}><label><input type="checkbox" checked={checked} onChange={() => toggleCleanupMember(member.id)} /><UserRound /></label><div><b>{member.name}</b><small>{member.roleName}</small><p>{roles.map((role) => <span key={role}>{role}</span>)}</p></div><em>{roles.length}개</em></article> })}</div></> : <p className="cast-cleanup-empty">구분자로 붙어 있는 배역은 없어요. 적용하면 같은 배우·배역 중복만 병합합니다.</p>}{cleanupPreview.length > 20 && <small className="cast-cleanup-more">외 {cleanupPreview.length - 20}명은 적용 후 함께 정리돼요.</small>}<div className="cast-cleanup-preview-actions"><button onClick={() => setCleanupPreviewOpen(false)}>취소</button><button className="primary compact" disabled={busy || (cleanupPreview.length > 0 && !cleanupSelectedIds.length)} onClick={regroupRoles}><CheckCircle2 size={16} /> 선택 정리 적용</button></div></section>}
+    {cleanupPreviewOpen && <section className="cast-cleanup-preview"><div className="cast-cleanup-preview-head"><div><span>NAME CLEANUP</span><h3>정리 결과 미리보기</h3></div><strong>{cleanupSelectedIds.length}/{cleanupPreview.length}명 선택</strong></div>{cleanupPreview.length ? <><div className="cast-cleanup-select-actions"><button onClick={() => setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))}>전체 선택</button><button onClick={() => setCleanupSelectedIds([])}>전체 해제</button></div><div className="cast-cleanup-preview-list">{cleanupPreview.slice(0, 20).map(({ member }) => { const checked = cleanupSelectedIds.includes(member.id); const draft = cleanupRoleDrafts[member.id] ?? member.roleName ?? ''; const draftRoles = splitRoleEntries(draft); return <article className={checked ? 'selected' : ''} key={member.id}><label><input type="checkbox" checked={checked} onChange={() => toggleCleanupMember(member.id)} /><UserRound /></label><div><b>{member.name}</b><small>원본: {member.roleName}</small><input className="cast-cleanup-role-input" value={draft} disabled={!checked} onChange={(event) => setCleanupRoleDrafts((value) => ({ ...value, [member.id]: event.target.value }))} aria-label={`${member.name} 정리할 배역명`} /><p>{draftRoles.map((role) => <span key={role}>{role}</span>)}</p></div><em>{draftRoles.length}개</em></article> })}</div></> : <p className="cast-cleanup-empty">구분자로 붙어 있는 배역은 없어요. 적용하면 같은 배우·배역 중복만 병합합니다.</p>}{cleanupPreview.length > 20 && <small className="cast-cleanup-more">외 {cleanupPreview.length - 20}명은 적용 후 함께 정리돼요.</small>}<div className="cast-cleanup-preview-actions"><button onClick={() => setCleanupPreviewOpen(false)}>취소</button><button className="primary compact" disabled={busy || (cleanupPreview.length > 0 && !cleanupSelectedIds.length)} onClick={regroupRoles}><CheckCircle2 size={16} /> 선택 정리 적용</button></div></section>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
