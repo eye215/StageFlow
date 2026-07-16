@@ -985,18 +985,21 @@ export default function App() {
 
   async function changeMyProductionRole(memberId) {
     const target = castMembers.find((member) => member.id === memberId)
-    if (target?.userId && target.userId !== session.user.id) { setNotice('이미 다른 팀원이 선택한 배역이에요.'); return false }
+    if (!target) return false
+    const actorKey = canonicalActor(target.name)
+    const actorRoles = castMembers.filter((member) => canonicalActor(member.name) === actorKey)
+    if (actorRoles.some((member) => member.userId && member.userId !== session.user.id)) { setNotice('이 배우의 배역 중 일부를 이미 다른 팀원이 선택했어요.'); return false }
     const next = castMembers.map((member) => {
       if (member.userId === session.user.id) {
         const { userId, email, claimedAt, ...released } = member
         return released
       }
       return member
-    }).map((member) => member.id === memberId ? { ...member, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : member)
+    }).map((member) => canonicalActor(member.name) === actorKey ? { ...member, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : member)
     setBusy(true)
     const saved = await persistCastData(next)
     setBusy(false)
-    if (saved) setNotice(target ? `${target.roleName || target.name} 배역으로 변경했어요.` : '내 배역 선택을 해제했어요.')
+    if (saved) setNotice(`${target.name} 배우의 ${actorRoles.length}개 배역을 한 번에 선택했어요.`)
     return saved
   }
 
@@ -1419,8 +1422,16 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, invi
 
 function RoleClaimSheet({ members, choose, busy }) {
   const [query, setQuery] = useState('')
-  const available = members.filter((member) => !member.userId && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
-  return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배역을 선택하세요</h2><p className="muted">선택하면 이 팀에 참가하고 개인 공연 브리핑이 자동 설정돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{available.map((member) => <button key={member.id} disabled={busy} onClick={() => choose(member.id)}><UserRound /><span><b>{member.roleName || '배역 미정'}</b><small>{member.name} · {member.type}</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !available.length && <p className="notice">선택 가능한 배역이 없어요.</p>}</section></div>
+  const claimedActors = new Set(members.filter((member) => member.userId).map((member) => canonicalActor(member.name)))
+  const available = members.filter((member) => !claimedActors.has(canonicalActor(member.name)) && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
+  const actorGroups = available.reduce((groups, member) => {
+    const key = canonicalActor(member.name) || member.id
+    const group = groups.find((item) => item.key === key)
+    if (group) group.members.push(member)
+    else groups.push({ key, actor: member.name, members: [member] })
+    return groups
+  }, [])
+  return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배우 이름을 선택하세요</h2><p className="muted">한 배우에게 여러 배역이 묶여 있으면 모두 한 번에 선택돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{actorGroups.map((group) => <button key={group.key} disabled={busy} onClick={() => choose(group.members[0].id)}><UserRound /><span><b>{group.actor}</b><small>{group.members.map((member) => member.roleName || '배역 미정').join(' · ')} · {group.members.length}배역</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !actorGroups.length && <p className="notice">선택 가능한 배우가 없어요.</p>}</section></div>
 }
 
 function ProductionView(props) {
