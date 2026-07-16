@@ -34,6 +34,7 @@ import './run-history.css'
 import './run-analysis.css'
 import './import-options.css'
 import './ux-pass.css'
+import './navigation-hotfix.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
