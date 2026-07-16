@@ -1199,31 +1199,32 @@ function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, subm
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
+  const actorCount = new Set(members.map((member) => canonicalActor(member.name)).filter(Boolean)).size
   const visible = members.filter((member) => {
     const memberScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no} ${scene.title}`).join(' ')
     return !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
   })
   const roleGroups = visible.reduce((groups, member) => {
-    const role = member.roleName?.trim() || '배역 미정'
-    const key = canonicalRole(role) || 'unassigned'
-    const group = groups.find((item) => similarRoleKey(item.key, key))
+    const actor = member.name?.trim() || '이름 미정'
+    const key = canonicalActor(actor) || 'unassigned'
+    const group = groups.find((item) => item.key === key)
     if (group) {
       group.members.push(member)
-      if (!group.aliases.includes(role)) group.aliases.push(role)
-      if (role.length < group.role.length) group.role = role
-    } else groups.push({ key, role, aliases: [role], members: [member] })
+      if (!group.aliases.includes(actor)) group.aliases.push(actor)
+      if (actor.length < group.role.length) group.role = actor
+    } else groups.push({ key, role: actor, aliases: [actor], members: [member] })
     return groups
-  }, []).sort((a, b) => a.role === '배역 미정' ? 1 : b.role === '배역 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
+  }, []).sort((a, b) => a.role === '이름 미정' ? 1 : b.role === '이름 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
   function regroupRoles() {
     const merged = roleGroups.filter((group) => group.aliases.length > 1).length
-    setGroupNotice(merged ? `표기가 비슷한 배역 ${merged}개 그룹을 다시 묶었어요.` : '현재 배역명이 가장 깔끔하게 묶여 있어요.')
+    setGroupNotice(merged ? `이름 표기가 비슷한 배우 ${merged}개 그룹을 다시 묶었어요.` : '현재 배우 이름이 가장 깔끔하게 묶여 있어요.')
   }
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST & CHARACTERS</p><h2>배우·배역</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 배우</button></div>
-    <section className="cast-summary"><article><strong>{members.length}</strong><span>전체 인원</span></article><article><strong>{members.filter((member) => member.type === '주연').length}</strong><span>주연</span></article><article><strong>{members.filter((member) => member.type === '앙상블').length}</strong><span>앙상블</span></article></section>
-    <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배역별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
+    <section className="cast-summary"><article><strong>{actorCount}</strong><span>전체 배우</span></article><article><strong>{new Set(members.filter((member) => member.type === '주연').map((member) => canonicalActor(member.name))).size}</strong><span>주연 배우</span></article><article><strong>{new Set(members.filter((member) => member.type === '앙상블').map((member) => canonicalActor(member.name))).size}</strong><span>앙상블 배우</span></article></section>
+    <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배우별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
     <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 배우·배역 가져오기</strong><span>대본 자동정리 결과의 메인 배역과 등장 앙상블을 장면별로 연결합니다.</span></div><ChevronRight /></button>
-    {!!members.length && <button className="role-regroup-button" onClick={regroupRoles}><Sparkles size={17} /><div><strong>배역 다시 분석</strong><span>괄호·번호·띄어쓰기처럼 표기가 비슷한 배역을 자동으로 묶어요.</span></div><ChevronRight /></button>}
+    {!!members.length && <button className="role-regroup-button" onClick={regroupRoles}><Sparkles size={17} /><div><strong>배우 이름 다시 분석</strong><span>괄호·띄어쓰기처럼 표기가 비슷한 배우 이름을 자동으로 묶어요.</span></div><ChevronRight /></button>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
@@ -1261,22 +1262,12 @@ function CastSceneGroups({ scenes, members, query }) {
 function CastRoleGroup({ group, scenes, update, remove, toggleScene, busy, forceOpen }) {
   const [open, setOpen] = useState(false)
   const expanded = forceOpen || open
-  return <section className={expanded ? 'cast-role-group open' : 'cast-role-group'}><button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ROLE</span><h3>{group.role}</h3>{group.aliases.length > 1 && <small>{group.aliases.join(' · ')}</small>}<p>{group.members.map((member) => member.name).join(' · ')}</p></div><strong>{group.members.length}명 <ChevronRight /></strong></button>{expanded && <div className="cast-list">{group.members.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} />)}</div>}</section>
+  const roles = [...new Set(group.members.map((member) => member.roleName || '배역 미정'))]
+  return <section className={expanded ? 'cast-role-group open' : 'cast-role-group'}><button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ACTOR</span><h3>{group.role}</h3>{group.aliases.length > 1 && <small>{group.aliases.join(' · ')}</small>}<p>{roles.join(' · ')}</p></div><strong>{roles.length}배역 <ChevronRight /></strong></button>{expanded && <div className="cast-list">{group.members.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} />)}</div>}</section>
 }
 
-function canonicalRole(role = '') {
-  return normalizeMatch(String(role).replace(/[（(][^）)]*[）)]/g, ''))
-    .replace(/(?:메인|주연|앙상블|더블|서브|역할)$/g, '')
-    .replace(/[0-9]+$/g, '')
-    .replace(/[^가-힣a-z]/g, '') || normalizeMatch(role)
-}
-
-function similarRoleKey(left, right) {
-  if (left === right) return true
-  if (left === 'unassigned' || right === 'unassigned') return false
-  const shorter = left.length <= right.length ? left : right
-  const longer = left.length > right.length ? left : right
-  return shorter.length >= 3 && longer.includes(shorter)
+function canonicalActor(name = '') {
+  return normalizeMatch(String(name).replace(/[（(][^）)]*[）)]/g, '')) || normalizeMatch(name)
 }
 
 function CastCard({ member, scenes, update, remove, toggleScene, busy }) {
