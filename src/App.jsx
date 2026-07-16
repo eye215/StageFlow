@@ -2167,6 +2167,7 @@ function parseProductionSheet(source) {
 function parseStructuredProductionTable(source) {
   if (!source.includes('\t') && !source.includes('|')) return []
   const rows = new Map()
+  const pendingCastLinks = []
   let current = null
   let columns = null
   const lines = source.replace(/\r/g, '').split('\n')
@@ -2184,6 +2185,9 @@ function parseStructuredProductionTable(source) {
     cells.forEach((cell, index) => {
       const label = normalizeMatch(cell)
       if (/^(번호|순번|no)$/.test(label)) result.number = index
+      else if (/^(배우|배우명|이름|성명|actor)$/.test(label)) result.actor = index
+      else if (/^(배역|배역명|역할|캐릭터|role)$/.test(label)) result.role = index
+      else if (/(등장|참여|출연).*(장면|넘버|곡)|^(장면번호|넘버번호|songno|sceneno)$/.test(label)) result.sceneRefs = index
       else if (/^(넘버|장면|곡명|제목|number)$/.test(label)) result.title = index
       else if (/메인배역|주요배역|주연/.test(label)) result.main = index
       else if (/등장앙상블|등장인물|출연앙상블/.test(label)) result.ensemble = index
@@ -2221,7 +2225,26 @@ function parseStructuredProductionTable(source) {
     const cells = split(rawLine)
     const detectedHeader = headerMap(cells)
     if (detectedHeader) { columns = detectedHeader; continue }
-    const lead = sceneLead(cells, columns)
+    if (columns?.sceneRefs !== undefined && (columns.actor !== undefined || columns.role !== undefined)) {
+      const actor = clean(cells[columns.actor])
+      const role = clean(cells[columns.role])
+      const refs = clean(cells[columns.sceneRefs]).split(/\s*[,/·|]\s*|\s+(?=\d)/).filter(Boolean)
+      refs.forEach((ref) => pendingCastLinks.push({ ref, actor, role }))
+      continue
+    }
+    let lead = sceneLead(cells, columns)
+    if (!lead && columns?.title !== undefined) {
+      const reference = clean(cells[columns.title])
+      const referenceNumber = Number(reference.match(/^\d{1,3}/)?.[0])
+      const byNumber = referenceNumber ? rows.get(referenceNumber) : null
+      const normalizedReference = normalizeMatch(reference.replace(/^\d{1,3}\s*[.)-]?\s*/, ''))
+      const byTitle = [...rows.values()].find((row) => {
+        const normalizedTitle = normalizeMatch(row.title)
+        return normalizedReference && (normalizedTitle === normalizedReference || normalizedTitle.includes(normalizedReference) || normalizedReference.includes(normalizedTitle))
+      })
+      const matched = byNumber || byTitle
+      if (matched) lead = { number: matched.number, title: matched.title }
+    }
     if (lead) {
       current = rows.get(lead.number) || { number: lead.number, title: lead.title, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [], costumes: [], cues: [] }
       if (lead.title) current.title = lead.title
@@ -2254,7 +2277,19 @@ function parseStructuredProductionTable(source) {
       if (!current.props.some((prop) => normalizeMatch(prop.name) === normalizeMatch(item.name) && prop.kind === item.kind)) current.props.push(item)
     }
   }
-  return [...rows.values()].filter((row) => row.number && row.title).sort((a, b) => a.number - b.number)
+  const resolvedRows = [...rows.values()]
+  pendingCastLinks.forEach((link) => {
+    const number = Number(link.ref.match(/\d{1,3}/)?.[0])
+    const normalizedRef = normalizeMatch(link.ref.replace(/^\d{1,3}\s*[.)-]?\s*/, ''))
+    const target = (number && rows.get(number)) || resolvedRows.find((row) => {
+      const title = normalizeMatch(row.title)
+      return normalizedRef && (title === normalizedRef || title.includes(normalizedRef) || normalizedRef.includes(title))
+    })
+    if (!target) return
+    const castLabel = link.role && link.actor && normalizeMatch(link.role) !== normalizeMatch(link.actor) ? `${link.role} (${link.actor})` : link.role || link.actor
+    if (castLabel) put(target, 'main', castLabel)
+  })
+  return resolvedRows.filter((row) => row.number && row.title).sort((a, b) => a.number - b.number)
 }
 
 function applyCells(row, cells, propsMode) {
