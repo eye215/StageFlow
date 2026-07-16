@@ -4,6 +4,7 @@ import App from './App'
 import './styles.css'
 import './danger.css'
 import './reset.css'
+import './approval-alert.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {

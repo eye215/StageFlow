@@ -1535,6 +1535,7 @@ function ProductionView(props) {
     <main className="content production-content">
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}><CheckCircle2 /><span>할 일</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>공연</span></button><button className={['props', 'costumes', 'cues', 'rehearsal', 'materials', 'schedule', 'backup', 'import', 'music', 'settings'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
+      <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'overview' && <PreparationHealth alerts={preparationAlerts} open={setTab} />}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
@@ -1717,6 +1718,28 @@ function ProductionDangerPanel({ workspace, production, session, clearUploads, d
     <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{id === currentUserId ? '나' : `팀원 ${index + 1}`} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
     {status && <p className="notice">{status}</p>}
   </section>
+}
+
+function DeletionApprovalBanner({ workspace, production, session, open }) {
+  const [request, setRequest] = useState(null)
+  const requestPath = `${workspace.id}/${production.id}/data/deletion-request.json`
+  useEffect(() => {
+    let active = true
+    async function refresh() {
+      const { data } = await supabase.storage.from('stageflow-files').download(requestPath)
+      if (!active) return
+      if (!data) return setRequest(null)
+      try { setRequest(JSON.parse(await data.text())) } catch { setRequest(null) }
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 7000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [production.id])
+  if (!request) return null
+  const requiredIds = request.requiredUserIds || []
+  const approvedCount = requiredIds.filter((id) => request.approvals?.[id]).length
+  const mine = Boolean(request.approvals?.[session.user.id])
+  return <button className={mine ? 'deletion-approval-banner approved' : 'deletion-approval-banner'} onClick={open}><span className="deletion-banner-icon"><Trash2 /></span><span><b>{mine ? '공연 삭제 · 다른 팀원 승인 대기' : '공연 삭제 승인이 필요해요'}</b><small>{approvedCount}/{requiredIds.length}명 승인 · 눌러서 확인</small></span><strong>{mine ? '대기' : '승인'} <ChevronRight /></strong></button>
 }
 
 function ProductionMoreSheet({ active, close, choose }) {
