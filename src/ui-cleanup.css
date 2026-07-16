@@ -93,3 +93,11 @@
 .prop-group-head > div { display: flex; min-width: 0; flex: 1; align-items: baseline; justify-content: space-between; gap: 8px; }
 .prop-group-head strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .prop-group-head small { flex: 0 0 auto; color: #64748b; font-size: 8px; }
+
+.app-crash { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 0, #202d50, #070a12 58%); }
+.app-crash > div { width: min(430px, 100%); padding: 25px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; background: rgba(15, 23, 42, 0.88); }
+.app-crash span { color: #a5b4fc; font-size: 9px; font-weight: 900; letter-spacing: 0.16em; }
+.app-crash h1 { margin: 9px 0; font-size: 25px; }
+.app-crash p { margin: 0; color: #94a3b8; font-size: 12px; line-height: 1.55; }
+.app-crash code { display: block; overflow: auto; margin: 15px 0; padding: 10px; border-radius: 10px; background: #080d19; color: #fca5a5; font-size: 9px; white-space: pre-wrap; }
+.app-crash button { width: 100%; padding: 12px; border: 0; border-radius: 12px; background: #6366f1; color: white; font-weight: 800; }
