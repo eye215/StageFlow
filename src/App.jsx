@@ -18,6 +18,7 @@ import './scenes.css'
 import './search.css'
 import './navigation.css'
 import './navigation-v2.css'
+import './ui-cleanup.css'
 import './schedule.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
@@ -1201,6 +1202,8 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
   const actorCount = new Set(members.map((member) => canonicalActor(member.name)).filter(Boolean)).size
+  const roleCount = new Set(members.map((member) => normalizeMatch(member.roleName || '')).filter(Boolean)).size
+  const linkedSceneCount = new Set(members.flatMap((member) => member.sceneNumbers || [])).size
   const visible = members.filter((member) => {
     const memberScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no} ${scene.title}`).join(' ')
     return !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
@@ -1221,11 +1224,10 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     setGroupNotice(merged ? `이름 표기가 비슷한 배우 ${merged}개 그룹을 다시 묶었어요.` : '현재 배우 이름이 가장 깔끔하게 묶여 있어요.')
   }
   return <section className="cast-panel">
-    <div className="section-heading"><div><p className="eyebrow">CAST & CHARACTERS</p><h2>배우·배역</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 배우</button></div>
-    <section className="cast-summary"><article><strong>{actorCount}</strong><span>전체 배우</span></article><article><strong>{new Set(members.filter((member) => member.type === '주연').map((member) => canonicalActor(member.name))).size}</strong><span>주연 배우</span></article><article><strong>{new Set(members.filter((member) => member.type === '앙상블').map((member) => canonicalActor(member.name))).size}</strong><span>앙상블 배우</span></article></section>
+    <div className="section-heading"><div><p className="eyebrow">CAST</p><h2>배우</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 추가</button></div>
+    <section className="cast-summary compact-summary"><article><strong>{actorCount}</strong><span>배우</span></article><article><strong>{roleCount}</strong><span>배역</span></article><article><strong>{linkedSceneCount}</strong><span>연결 장면</span></article></section>
     <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배우별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
-    <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 배우·배역 가져오기</strong><span>대본 자동정리 결과의 메인 배역과 등장 앙상블을 장면별로 연결합니다.</span></div><ChevronRight /></button>
-    {!!members.length && <button className="role-regroup-button" onClick={regroupRoles}><Sparkles size={17} /><div><strong>배우 이름 다시 분석</strong><span>괄호·띄어쓰기처럼 표기가 비슷한 배우 이름을 자동으로 묶어요.</span></div><ChevronRight /></button>}
+    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>배우·배역 자동 연결</small></span></button>{!!members.length && <button onClick={regroupRoles}><Sparkles /><span><b>이름 정리</b><small>비슷한 배우 묶기</small></span></button>}</div>
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
