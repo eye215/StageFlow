@@ -986,12 +986,31 @@ function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, subm
 }
 
 function CastSceneGroups({ scenes, members, query }) {
+  const [shareStatus, setShareStatus] = useState('')
   const visibleScenes = scenes.filter((scene) => {
     const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no))
     const text = `${scene.scene_no} ${scene.title} ${cast.map((member) => `${member.name} ${member.roleName || ''}`).join(' ')}`
     return cast.length && (!normalizeMatch(query) || normalizeMatch(text).includes(normalizeMatch(query)))
   })
-  return <div className="cast-scene-groups">{!visibleScenes.length && <Empty icon={<Clapperboard />} title="연결된 등장 장면이 없어요" description="배역별 보기에서 배우의 등장 장면을 선택해주세요." />}{visibleScenes.map((scene) => { const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no)); return <article key={scene.id}><div className="cast-scene-title"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>ACT {scene.act_no} · {cast.length}명 등장</small></div></div><div className="cast-call-list">{cast.map((member) => <div key={member.id}><UserRound /><span><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span><em>{member.type}</em></div>)}</div></article> })}</div>
+  async function shareCallSheet() {
+    const text = visibleScenes.map((scene) => {
+      const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no))
+      return `[ACT ${scene.act_no} · ${scene.scene_no}. ${scene.title}]\n${cast.map((member) => `- ${member.roleName || '배역 미정'}: ${member.name}`).join('\n')}`
+    }).join('\n\n')
+    if (!text) return
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: 'StageFlow 장면별 콜시트', text })
+        setShareStatus('콜시트를 공유했어요.')
+      } else {
+        await navigator.clipboard.writeText(text)
+        setShareStatus('콜시트를 클립보드에 복사했어요.')
+      }
+    } catch (error) {
+      if (error?.name !== 'AbortError') setShareStatus('공유하지 못했어요. 다시 시도해주세요.')
+    }
+  }
+  return <div className="cast-scene-groups">{!!visibleScenes.length && <div className="call-sheet-actions"><div><strong>장면별 콜시트</strong><span>{visibleScenes.length}개 장면 · {members.length}명</span></div><button onClick={shareCallSheet}><Upload size={16} /> 공유</button></div>}{shareStatus && <p className="notice call-share-notice">{shareStatus}</p>}{!visibleScenes.length && <Empty icon={<Clapperboard />} title="연결된 등장 장면이 없어요" description="배역별 보기에서 배우의 등장 장면을 선택해주세요." />}{visibleScenes.map((scene) => { const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no)); return <article key={scene.id}><div className="cast-scene-title"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>ACT {scene.act_no} · {cast.length}명 등장</small></div></div><div className="cast-call-list">{cast.map((member) => <div key={member.id}><UserRound /><span><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span><em>{member.type}</em></div>)}</div></article> })}</div>
 }
 
 function CastRoleGroup({ group, scenes, update, remove, toggleScene, busy, forceOpen }) {
