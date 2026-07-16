@@ -1558,6 +1558,9 @@ function ProductionView(props) {
   const [feedbackDrafts, setFeedbackDrafts] = useState({})
   const [feedbackStatus, setFeedbackStatus] = useState('')
   const previousShowState = useRef(null)
+  useEffect(() => {
+    if (['schedule', 'tasks', 'rehearsal'].includes(tab)) setTab('overview')
+  }, [tab, setTab])
   const readinessPath = `${workspace.id}/${production.id}/data/show-readiness.json`
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
   const showLogPath = `${workspace.id}/${production.id}/data/show-log.json`
@@ -1828,14 +1831,12 @@ function ProductionView(props) {
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>준비/공연</span></button><button className={!['overview', 'scenes', 'cast', 'show'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
       <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
       {tab === 'overview' && <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} />}
-      {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} castMembers={castMembers} session={session} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
-      {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
@@ -2113,13 +2114,10 @@ function DeletionApprovalBanner({ workspace, production, session, open }) {
 
 function ProductionMoreSheet({ active, close, choose }) {
   const items = [
-    { id: 'rehearsal', label: '개인 연습 기록', description: '장면별 연습 시간과 기록', icon: <Timer /> },
     { id: 'props', label: '내 소품', description: '장면별로 챙길 소품', icon: <Package /> },
     { id: 'costumes', label: '내 의상', description: '배역별 의상과 퀵체인지', icon: <Shirt /> },
     { id: 'cues', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
     { id: 'materials', label: '연습 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
-    { id: 'schedule', label: '연습 일정', description: '연습일과 연습 장면', icon: <CalendarDays /> },
-    { id: 'tasks', label: '연습 할 일', description: '암기·안무·개인 준비 체크', icon: <CheckCircle2 /> },
     { id: 'backup', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
     { id: 'import', label: '자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
     { id: 'team', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },

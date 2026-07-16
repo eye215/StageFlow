@@ -1,0 +1,3 @@
+.actor-home-next{display:none!important}
+.actor-home-check .check-summary button:first-child{display:none!important}
+.actor-home-check .check-summary{grid-template-columns:repeat(2,1fr)!important}

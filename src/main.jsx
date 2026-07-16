@@ -22,6 +22,7 @@ import './actor-run-flow.css'
 import './connected-overview.css'
 import './actor-home.css'
 import './scene-hub.css'
+import './removed-features.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
