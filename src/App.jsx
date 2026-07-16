@@ -2195,12 +2195,22 @@ function parseStructuredProductionTable(source) {
       else if (/^(음악|mr|ar)$/.test(label)) result.music = index
       else if (/동선|안무/.test(label)) result.movement = index
       else if (/진도|현황|상태/.test(label)) result.status = index
+      else if (/^(큐종류|큐타입|큐구분|파트)$/.test(label)) result.cueType = index
+      else if (/^(큐|큐내용|큐명|큐설명|내용)$/.test(label)) result.cueLabel = index
+      else if (/큐사인|큐시점|트리거|실행시점|go사인/.test(label)) result.cueTrigger = index
+      else if (/^(의상|의상명|착장|룩|look)$/.test(label)) result.costume = index
+      else if (/의상배역|캐릭터명|착용배역/.test(label)) result.costumeRole = index
+      else if (/체인지|환복|갈아입|변경시점/.test(label)) result.changeNote = index
       else if (/^(구분|종류|분류)$/.test(label)) result.kind = index
       else if (/소품명|대도구명|품목명|물품명/.test(label)) result.propName = index
       else if (/^in$|반입|등장/.test(label)) result.inBy = index
       else if (/^out$|반출|퇴장/.test(label)) result.outBy = index
       else if (/비고|메모|참고/.test(label)) result.note = index
     })
+    if (result.cueLabel !== undefined && result.kind !== undefined && result.propName === undefined) {
+      result.cueType = result.kind
+      delete result.kind
+    }
     return Object.keys(result).length >= 2 ? result : null
   }
   const sceneLead = (cells, map) => {
@@ -2259,6 +2269,20 @@ function parseStructuredProductionTable(source) {
     put(current, 'music', map.music !== undefined ? cells[map.music] : '')
     put(current, 'movement', map.movement !== undefined ? cells[map.movement] : '')
     put(current, 'status', map.status !== undefined ? cells[map.status] : '')
+
+    const cueLabel = map.cueLabel !== undefined ? clean(cells[map.cueLabel]) : ''
+    const cueTrigger = map.cueTrigger !== undefined ? clean(cells[map.cueTrigger]) : ''
+    const cueType = map.cueType !== undefined ? clean(cells[map.cueType]) : '무대'
+    if (cueLabel || cueTrigger) {
+      const cue = { type: cueType || '무대', label: cueLabel || cueTrigger, trigger: cueTrigger }
+      if (!current.cues.some((item) => normalizeMatch(`${item.type}${item.label}${item.trigger}`) === normalizeMatch(`${cue.type}${cue.label}${cue.trigger}`))) current.cues.push(cue)
+    }
+
+    const costumeName = map.costume !== undefined ? clean(cells[map.costume]) : ''
+    if (costumeName && !/^(없음|미정|-)$/.test(costumeName)) {
+      const costume = { character: map.costumeRole !== undefined ? clean(cells[map.costumeRole]) : map.role !== undefined ? clean(cells[map.role]) : '', name: costumeName, changeNote: map.changeNote !== undefined ? clean(cells[map.changeNote]) : '' }
+      if (!current.costumes.some((item) => normalizeMatch(`${item.character}${item.name}`) === normalizeMatch(`${costume.character}${costume.name}`))) current.costumes.push(costume)
+    }
 
     let kind = map.kind !== undefined ? clean(cells[map.kind]) : ''
     let name = map.propName !== undefined ? clean(cells[map.propName]) : ''
