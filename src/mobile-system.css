@@ -1,17 +1,18 @@
 /* Final mobile system pass. Keep this import last so feature CSS cannot
    reintroduce horizontal scrolling or undersized touch targets. */
-html,body,#root{max-width:100%;min-height:100%;overflow-x:hidden}
+html{max-width:100%;min-height:100%;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch}
+body,#root{max-width:100%;min-height:100%;overflow-x:hidden;overflow-y:visible}
 *{min-width:0}
 button,input,select,textarea{font:inherit}
 
 @media(max-width:759px){
   :root{--mobile-gutter:14px;--mobile-radius:18px;--mobile-line:rgba(148,163,184,.11)}
-  body{font-size:14px;-webkit-text-size-adjust:100%;overscroll-behavior-y:none}
+  body{height:auto;font-size:14px;-webkit-text-size-adjust:100%;overscroll-behavior-y:auto;touch-action:pan-x pan-y}
   button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
-  button,a{touch-action:manipulation}
+  button,a{touch-action:auto}
 
-  .app-shell{width:100%;min-height:100dvh}
-  .content{width:100%;padding:14px var(--mobile-gutter) calc(94px + env(safe-area-inset-bottom))}
+  .app-shell{width:100%;min-height:100dvh;overflow:visible;touch-action:pan-y}
+  .content{width:100%;overflow:visible;padding:14px var(--mobile-gutter) calc(94px + env(safe-area-inset-bottom));touch-action:pan-y}
   .topbar{position:sticky;top:0;z-index:30;min-height:64px;padding:10px var(--mobile-gutter);background:rgba(7,10,18,.88);backdrop-filter:blur(22px) saturate(140%)}
   .topbar .brand-inline{gap:9px}
   .topbar .brand-inline>svg{width:22px;height:22px}
@@ -81,7 +82,7 @@ button,input,select,textarea{font:inherit}
   .cue-toggle strong,.cue-toggle small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   .sheet-backdrop,.production-create-backdrop{padding-top:48px}
-  .profile-sheet,.production-more-sheet,.production-create-modal{max-height:92dvh;padding-right:14px;padding-left:14px;border-radius:25px 25px 0 0}
+  .profile-sheet,.production-more-sheet,.production-create-modal{max-height:92dvh;overflow-x:hidden;overflow-y:auto;padding-right:14px;padding-left:14px;border-radius:25px 25px 0 0;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
   .default-production-list{gap:7px}
   .default-production-list button{min-height:64px;padding:12px}
   .production-create-modal{overflow:auto}
