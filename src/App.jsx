@@ -2279,7 +2279,7 @@ function SceneCard({ scene, update, remove }) {
   }
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   const sections = parseSceneSummarySections(scene.summary)
-  const castCount = sections.main.length + sections.ensemble.length + sections.backstage.length
+  const castCount = sections.main.length + sections.ensemble.length
   const hasLinkedDetails = castCount > 0 || sections.props.length > 0
   return <article className={expanded ? 'scene-hub-card open' : 'scene-hub-card'}>
     <button className="scene-hub-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="scene-hub-number">{scene.scene_no}</span><div><small>ACT {scene.act_no}</small><h3>{scene.title}</h3>{hasLinkedDetails ? <p className="scene-hub-meta">{castCount > 0 && <span><Users /> {castCount}명</span>}{sections.props.length > 0 && <span><Package /> {sections.props.length}개</span>}</p> : <p className="scene-hub-empty-meta">연결된 정보 없음</p>}</div><ChevronRight /></button>
@@ -2287,7 +2287,6 @@ function SceneCard({ scene, update, remove }) {
       <section className="scene-cast-sections">
         <ScenePeopleRow label="메인 배역" tone="main" people={sections.main} />
         <ScenePeopleRow label="등장 앙상블" tone="ensemble" people={sections.ensemble} />
-        <ScenePeopleRow label="백 앙상블" tone="backstage" people={sections.backstage} />
       </section>
       <section className="scene-prop-section"><div className="scene-detail-title"><Package /><strong>소품·대도구</strong><span>{sections.props.length}</span></div>{sections.props.length ? <div>{sections.props.map((item, index) => <article key={`${item.name}-${index}`}><span className={item.kind === '대도구' ? 'set' : ''}>{item.kind}</span><div><b>{item.name}</b><small><em>IN</em>{item.inBy || '미정'} <i /> <em>OUT</em>{item.outBy || '미정'}</small>{item.note && <p>{item.note}</p>}</div></article>)}</div> : <p className="scene-section-empty">등록된 소품이 없어요.</p>}</section>
       {(sections.status.length > 0 || sections.other.length > 0) && <section className="scene-notes-section"><div className="scene-detail-title"><FileText /><strong>연습 메모</strong></div>{[...sections.status, ...sections.other].map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</section>}
