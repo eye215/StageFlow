@@ -2154,6 +2154,7 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
+  const [statusFilter, setStatusFilter] = useState('all')
   const [cleanupPreviewOpen, setCleanupPreviewOpen] = useState(false)
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState([])
   const [cleanupRoleDrafts, setCleanupRoleDrafts] = useState({})
@@ -2164,9 +2165,20 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     const roles = splitRoleEntries(member.roleName || '')
     return roles.length > 1 ? [{ member, roles }] : []
   }), [members])
+  const statusCounts = useMemo(() => ({
+    all: members.length,
+    unlinked: members.filter((member) => !(member.sceneNumbers || []).length).length,
+    unclaimed: members.filter((member) => !member.userId).length,
+    cleanup: members.filter((member) => splitRoleEntries(member.roleName || '').length > 1).length,
+  }), [members])
   const visible = members.filter((member) => {
     const memberScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no} ${scene.title}`).join(' ')
-    return !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
+    const matchesQuery = !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
+    const matchesStatus = statusFilter === 'all'
+      || (statusFilter === 'unlinked' && !(member.sceneNumbers || []).length)
+      || (statusFilter === 'unclaimed' && !member.userId)
+      || (statusFilter === 'cleanup' && splitRoleEntries(member.roleName || '').length > 1)
+    return matchesQuery && matchesStatus
   })
   const roleGroups = visible.reduce((groups, member) => {
     const actor = member.name?.trim() || '이름 미정'
@@ -2209,7 +2221,7 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     {cleanupPreviewOpen && <section className="cast-cleanup-preview"><div className="cast-cleanup-preview-head"><div><span>NAME CLEANUP</span><h3>정리 결과 미리보기</h3></div><strong>{cleanupSelectedIds.length}/{cleanupPreview.length}명 선택</strong></div>{cleanupPreview.length ? <><div className="cast-cleanup-select-actions"><button onClick={() => setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))}>전체 선택</button><button onClick={() => setCleanupSelectedIds([])}>전체 해제</button></div><div className="cast-cleanup-preview-list">{cleanupPreview.slice(0, 20).map(({ member }) => { const checked = cleanupSelectedIds.includes(member.id); const draft = cleanupRoleDrafts[member.id] ?? member.roleName ?? ''; const draftRoles = splitRoleEntries(draft); return <article className={checked ? 'selected' : ''} key={member.id}><label><input type="checkbox" checked={checked} onChange={() => toggleCleanupMember(member.id)} /><UserRound /></label><div><b>{member.name}</b><small>원본: {member.roleName}</small><input className="cast-cleanup-role-input" value={draft} disabled={!checked} onChange={(event) => setCleanupRoleDrafts((value) => ({ ...value, [member.id]: event.target.value }))} aria-label={`${member.name} 정리할 배역명`} /><p>{draftRoles.map((role) => <span key={role}>{role}</span>)}</p></div><em>{draftRoles.length}개</em></article> })}</div></> : <p className="cast-cleanup-empty">구분자로 붙어 있는 배역은 없어요. 적용하면 같은 배우·배역 중복만 병합합니다.</p>}{cleanupPreview.length > 20 && <small className="cast-cleanup-more">외 {cleanupPreview.length - 20}명은 적용 후 함께 정리돼요.</small>}<div className="cast-cleanup-preview-actions"><button onClick={() => setCleanupPreviewOpen(false)}>취소</button><button className="primary compact" disabled={busy || (cleanupPreview.length > 0 && !cleanupSelectedIds.length)} onClick={regroupRoles}><CheckCircle2 size={16} /> 선택 정리 적용</button></div></section>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
-    {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
+    {!!members.length && <><div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div><div className="cast-status-filters">{[['all','전체'],['unlinked','장면 미연결'],['unclaimed','팀원 미선택'],['cleanup','이름 정리 필요']].map(([key, label]) => <button className={statusFilter === key ? 'active' : ''} key={key} onClick={() => setStatusFilter(key)}><span>{label}</span><b>{statusCounts[key]}</b></button>)}</div></>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="조건에 맞는 배우가 없어요" description="검색어나 상태 필터를 변경해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
   </section>
 }
 

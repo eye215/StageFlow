@@ -1,0 +1,6 @@
+.cast-status-filters { display: flex; gap: 7px; margin: 8px 0 13px; padding-bottom: 2px; overflow-x: auto; scrollbar-width: none; }
+.cast-status-filters::-webkit-scrollbar { display: none; }
+.cast-status-filters button { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 750; }
+.cast-status-filters button b { min-width: 20px; padding: 2px 6px; border-radius: 999px; background: var(--background); color: inherit; font-size: 10px; text-align: center; }
+.cast-status-filters button.active { border-color: rgba(124,58,237,.35); background: var(--accent-soft); color: var(--accent); }
+.cast-status-filters button.active b { background: var(--surface); }
