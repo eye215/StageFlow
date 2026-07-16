@@ -38,6 +38,7 @@ import './navigation-hotfix.css'
 import './preparation-health.css'
 import './import-audit.css'
 import './spreadsheet-upload.css'
+import './import-selection.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -465,9 +466,12 @@ export default function App() {
     if (!importRows.length) return
     const mode = options.mode || 'add'
     const targets = options.targets || { scenes: true, cast: true, props: true, costumes: true, cues: true }
+    const selectedNumbers = Array.isArray(options.selectedNumbers) ? new Set(options.selectedNumbers.map(Number)) : null
+    const selectedImportRows = selectedNumbers ? importRows.filter((row) => selectedNumbers.has(Number(row.number))) : importRows
+    if (!selectedImportRows.length) return setNotice('적용할 장면을 하나 이상 선택해 주세요.')
     setBusy(true)
     const existingNumbers = new Set(scenes.map((scene) => Number(scene.scene_no)))
-    const rows = importRows.filter((row) => !existingNumbers.has(row.number)).map((row, index) => ({
+    const rows = selectedImportRows.filter((row) => !existingNumbers.has(row.number)).map((row, index) => ({
       production_id: selected.id,
       act_no: row.number <= 14 ? 1 : 2,
       scene_no: row.number,
@@ -477,7 +481,7 @@ export default function App() {
     }))
     let updated = 0
     if (mode === 'update') {
-      for (const row of importRows.filter((item) => existingNumbers.has(item.number))) {
+      for (const row of selectedImportRows.filter((item) => existingNumbers.has(item.number))) {
         const scene = scenes.find((item) => Number(item.scene_no) === Number(row.number))
         if (!scene) continue
         const incoming = formatSceneSummarySelected(row, targets)
@@ -489,9 +493,9 @@ export default function App() {
     const { error } = rows.length ? await supabase.from('scenes').insert(rows) : { error: null }
     if (error) setNotice(`장면 저장 실패: ${error.message}`)
     else {
-      const importedSceneRows = importRows.map((row) => ({ scene_no: row.number, title: row.title, summary: formatSceneSummarySelected(row, targets) }))
+      const importedSceneRows = selectedImportRows.map((row) => ({ scene_no: row.number, title: row.title, summary: formatSceneSummarySelected(row, targets) }))
       const nextCast = targets.cast ? mergeCastFromScenes(castMembers, importedSceneRows) : castMembers
-      const importedProps = importRows.flatMap((row) => (row.props || []).map((item) => ({
+      const importedProps = selectedImportRows.flatMap((row) => (row.props || []).map((item) => ({
         id: crypto.randomUUID(),
         kind: item.kind === '대도구' ? '대도구' : '소품',
         name: String(item.name || '').trim(),
@@ -1423,6 +1427,7 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
+  const [excludedRows, setExcludedRows] = useState([])
   async function loadSources() {
     const base = `${workspace.id}/${production.id}/imports`
     const { data } = await supabase.storage.from('stageflow-files').list(base, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } })
@@ -1430,12 +1435,15 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
     setSources(next)
   }
   useEffect(() => { loadSources() }, [workspace.id, production.id])
-  async function applyImport() { await save({ mode, targets }); await loadSources() }
+  useEffect(() => { setExcludedRows([]) }, [rows])
+  async function applyImport() { await save({ mode, targets, selectedNumbers: rows.filter((row) => !excludedRows.includes(Number(row.number))).map((row) => row.number) }); await loadSources() }
   const toggleTarget = (key) => setTargets((value) => ({ ...value, [key]: !value[key] }))
+  const toggleImportRow = (number) => setExcludedRows((value) => value.includes(Number(number)) ? value.filter((item) => item !== Number(number)) : [...value, Number(number)])
   const audit = useMemo(() => buildImportAudit(rows), [rows])
   return <section className="import-panel">
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     {!!rows.length && <ImportAudit audit={audit} />}
+    {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} toggle={toggleImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
@@ -1447,6 +1455,11 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
 }
 function ImportAudit({ audit }) {
   return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
+}
+
+function ImportSelection({ rows, excluded, toggle, selectAll, clearAll }) {
+  const selected = rows.length - excluded.length
+  return <section className="import-selection"><div className="import-selection-head"><div><span>APPLY ROWS</span><h3>적용할 장면 선택</h3></div><strong>{selected}/{rows.length}</strong></div><div className="import-selection-actions"><button onClick={selectAll}>전체 선택</button><button onClick={clearAll}>전체 해제</button></div><div className="import-selection-list">{rows.map((row) => { const checked = !excluded.includes(Number(row.number)); return <label className={checked ? 'selected' : ''} key={row.number}><input type="checkbox" checked={checked} onChange={() => toggle(row.number)} /><span>{row.number}</span><div><b>{row.title}</b><small>{[row.main && `배역 ${row.main}`, row.props?.length && `소품 ${row.props.length}`, row.costumes?.length && `의상 ${row.costumes.length}`, row.cues?.length && `큐 ${row.cues.length}`].filter(Boolean).join(' · ') || '장면 정보만 적용'}</small></div></label> })}</div></section>
 }
 
 function buildImportAudit(rows) {
