@@ -75,7 +75,7 @@ export default function App() {
   const [propItems, setPropItems] = useState([])
   const [propForm, setPropForm] = useState({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
   const [showPropForm, setShowPropForm] = useState(false)
-  const [propFilter, setPropFilter] = useState('전체')
+  const [propFilter, setPropFilter] = useState('미준비')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -1356,16 +1356,23 @@ function appendSummarySection(summary = '', heading, line) {
 
 function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filter, setFilter, submit, update, remove, toggleReady, importFromScenes, busy }) {
   const [query, setQuery] = useState('')
-  const visible = items.filter((item) => (filter === '전체' || item.kind === filter) && (!normalizeMatch(query) || normalizeMatch(`${item.name} ${item.inBy || ''} ${item.outBy || ''} ${item.note || ''}`).includes(normalizeMatch(query))))
+  const visible = items.filter((item) => (filter === '전체' || (filter === '미준비' && !item.ready) || (filter === '완료' && item.ready) || item.kind === filter) && (!normalizeMatch(query) || normalizeMatch(`${item.name} ${item.inBy || ''} ${item.outBy || ''} ${item.note || ''}`).includes(normalizeMatch(query)))).sort((a, b) => Number(a.ready) - Number(b.ready) || Number(a.sceneNo || 9999) - Number(b.sceneNo || 9999))
   const readyCount = items.filter((item) => item.ready).length
   const sceneTitle = (sceneNo) => scenes.find((scene) => Number(scene.scene_no) === Number(sceneNo))?.title || '장면 미지정'
+  const groups = visible.reduce((result, item) => {
+    const key = item.sceneNo || 'unassigned'
+    const group = result.find((entry) => String(entry.key) === String(key))
+    if (group) group.items.push(item)
+    else result.push({ key, title: item.sceneNo ? sceneTitle(item.sceneNo) : '장면 미지정', items: [item] })
+    return result
+  }, [])
   return <section className="props-panel">
     <div className="section-heading"><div><p className="eyebrow">PROPS & SET PIECES</p><h2>소품·대도구</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 항목</button></div>
-    <section className="prop-summary"><article><strong>{items.length}</strong><span>전체 항목</span></article><article><strong>{items.filter((item) => item.kind === '소품').length}</strong><span>소품</span></article><article><strong>{readyCount}/{items.length}</strong><span>준비 완료</span></article></section>
-    <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 자동으로 가져오기</strong><span>PDF 자동정리 결과의 소품·대도구와 In/Out 담당자를 불러옵니다.</span></div><ChevronRight /></button>
+    <section className="prop-summary compact-summary"><article><strong>{items.length - readyCount}</strong><span>미준비</span></article><article><strong>{readyCount}</strong><span>준비 완료</span></article><article><strong>{items.length}</strong><span>전체</span></article></section>
+    <button className="props-import-compact" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면 자료에서 가져오기</b><small>소품·대도구와 IN/OUT 담당자 자동 연결</small></span><ChevronRight /></button>
     {showForm && <form className="panel form-grid prop-form" onSubmit={submit}><div className="two-col"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><div className="two-col"><input placeholder="In 담당자" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /><input placeholder="Out 담당자" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></div><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary" disabled={busy}>항목 저장</button></form>}
-    {!!items.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="소품·담당자 검색" /></label><span>{visible.length}/{items.length}개</span></div>}<div className="prop-filters">{['전체', '소품', '대도구'].map((value) => <button key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{value}</button>)}</div>
-    <div className="prop-list">{!visible.length && <Empty icon={items.length ? <Search /> : <Package />} title={items.length ? '검색 결과가 없어요' : '등록된 항목이 없어요'} description={items.length ? '다른 소품명이나 담당자를 검색해보세요.' : '직접 추가하거나 장면 자동정리 결과에서 한 번에 가져오세요.'} action={items.length ? null : () => setShowForm(true)} />}{visible.map((item) => <PropCard key={item.id} item={item} scenes={scenes} sceneTitle={sceneTitle} update={update} remove={remove} toggleReady={toggleReady} busy={busy} />)}</div>
+    {!!items.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="소품·담당자 검색" /></label><span>{visible.length}/{items.length}개</span></div>}<div className="prop-filters prop-filters-scroll">{['미준비', '전체', '소품', '대도구', '완료'].map((value) => <button key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{value}</button>)}</div>
+    <div className="prop-scene-groups">{!visible.length && <Empty icon={items.length ? <Search /> : <Package />} title={items.length ? '조건에 맞는 항목이 없어요' : '등록된 항목이 없어요'} description={items.length ? '다른 필터나 검색어를 선택해보세요.' : '직접 추가하거나 장면 자동정리 결과에서 한 번에 가져오세요.'} action={items.length ? null : () => setShowForm(true)} />}{groups.map((group) => <section key={group.key}><div className="prop-group-head"><span>{group.key === 'unassigned' ? '—' : group.key}</span><div><strong>{group.title}</strong><small>{group.items.filter((item) => item.ready).length}/{group.items.length} 준비</small></div></div><div className="prop-list">{group.items.map((item) => <PropCard key={item.id} item={item} scenes={scenes} sceneTitle={sceneTitle} update={update} remove={remove} toggleReady={toggleReady} busy={busy} />)}</div></section>)}</div>
   </section>
 }
 

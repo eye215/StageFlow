@@ -77,3 +77,19 @@
 .scene-card-actions button.danger { color: #fb7185; }
 
 @media (max-width: 420px) { .scene-card-detail { padding-left: 13px; } }
+
+.props-import-compact { display: flex; align-items: center; gap: 9px; width: 100%; margin-bottom: 12px; padding: 11px 12px; border: 1px solid rgba(45, 212, 191, 0.14); border-radius: 13px; background: rgba(13, 148, 136, 0.06); color: #e2e8f0; text-align: left; }
+.props-import-compact > svg:first-child { width: 17px; color: #5eead4; }
+.props-import-compact > svg:last-child { width: 15px; margin-left: auto; color: #475569; }
+.props-import-compact > span { display: grid; gap: 2px; }
+.props-import-compact b { font-size: 10px; }
+.props-import-compact small { color: #64748b; font-size: 8px; }
+.prop-filters-scroll { overflow-x: auto; margin: 10px 0 12px; padding-bottom: 2px; scrollbar-width: none; }
+.prop-filters-scroll::-webkit-scrollbar { display: none; }
+.prop-filters-scroll button { flex: 0 0 auto; }
+.prop-scene-groups { display: grid; gap: 15px; }
+.prop-group-head { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; padding: 0 3px; }
+.prop-group-head > span { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 9px; background: rgba(99, 102, 241, 0.13); color: #a5b4fc; font-size: 9px; font-weight: 900; }
+.prop-group-head > div { display: flex; min-width: 0; flex: 1; align-items: baseline; justify-content: space-between; gap: 8px; }
+.prop-group-head strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.prop-group-head small { flex: 0 0 auto; color: #64748b; font-size: 8px; }
