@@ -43,6 +43,8 @@ import './import-edit.css'
 import './import-undo.css'
 import './import-plan.css'
 import './import-flow.css'
+import './source-reanalyze.css'
+import './import-flow-override.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -371,7 +373,7 @@ export default function App() {
     return true
   }
 
-  async function readPdf(file) {
+  async function readPdf(file, archive = true) {
     if (!file) return
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
@@ -385,8 +387,10 @@ export default function App() {
       }
       const text = pages.join('\n')
       setImportText(text)
-      const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
-      await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: 'application/pdf' })
+      if (archive) {
+        const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
+        await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: 'application/pdf' })
+      }
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
       setNotice(parsed.length ? `${parsed.length}개 장면을 찾았어요.` : 'PDF에서 표를 찾지 못했어요. 텍스트를 붙여넣어 주세요.')
@@ -396,7 +400,7 @@ export default function App() {
     setImportingPdf(false)
   }
 
-  async function readSpreadsheet(file) {
+  async function readSpreadsheet(file, archive = true) {
     if (!file) return
     setImportingPdf(true)
     setNotice('표 파일의 모든 시트와 행·열을 읽고 있어요…')
@@ -411,8 +415,10 @@ export default function App() {
       const parsed = parseProductionSheet(extracted)
       setImportText(extracted)
       setImportRows(parsed)
-      const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
-      await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: file.type || 'application/octet-stream' })
+      if (archive) {
+        const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
+        await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: file.type || 'application/octet-stream' })
+      }
       setNotice(parsed.length ? `${workbook.SheetNames.length}개 시트 전체에서 ${parsed.length}개 장면을 인식했어요.` : '표 전체를 읽었지만 장면 번호와 제목을 찾지 못했어요.')
     } catch (error) {
       setNotice(`표 파일 읽기 실패: ${error.message}`)
@@ -1456,6 +1462,25 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
     const next = await Promise.all((data || []).filter((item) => item.id).map(async (item) => { const { data: signed } = await supabase.storage.from('stageflow-files').createSignedUrl(`${base}/${item.name}`, 3600); return { ...item, url: signed?.signedUrl || '' } }))
     setSources(next)
   }
+  async function reanalyzeSource(item) {
+    if (!item.url) return
+    try {
+      const response = await fetch(item.url)
+      if (!response.ok) throw new Error('원본 파일을 불러오지 못했어요.')
+      const blob = await response.blob()
+      const name = cleanStoredFileName(item.name)
+      const file = new File([blob], name, { type: blob.type || 'application/octet-stream' })
+      if (/\.(xlsx?|csv|tsv)$/i.test(name)) await readSpreadsheet(file, false)
+      else if (/\.pdf$/i.test(name)) await readPdf(file, false)
+      else {
+        const sourceText = await blob.text()
+        setText(sourceText)
+        analyzeSourceText(sourceText, setRows)
+      }
+    } catch (error) {
+      window.alert(`재분석 실패: ${error.message}`)
+    }
+  }
   useEffect(() => { loadSources() }, [workspace.id, production.id])
   const rowSignature = rows.map((row) => Number(row.number)).join(',')
   useEffect(() => { setExcludedRows([]) }, [rowSignature])
@@ -1468,6 +1493,7 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
   return <section className="import-panel">
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
+    {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}
     {!!rows.length && <ImportAudit audit={audit} />}
     {!!rows.length && <ImportPlan rows={rows} excluded={excludedRows} existing={existingImportNumbers} mode={mode} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} existing={existingImportNumbers} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
@@ -1482,6 +1508,15 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
 }
 function ImportAudit({ audit }) {
   return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
+}
+
+function SourceReanalyze({ sources, reanalyze, loading }) {
+  return <section className="source-reanalyze"><div><span>REANALYZE</span><h3>최근 자료 다시 분석</h3></div><div>{sources.slice(0, 5).map((item) => <button disabled={loading} key={item.id} onClick={() => reanalyze(item)}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><RotateCcw /></button>)}</div></section>
+}
+
+function analyzeSourceText(sourceText, setRows) {
+  const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText) ? parseScriptByMarkers(sourceText) : parseProductionSheet(sourceText)
+  setRows(parsed)
 }
 
 function ImportPlan({ rows, excluded, existing, mode }) {
