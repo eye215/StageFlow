@@ -1658,7 +1658,7 @@ function ProductionView(props) {
     controls.forEach((button, index) => { button.disabled = showHold || !showController || (index === 0 ? showIndex === 0 : showIndex >= scenes.length - 1) })
     return undefined
   }, [tab, showController, showHold, showIndex, scenes.length])
-  const currentCast = current ? castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
+  const currentCast = current ? groupCastMembersByActor(castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)), { preferredId: briefingMemberId }) : []
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
   const currentCues = current ? parseSceneCues(current.summary) : []
@@ -1673,7 +1673,7 @@ function ProductionView(props) {
   const nextAppearance = nextAppearanceIndex >= 0 ? scenes[nextAppearanceIndex] : null
   const nextAppearanceCostumes = nextAppearance && briefingMember ? parseSceneCostumes(nextAppearance.summary).filter((item) => briefingMembers.some((member) => assignmentMatches(item.role, member))) : []
   const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && briefingMembers.some((member) => assignmentMatches(item.inBy, member))) : []
-  const upcomingCast = next ? castMembers.filter((member) => (member.sceneNumbers || []).includes(next.scene_no)) : []
+  const upcomingCast = next ? groupCastMembersByActor(castMembers.filter((member) => (member.sceneNumbers || []).includes(next.scene_no)), { ready: personalReady, sceneNo: next.scene_no }) : []
   const upcomingReadyCount = next ? upcomingCast.filter((member) => personalReady[`${member.id}-${next.scene_no}`]).length : 0
   const preparationAlerts = [
     { key: 'music', tab: 'music', icon: 'music', count: scenes.filter((scene) => !(musicByScene[scene.scene_no] || []).length).length, title: '음악 미연결 장면', detail: '넘버 파일을 장면에 연결해 주세요.' },
@@ -2326,6 +2326,26 @@ function CastRoleGroup({ group, scenes, propItems, update, remove, toggleScene, 
 
 function canonicalActor(name = '') {
   return normalizeMatch(String(name).replace(/[（(][^）)]*[）)]/g, '')) || normalizeMatch(name)
+}
+
+function groupCastMembersByActor(members, options = {}) {
+  const groups = new Map()
+  members.forEach((member) => {
+    const key = canonicalActor(member.name) || member.id
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(member)
+  })
+  return [...groups.values()].map((roles) => {
+    const preferred = roles.find((member) => member.id === options.preferredId)
+    const ready = options.sceneNo == null ? null : roles.find((member) => options.ready?.[`${member.id}-${options.sceneNo}`])
+    const representative = preferred || ready || roles[0]
+    return {
+      ...representative,
+      roleName: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · '),
+      sceneNumbers: [...new Set(roles.flatMap((member) => member.sceneNumbers || []))].sort((a, b) => Number(a) - Number(b)),
+      groupedMemberIds: roles.map((member) => member.id),
+    }
+  })
 }
 
 function matchScenesForSplitRole(actorName, roleName, scenes, originalSceneNumbers) {
