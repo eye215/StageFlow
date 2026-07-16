@@ -1166,14 +1166,17 @@ function SceneForm({ form, setForm, submit, busy }) { return <form className="pa
 function ProductionCard({ item, index, open, remove }) { return <article className="production-card" onClick={open}><div className={`poster poster-${index % 3}`}><Theater size={38} /></div><div className="production-info"><div className="card-top"><span className="status">준비 중</span><button className="icon-button danger" onClick={(e) => { e.stopPropagation(); remove() }} aria-label="공연 삭제"><Trash2 size={17} /></button></div><h3>{item.title}</h3><p>{item.venue || '장소 미정'}</p><small>{item.performance_start_date || '공연일 미정'}</small></div></article> }
 function SceneCard({ scene, update, remove }) {
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState({ title: scene.title, act_no: scene.act_no, scene_no: scene.scene_no, summary: scene.summary || '' })
+  const summaryLines = (scene.summary || '').split('\n').map((line) => line.trim()).filter(Boolean)
+  const summaryPreview = summaryLines.find((line) => !line.startsWith('[') && !line.startsWith('-')) || summaryLines[0] || '등록된 상세 정보가 없어요.'
   async function save(event) {
     event.preventDefault()
     if (!draft.title.trim()) return
     if (await update(scene.id, draft)) setEditing(false)
   }
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
-  return <article className="scene-card"><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{scene.summary || '설명 없음'}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="장면 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={remove} aria-label="장면 삭제"><Trash2 size={18} /></button></article>
+  return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
 function ImportPanel({ text, setText, rows, analyze, analyzeWithAI, save, readPdf, loading, aiAnalyzing }) {
   return <section className="import-panel">
