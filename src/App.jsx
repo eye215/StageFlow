@@ -11,6 +11,7 @@ import './dashboard.css'
 import './cast.css'
 import './props.css'
 import './ui-refinement.css'
+import './ui-overrides.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -627,11 +628,11 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
     <main className="content home-dashboard-v2">
       {showForm && <section className="inline-create"><div className="compact-heading"><div><span>NEW PRODUCTION</span><h2>새 공연</h2></div><button className="icon-button" onClick={() => setShowForm(false)}><X size={18} /></button></div><ProductionForm form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} /></section>}
       {defaultProduction ? <>
-        <section className="stage-summary" onClick={() => openAt('overview')}>
+        <button className="stage-summary" onClick={() => openAt('overview')}>
           <div className="stage-summary-top"><div><span className="stage-label">현재 공연</span><h1>{defaultProduction.title}</h1><p><MapPin size={14} /> {defaultProduction.venue || '공연 장소 미정'}</p></div>{daysLeft !== null && <strong className="d-day">{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}</div>
           <div className="stage-progress"><div><span>준비도</span><b>{progress}%</b></div><div className="progress"><i style={{ width: `${progress}%` }} /></div></div>
           <div className="stage-stats"><span><b>{scenes.length}</b> 장면</span><span><b>{musicCount}</b> 음악</span><span><b>{propStats.ready}/{propStats.total}</b> 소품 준비</span></div>
-        </section>
+        </button>
 
         <section className="home-workbench"><div className="compact-heading"><div><span>WORKSPACE</span><h2>지금 할 일</h2></div></div><div className="workbench-grid"><button className="work-main" onClick={() => openAt('import')}><WandSparkles /><div><strong>대본 자동정리</strong><span>PDF에서 장면·인물·소품 추출</span></div><ChevronRight /></button><button onClick={() => openAt('scenes')}><Clapperboard /><div><strong>장면</strong><span>{scenes.length}개</span></div></button><button onClick={() => openAt('props')}><Package /><div><strong>소품</strong><span>{propStats.ready}/{propStats.total} 준비</span></div></button><button onClick={() => openAt('music')}><FileAudio /><div><strong>음악</strong><span>{musicCount}개 파일</span></div></button></div><button className="show-launch" onClick={() => openAt('show')}><Play fill="currentColor" /><div><strong>공연모드</strong><span>장면 순서대로 큐 진행</span></div><ChevronRight /></button></section>
 
