@@ -75,6 +75,7 @@ export default function App() {
   const [defaultProductionId, setDefaultProductionId] = useState(() => window.localStorage.getItem('stageflow:default-production') || '')
   const [homeScenes, setHomeScenes] = useState([])
   const [homeMusicCount, setHomeMusicCount] = useState(0)
+  const [homeMusicLinkedScenes, setHomeMusicLinkedScenes] = useState(0)
   const [homePropStats, setHomePropStats] = useState({ total: 0, ready: 0 })
   const [homeTasks, setHomeTasks] = useState([])
   const [castMembers, setCastMembers] = useState([])
@@ -243,6 +244,7 @@ export default function App() {
       return (files || []).filter((file) => file.id).length
     }))
     setHomeMusicCount(counts.reduce((sum, value) => sum + value, 0))
+    setHomeMusicLinkedScenes(counts.filter((value) => value > 0).length)
     const { data: propFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`)
     if (propFile) {
       try {
@@ -764,13 +766,13 @@ export default function App() {
     return { ok: true }
   }
 
-  const selectedMusicCount = useMemo(() => Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0), [musicByScene])
-  const progress = useMemo(() => calculateReadiness(scenes, selectedMusicCount, {
+  const selectedMusicLinkedScenes = useMemo(() => scenes.filter((scene) => (musicByScene[scene.scene_no] || []).length > 0).length, [scenes, musicByScene])
+  const progress = useMemo(() => calculateReadiness(scenes, selectedMusicLinkedScenes, {
     total: propItems.length,
     ready: propItems.filter((item) => item.ready).length,
-  }), [scenes, selectedMusicCount, propItems])
+  }), [scenes, selectedMusicLinkedScenes, propItems])
   const defaultProduction = useMemo(() => productions.find((item) => item.id === defaultProductionId) || productions[0] || null, [productions, defaultProductionId])
-  const homeProgress = useMemo(() => calculateReadiness(homeScenes, homeMusicCount, homePropStats), [homeScenes, homeMusicCount, homePropStats])
+  const homeProgress = useMemo(() => calculateReadiness(homeScenes, homeMusicLinkedScenes, homePropStats), [homeScenes, homeMusicLinkedScenes, homePropStats])
   const homeDaysLeft = useMemo(() => {
     if (!defaultProduction?.performance_start_date) return null
     return Math.ceil((new Date(`${defaultProduction.performance_start_date}T00:00:00`) - new Date()) / 86400000)
