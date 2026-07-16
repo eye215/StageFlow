@@ -452,6 +452,15 @@ export default function App() {
     await persistCastData(next)
   }
 
+  async function importCastFromScenes() {
+    const next = mergeCastFromScenes(castMembers, scenes)
+    const added = next.length - castMembers.length
+    if (!added) return setNotice('장면에서 새로 가져올 배우·배역이 없어요.')
+    setBusy(true)
+    if (await persistCastData(next)) setNotice(`${added}명의 배우·배역을 장면에서 가져왔어요.`)
+    setBusy(false)
+  }
+
   function propDataPath(productionId) {
     return `${workspace.id}/${productionId}/data/props.json`
   }
@@ -565,7 +574,7 @@ export default function App() {
       uploadingMusic={uploadingMusic}
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
       showCastForm={showCastForm} setShowCastForm={setShowCastForm}
-      addCastMember={addCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene}
+      addCastMember={addCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene} importCastFromScenes={importCastFromScenes}
       propItems={propItems} propForm={propForm} setPropForm={setPropForm}
       showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
       addPropItem={addPropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
@@ -663,6 +672,43 @@ function calculateReadiness(scenes, musicCount, propStats) {
   return Math.round(sceneScore + musicScore + propScore + reviewScore)
 }
 
+function mergeCastFromScenes(existing, scenes) {
+  const members = existing.map((member) => ({ ...member, sceneNumbers: [...(member.sceneNumbers || [])] }))
+  const findMember = (name, roleName) => members.find((member) => normalizeMatch(member.name) === normalizeMatch(name) && normalizeMatch(member.roleName || member.name) === normalizeMatch(roleName || name))
+  const add = (name, roleName, type, sceneNo) => {
+    const cleanName = name.trim()
+    const cleanRole = roleName.trim()
+    if (!cleanName || /^(없음|미정|확인\s*필요|논의|\?)$/i.test(cleanName)) return
+    const current = findMember(cleanName, cleanRole)
+    if (current) {
+      if (!current.sceneNumbers.includes(sceneNo)) current.sceneNumbers.push(sceneNo)
+      current.sceneNumbers.sort((a, b) => a - b)
+      return
+    }
+    members.push({ id: crypto.randomUUID(), name: cleanName, roleName: cleanRole, type, notes: '장면 자동정리에서 가져옴', sceneNumbers: [sceneNo] })
+  }
+
+  scenes.forEach((scene) => {
+    String(scene.summary || '').split('\n').forEach((line) => {
+      const match = line.match(/^(메인 배역|등장 앙상블):\s*(.+)$/)
+      if (!match) return
+      const type = match[1] === '메인 배역' ? '주연' : '앙상블'
+      match[2].split(/\s*\/\s*/).forEach((entry) => {
+        const value = entry.trim()
+        if (!value || /없음|논의\s*후|등장\s*or|확인\s*필요/.test(value)) return
+        const paired = value.match(/^(.+?)\s*\((.+)\)\s*$/)
+        if (paired) {
+          const roleName = paired[1].trim()
+          paired[2].split(/\s*[,·&]\s*/).forEach((actor) => add(actor, roleName, type, Number(scene.scene_no)))
+        } else {
+          add(value, value, type, Number(scene.scene_no))
+        }
+      })
+    })
+  })
+  return members
+}
+
 function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, busy }) {
   return <main className="auth-page"><section className="auth-card">
     <BrandMark icon={<Theater size={34} />} /><p className="eyebrow">MUSICAL PRODUCTION OS</p><h1>StageFlow</h1>
@@ -690,7 +736,7 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, clos
 }
 
 function ProductionView(props) {
-  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
+  const { workspace, production, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, uploadOrganizedMusic, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, removePropItem, togglePropReady, importPropsFromScenes } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -701,7 +747,7 @@ function ProductionView(props) {
       <nav className="segmented segmented-scroll"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'props' ? 'active' : ''} onClick={() => setTab('props')}>소품</button><button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}>자동정리</button><button className={tab === 'music' ? 'active' : ''} onClick={() => setTab('music')}>음악</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연모드</button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{scenes.map((scene) => <SceneCard key={scene.id} scene={scene} remove={() => deleteScene(scene.id)} />)}</section></>}
-      {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} remove={removeCastMember} toggleScene={toggleCastScene} busy={busy} />}
+      {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'import' && <ImportPanel text={importText} setText={setImportText} rows={importRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} upload={uploadOrganizedMusic} loading={uploadingMusic} />}
@@ -737,10 +783,11 @@ function MusicPanel({ scenes, pending, musicByScene, organize, upload, loading }
     </>}
   </section>
 }
-function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, submit, remove, toggleScene, busy }) {
+function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, submit, remove, toggleScene, importFromScenes, busy }) {
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST & CHARACTERS</p><h2>배우·배역</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 배우</button></div>
     <section className="cast-summary"><article><strong>{members.length}</strong><span>전체 인원</span></article><article><strong>{members.filter((member) => member.type === '주연').length}</strong><span>주연</span></article><article><strong>{members.filter((member) => member.type === '앙상블').length}</strong><span>앙상블</span></article></section>
+    <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 배우·배역 가져오기</strong><span>대본 자동정리 결과의 메인 배역과 등장 앙상블을 장면별로 연결합니다.</span></div><ChevronRight /></button>
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     <div className="cast-list">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{members.map((member) => <article className="cast-card" key={member.id}><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.type}</span><h3>{member.name}</h3><p>{member.roleName || '배역 미정'}</p></div><button className="icon-button danger" onClick={() => remove(member.id)}><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장 장면</strong><span>{(member.sceneNumbers || []).length}개 선택</span></div><div className="scene-chip-list">{scenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span>{scene.scene_no}</span>{scene.title}</button> })}{!scenes.length && <small>장면을 먼저 등록해주세요.</small>}</div></article>)}</div>
   </section>
