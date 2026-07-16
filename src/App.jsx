@@ -21,6 +21,7 @@ import './schedule.css'
 import './ui-refinement.css'
 import './ui-overrides.css'
 import './show-briefing.css'
+import './costumes.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -865,12 +866,13 @@ function ProductionView(props) {
     <header className="topbar"><button className="icon-button" onClick={goBack} aria-label="홈으로"><ChevronLeft /></button><div className="topbar-title"><strong>{production.title}</strong><span>{workspace.name}</span></div><span className="header-spacer" /></header>
     <main className="content production-content">
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
-      <nav className="segmented production-primary-nav"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>할 일</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연</button><button className={['props', 'cues', 'rehearsal', 'materials', 'schedule', 'import', 'music'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={18} /><span>더보기</span></button></nav>
+      <nav className="segmented production-primary-nav"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}>개요</button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}>할 일</button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}>장면</button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}>배우</button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}>공연</button><button className={['props', 'costumes', 'cues', 'rehearsal', 'materials', 'schedule', 'import', 'music'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal size={18} /><span>더보기</span></button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
+      {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} />}
       {tab === 'rehearsal' && <RehearsalPanel workspace={workspace} production={production} scenes={scenes} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
@@ -887,6 +889,7 @@ function ProductionView(props) {
 function ProductionMoreSheet({ active, close, choose }) {
   const items = [
     { id: 'props', label: '소품·대도구', description: 'IN/OUT과 준비 상태', icon: <Package /> },
+    { id: 'costumes', label: '의상·퀵체인지', description: '배역별 의상과 체인지 순서', icon: <Shirt /> },
     { id: 'cues', label: '큐시트', description: '조명·음향·영상·무대 큐', icon: <ListChecks /> },
     { id: 'music', label: '음악', description: '넘버별 음악 업로드와 재생', icon: <FileAudio /> },
     { id: 'rehearsal', label: '리허설', description: '장면별 실제 시간 측정', icon: <Timer /> },
@@ -963,6 +966,39 @@ function CastCard({ member, scenes, update, remove, toggleScene, busy }) {
   }
   return <article className="cast-card">{editing ? <form className="cast-edit-form" onSubmit={save}><div className="two-col"><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="배우 이름" /><input value={draft.roleName} onChange={(event) => setDraft({ ...draft, roleName: event.target.value })} placeholder="배역" /></div><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="특이사항" /><div className="cast-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact" disabled={busy}><Save size={16} /> 저장</button></div></form> : <><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.type}</span><h3>{member.name}</h3><p>{member.roleName || '배역 미정'}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="배우 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(member.id)} aria-label="배우 삭제"><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장 장면</strong><span>{(member.sceneNumbers || []).length}개 선택</span></div><div className="scene-chip-list">{scenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span>{scene.scene_no}</span>{scene.title}</button> })}{!scenes.length && <small>장면을 먼저 등록해주세요.</small>}</div></>}</article>
 }
+
+function CostumePanel({ scenes, castMembers, updateScene }) {
+  const [form, setForm] = useState({ sceneNo: '', role: '', name: '', note: '' })
+  const [status, setStatus] = useState('')
+  const roles = [...new Set(castMembers.map((member) => member.roleName?.trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'))
+  const entries = scenes.flatMap((scene) => parseSceneCostumes(scene.summary).map((item, index) => ({ ...item, scene, index })))
+
+  async function addCostume(event) {
+    event.preventDefault()
+    const scene = scenes.find((item) => Number(item.scene_no) === Number(form.sceneNo))
+    if (!scene || !form.role.trim() || !form.name.trim()) return
+    const line = `- ${form.role.trim()}: ${form.name.trim()}${form.note.trim() ? ` · ${form.note.trim()}` : ''}`
+    const summary = appendSummarySection(scene.summary, '의상/체인지:', line)
+    await updateScene(scene.id, { ...scene, summary })
+    setForm({ sceneNo: '', role: '', name: '', note: '' })
+    setStatus('의상 체인지가 저장됐어요.')
+  }
+
+  async function removeCostume(entry) {
+    if (!window.confirm(`${entry.role}의 ${entry.name} 정보를 삭제할까요?`)) return
+    const summary = String(entry.scene.summary || '').split('\n').filter((line) => line.trim() !== entry.rawLine).join('\n').replace(/의상\/체인지:\s*(?=\n(?:\S|$)|$)/g, '').trim()
+    await updateScene(entry.scene.id, { ...entry.scene, summary })
+  }
+
+  return <section className="costume-panel"><div className="section-heading"><div><p className="eyebrow">COSTUME TRACK</p><h2>의상·퀵체인지</h2></div></div><form className="panel form-grid costume-form" onSubmit={addCostume}><div className="two-col"><select required value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 선택</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><input required list="costume-roles" placeholder="배역" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })} /><datalist id="costume-roles">{roles.map((role) => <option key={role} value={role} />)}</datalist></div><input required placeholder="의상명 (예: LOOK 2 빨강 드레스)" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="체인지 위치·도우미·제한시간" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary"><Shirt size={17} /> 의상 저장</button></form>{status && <p className="notice">{status}</p>}<div className="costume-groups">{!entries.length && <Empty icon={<Shirt />} title="등록된 의상이 없어요" description="장면과 배역을 지정하면 공연모드에서 현재·다음 의상으로 표시돼요." />}{scenes.map((scene) => { const items = entries.filter((entry) => entry.scene.id === scene.id); if (!items.length) return null; return <article key={scene.id}><div className="costume-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{items.length}개 의상</small></div></div><div>{items.map((item) => <div className="costume-row" key={`${item.role}-${item.index}`}><Shirt /><div><b>{item.role}</b><strong>{item.name}</strong>{item.note && <small>{item.note}</small>}</div><button className="icon-button danger" onClick={() => removeCostume(item)} aria-label="의상 삭제"><Trash2 size={16} /></button></div>)}</div></article> })}</div></section>
+}
+
+function appendSummarySection(summary = '', heading, line) {
+  const text = String(summary || '').trim()
+  if (text.includes(heading)) return text.replace(heading, `${heading}\n${line}`)
+  return [text, heading, line].filter(Boolean).join('\n')
+}
+
 function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filter, setFilter, submit, update, remove, toggleReady, importFromScenes, busy }) {
   const [query, setQuery] = useState('')
   const visible = items.filter((item) => (filter === '전체' || item.kind === filter) && (!normalizeMatch(query) || normalizeMatch(`${item.name} ${item.inBy || ''} ${item.outBy || ''} ${item.note || ''}`).includes(normalizeMatch(query))))
@@ -1047,7 +1083,7 @@ function parseSceneCostumes(summary = '') {
     const match = line.match(/^[-•]\s*([^:：]+)\s*[:：]\s*(.+)$/)
     if (!match) continue
     const parts = match[2].split(/\s*·\s*/)
-    costumes.push({ role: match[1].trim(), name: parts[0].trim(), note: parts.slice(1).join(' · ') })
+    costumes.push({ role: match[1].trim(), name: parts[0].trim(), note: parts.slice(1).join(' · '), rawLine: line })
   }
   return costumes
 }

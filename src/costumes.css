@@ -1,0 +1,13 @@
+.costume-panel select { width: 100%; padding: 14px 15px; border: 1px solid rgba(255,255,255,.1); border-radius: 14px; background: #0d1424; color: #f8fafc; }
+.costume-groups { display: grid; gap: 12px; }
+.costume-groups > article { overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 18px; background: rgba(15,23,42,.66); }
+.costume-scene-head { display: flex; align-items: center; gap: 10px; padding: 12px; background: rgba(99,102,241,.08); }
+.costume-scene-head > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: #4338ca; font-weight: 900; }
+.costume-scene-head > div { display: grid; gap: 2px; }
+.costume-scene-head small { color: #94a3b8; font-size: 10px; }
+.costume-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 12px; border-top: 1px solid rgba(255,255,255,.06); }
+.costume-row > svg { color: #f9a8d4; }
+.costume-row > div { display: grid; gap: 3px; }
+.costume-row b { color: #f9a8d4; font-size: 10px; }
+.costume-row strong { font-size: 13px; }
+.costume-row small { color: #94a3b8; font-size: 10px; }
