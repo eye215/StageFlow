@@ -1471,6 +1471,7 @@ function ProductionView(props) {
   const showLogPath = `${workspace.id}/${production.id}/data/show-log.json`
   const runLogPath = `${workspace.id}/${production.id}/data/full-runs.json`
   const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
+  const briefingMembers = briefingMember ? castMembers.filter((member) => canonicalActor(member.name) === canonicalActor(briefingMember.name)) : []
   function toggleShowController() {
     setShowController((value) => {
       const nextValue = !value
@@ -1652,14 +1653,14 @@ function ProductionView(props) {
   const currentCostumes = current ? parseSceneCostumes(current.summary) : []
   const nextProps = next ? propItems.filter((item) => Number(item.sceneNo) === Number(next.scene_no)) : []
   const nextCostumes = next ? parseSceneCostumes(next.summary) : []
-  const briefingCurrentProps = briefingMember ? currentProps.filter((item) => assignmentMatches(item.inBy, briefingMember) || assignmentMatches(item.outBy, briefingMember)) : currentProps
-  const briefingNextProps = briefingMember ? nextProps.filter((item) => assignmentMatches(item.inBy, briefingMember)) : nextProps
-  const briefingCurrentCostumes = briefingMember ? currentCostumes.filter((item) => assignmentMatches(item.role, briefingMember)) : currentCostumes
-  const briefingNextCostumes = briefingMember ? nextCostumes.filter((item) => assignmentMatches(item.role, briefingMember)) : nextCostumes
-  const nextAppearanceIndex = briefingMember ? scenes.findIndex((scene, index) => index > showIndex && (briefingMember.sceneNumbers || []).includes(scene.scene_no)) : -1
+  const briefingCurrentProps = briefingMember ? currentProps.filter((item) => briefingMembers.some((member) => assignmentMatches(item.inBy, member) || assignmentMatches(item.outBy, member))) : currentProps
+  const briefingNextProps = briefingMember ? nextProps.filter((item) => briefingMembers.some((member) => assignmentMatches(item.inBy, member))) : nextProps
+  const briefingCurrentCostumes = briefingMember ? currentCostumes.filter((item) => briefingMembers.some((member) => assignmentMatches(item.role, member))) : currentCostumes
+  const briefingNextCostumes = briefingMember ? nextCostumes.filter((item) => briefingMembers.some((member) => assignmentMatches(item.role, member))) : nextCostumes
+  const nextAppearanceIndex = briefingMember ? scenes.findIndex((scene, index) => index > showIndex && briefingMembers.some((member) => (member.sceneNumbers || []).includes(scene.scene_no))) : -1
   const nextAppearance = nextAppearanceIndex >= 0 ? scenes[nextAppearanceIndex] : null
-  const nextAppearanceCostumes = nextAppearance && briefingMember ? parseSceneCostumes(nextAppearance.summary).filter((item) => assignmentMatches(item.role, briefingMember)) : []
-  const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && assignmentMatches(item.inBy, briefingMember)) : []
+  const nextAppearanceCostumes = nextAppearance && briefingMember ? parseSceneCostumes(nextAppearance.summary).filter((item) => briefingMembers.some((member) => assignmentMatches(item.role, member))) : []
+  const nextAppearanceProps = nextAppearance && briefingMember ? propItems.filter((item) => Number(item.sceneNo) === Number(nextAppearance.scene_no) && briefingMembers.some((member) => assignmentMatches(item.inBy, member))) : []
   const upcomingCast = next ? castMembers.filter((member) => (member.sceneNumbers || []).includes(next.scene_no)) : []
   const upcomingReadyCount = next ? upcomingCast.filter((member) => personalReady[`${member.id}-${next.scene_no}`]).length : 0
   const preparationAlerts = [
