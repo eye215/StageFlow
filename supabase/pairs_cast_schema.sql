@@ -105,9 +105,8 @@ create or replace function public.stageflow_can_access_production(target_product
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (
     select 1
-    from public.productions p
-    join public.workspace_members wm on wm.workspace_id = p.workspace_id
-    where p.id = target_production_id and wm.user_id = auth.uid()
+    from public.production_members pm
+    where pm.production_id = target_production_id and pm.user_id = auth.uid()
   );
 $$;
 

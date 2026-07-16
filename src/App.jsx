@@ -381,7 +381,7 @@ export default function App() {
       workspace_id: workspace.id,
       created_by: session.user.id,
       performance_start_date: productionForm.performance_start_date || null,
-    })
+    }).select().single()
     if (error) setNotice(`공연 생성 실패: ${error.message}`)
     else {
       setProductionForm(emptyProduction)
@@ -1992,8 +1992,8 @@ function ProductionTeamPanel({ workspace, production, session, castMembers, invi
   const [selectedRoleId, setSelectedRoleId] = useState(myCast?.id || '')
   useEffect(() => setSelectedRoleId(myCast?.id || ''), [myCast?.id])
   useEffect(() => {
-    supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id).then(({ data }) => setMembers(data || []))
-  }, [workspace.id])
+    supabase.from('production_members').select('user_id, role').eq('production_id', production.id).then(({ data }) => setMembers(data || []))
+  }, [production.id])
   const claimedRoles = castMembers.filter((member) => member.userId)
   const claimed = [...new Map(claimedRoles.map((member) => [member.userId, member])).values()]
   function identity(userId) {
@@ -2022,7 +2022,7 @@ function ProductionDangerPanel({ workspace, production, session, castMembers, cl
 
   async function refresh() {
     const [{ data: memberRows }, { data: requestFile }] = await Promise.all([
-      supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
+      supabase.from('production_members').select('user_id, role').eq('production_id', production.id),
       supabase.storage.from('stageflow-files').download(requestPath),
     ])
     setMembers(memberRows || [])

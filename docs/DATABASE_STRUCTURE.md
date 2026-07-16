@@ -5,7 +5,8 @@
 | 영역 | 현재 저장 위치 | 앱 연결 상태 | 목표 |
 |---|---|---:|---|
 | 로그인 | Supabase Auth `auth.users` | 연결됨 | 유지 |
-| 공연팀 | `workspaces`, `workspace_members` | 연결됨 | 유지 |
+| 공연팀 | `workspaces`, `workspace_members` | 연결됨 | 팀 컨테이너로만 사용 |
+| 공연별 참여자 | `production_members` | 신규 마이그레이션 필요 | 공연 접근·초대 권한 기준 |
 | 공연 | `productions` | 연결됨 | 유지 |
 | 장면 | `scenes` | 연결됨 | 유지 |
 | 배우·배역 | Storage `cast.json` | 연결됨 | 관계형 테이블로 이전 |
@@ -20,9 +21,11 @@
 
 ```mermaid
 flowchart TD
-  U["auth.users<br/>로그인 사용자"] --> WM["workspace_members<br/>팀 소속·권한"]
+  U["auth.users<br/>로그인 사용자"] --> WM["workspace_members<br/>팀 컨테이너 소속"]
   W["workspaces<br/>공연팀"] --> WM
   W --> P["productions<br/>공연"]
+  U --> PM["production_members<br/>공연별 참여·권한"]
+  P --> PM
   P --> S["scenes<br/>장면"]
   P --> I["workspace_invites<br/>초대 링크"]
   P --> C["Storage cast.json<br/>배우·배역·등장 장면"]
@@ -51,7 +54,18 @@ flowchart TD
 - `user_id` → `auth.users.id`
 - `role`: 팀 권한
 
-한 사용자가 여러 공연팀에 참여할 수 있다.
+한 사용자가 여러 공연팀에 참여할 수 있다. 이 테이블만으로는 공연 접근 권한을 주지 않으며, 앱에서 소속 작업공간을 찾기 위한 컨테이너 관계로 사용한다.
+
+#### `production_members`
+
+사용자가 실제로 접근할 수 있는 공연을 연결한다.
+
+- `production_id` → `productions.id`
+- `user_id` → `auth.users.id`
+- `role`: `owner`, `editor`, `member`
+- `invited_by`, `joined_at`
+
+초대 링크는 반드시 하나의 `production_id`를 가지며, 참가해도 다른 공연의 `production_members`에는 추가되지 않는다. 공연 목록·장면·자료실·팀원 목록·삭제 승인은 모두 이 테이블을 기준으로 제한한다.
 
 #### `productions`
 
@@ -237,7 +251,8 @@ erDiagram
 
 ## 6. 이전 순서
 
-1. `pairs_cast_schema.sql`을 Supabase에서 실행
+1. `production_scoped_access.sql`을 Supabase에서 실행
+2. `pairs_cast_schema.sql`을 Supabase에서 실행
 2. 앱에 신규 테이블 읽기 기능 추가
 3. `cast.json` → people·roles·assignments 변환
 4. 배우 화면에서 기존 JSON과 신규 DB 결과 비교
