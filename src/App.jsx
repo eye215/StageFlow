@@ -388,10 +388,61 @@ export default function App() {
   }
 
   async function deleteProduction(id) {
-    if (!window.confirm('이 공연과 연결된 데이터를 삭제할까요?')) return
+    if (!window.confirm('이 공연 전체를 삭제할까요? 이 작업은 되돌릴 수 없어요.')) return false
+    setBusy(true)
+    const prefix = `${workspace.id}/${id}`
+    const paths = await listStorageFilesRecursive(prefix)
+    if (paths.length) {
+      const { error: storageError } = await supabase.storage.from('stageflow-files').remove(paths)
+      if (storageError) { setBusy(false); setNotice(`공연 파일 삭제 실패: ${storageError.message}`); return false }
+    }
     const { error } = await supabase.from('productions').delete().eq('id', id)
-    if (error) setNotice(`삭제 실패: ${error.message}`)
-    else await loadProductions(workspace.id)
+    setBusy(false)
+    if (error) { setNotice(`삭제 실패: ${error.message}`); return false }
+    if (defaultProductionId === id) {
+      window.localStorage.removeItem('stageflow:default-production')
+      setDefaultProductionId('')
+    }
+    setSelected(null)
+    await loadProductions(workspace.id)
+    setNotice('공연과 연결된 모든 자료를 삭제했어요.')
+    return true
+  }
+
+  async function listStorageFilesRecursive(prefix) {
+    const found = []
+    async function walk(path) {
+      const { data, error } = await supabase.storage.from('stageflow-files').list(path, { limit: 1000 })
+      if (error) throw error
+      for (const item of data || []) {
+        const itemPath = `${path}/${item.name}`
+        if (item.id) found.push(itemPath)
+        else await walk(itemPath)
+      }
+    }
+    await walk(prefix)
+    return found
+  }
+
+  async function clearProductionUploads(productionId) {
+    if (!window.confirm('업로드한 대본·표·음악·자료실 파일을 모두 초기화할까요? 장면·배역·소품 정보는 유지돼요.')) return false
+    setBusy(true)
+    try {
+      const folders = ['imports', 'music', 'materials']
+      const groups = await Promise.all(folders.map((folder) => listStorageFilesRecursive(`${workspace.id}/${productionId}/${folder}`)))
+      const paths = groups.flat()
+      if (paths.length) {
+        const { error } = await supabase.storage.from('stageflow-files').remove(paths)
+        if (error) throw error
+      }
+      setPendingMusic([])
+      setMusicByScene({})
+      setNotice(paths.length ? `업로드 자료 ${paths.length}개를 초기화했어요.` : '초기화할 업로드 자료가 없어요.')
+      return true
+    } catch (error) {
+      setNotice(`자료 초기화 실패: ${error.message}`)
+      return false
+    } finally { setBusy(false) }
   }
 
   async function updateProduction(values) {
@@ -977,6 +1028,7 @@ export default function App() {
       showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
       addPropItem={addPropItem} updatePropItem={updatePropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
       restoreProductionBackup={restoreProductionBackup}
+      session={session} clearProductionUploads={clearProductionUploads} deleteProduction={deleteProduction}
     />
   )
 
@@ -1222,7 +1274,7 @@ function RoleClaimSheet({ members, choose, busy }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -1481,7 +1533,7 @@ function ProductionView(props) {
     <header className="topbar production-topbar"><button className="icon-button" onClick={goBack} aria-label="홈으로"><ChevronLeft /></button><div className="topbar-title"><strong>공연 준비</strong><span>{workspace.name}</span></div><span className="header-spacer" /></header>
     <main className="content production-content">
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
-      <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}><CheckCircle2 /><span>할 일</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>공연</span></button><button className={['props', 'costumes', 'cues', 'rehearsal', 'materials', 'schedule', 'backup', 'import', 'music'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
+      <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'tasks' ? 'active' : ''} onClick={() => setTab('tasks')}><CheckCircle2 /><span>할 일</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>공연</span></button><button className={['props', 'costumes', 'cues', 'rehearsal', 'materials', 'schedule', 'backup', 'import', 'music', 'settings'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
       {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>전체 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 공연모드</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>소품·대도구</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>자료에서 자동정리</strong><span>대본 PDF를 장면·인물·소품으로 분류</span></div><ChevronRight /></button></section>}
       {tab === 'overview' && <PreparationHealth alerts={preparationAlerts} open={setTab} />}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} />}
@@ -1493,6 +1545,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
+      {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
@@ -1594,6 +1647,74 @@ function BackupPanel({ workspace, production, scenes, castMembers, propItems, mu
   return <section className="backup-panel"><div className="backup-hero"><Download /><div><p className="eyebrow">PRODUCTION BACKUP</p><h2>공연 데이터 백업</h2><p>현재 공연의 운영 정보를 한 파일로 보관합니다.</p></div></div><div className="backup-summary"><article><b>{scenes.length}</b><span>장면</span></article><article><b>{castMembers.length}</b><span>배우</span></article><article><b>{propItems.length}</b><span>소품</span></article><article><b>{musicCount}</b><span>음악 연결</span></article></div><article className="backup-info"><FileText /><div><strong>백업에 포함되는 정보</strong><p>공연 기본정보, 장면 요약, 배우·배역·등장 장면, 의상·큐, 소품 IN/OUT, 음악 파일 연결 경로</p><small>음악·PDF 원본 파일 자체는 포함되지 않습니다.</small></div></article><button className="primary backup-button" disabled={busy} onClick={exportBackup}><Download /> JSON 백업 저장</button><label className="restore-backup-button"><Upload /><span><b>백업에서 복원</b><small>현재 장면·배우·소품 데이터가 선택한 백업으로 교체됩니다.</small></span><input type="file" accept="application/json,.json" disabled={busy} onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = '' }} /></label>{status && <p className="notice">{status}</p>}</section>
 }
 
+function ProductionDangerPanel({ workspace, production, session, clearUploads, deleteProduction, busy }) {
+  const [members, setMembers] = useState([])
+  const [request, setRequest] = useState(null)
+  const [status, setStatus] = useState('')
+  const requestPath = `${workspace.id}/${production.id}/data/deletion-request.json`
+  const currentUserId = session.user.id
+
+  async function refresh() {
+    const [{ data: memberRows }, { data: requestFile }] = await Promise.all([
+      supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id),
+      supabase.storage.from('stageflow-files').download(requestPath),
+    ])
+    setMembers(memberRows || [])
+    if (!requestFile) return setRequest(null)
+    try { setRequest(JSON.parse(await requestFile.text())) } catch { setRequest(null) }
+  }
+
+  useEffect(() => {
+    refresh()
+    const timer = window.setInterval(refresh, 5000)
+    return () => window.clearInterval(timer)
+  }, [production.id])
+
+  async function saveRequest(next) {
+    const { error } = await supabase.storage.from('stageflow-files').upload(requestPath, new Blob([JSON.stringify(next, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+    if (error) { setStatus(`삭제 승인 저장 실패: ${error.message}`); return false }
+    setRequest(next)
+    return true
+  }
+
+  async function startDeletionRequest() {
+    if (!window.confirm(`'${production.title}' 공연 전체 삭제 승인을 요청할까요?`)) return
+    const requiredUserIds = members.map((member) => member.user_id)
+    const next = { id: crypto.randomUUID(), productionId: production.id, productionTitle: production.title, createdBy: currentUserId, createdAt: new Date().toISOString(), requiredUserIds, approvals: { [currentUserId]: new Date().toISOString() } }
+    if (!(await saveRequest(next))) return
+    if (requiredUserIds.length <= 1) await deleteProduction(production.id)
+    else setStatus(`삭제 요청을 만들었어요. 참여 팀원 ${requiredUserIds.length}명 전원의 승인이 필요해요.`)
+  }
+
+  async function approveDeletion() {
+    if (!request) return
+    const requiredUserIds = members.map((member) => member.user_id)
+    const next = { ...request, requiredUserIds, approvals: { ...(request.approvals || {}), [currentUserId]: new Date().toISOString() } }
+    if (!(await saveRequest(next))) return
+    const allApproved = requiredUserIds.every((id) => next.approvals[id])
+    if (allApproved) await deleteProduction(production.id)
+    else setStatus('삭제에 승인했어요. 다른 참여 팀원의 승인을 기다리고 있어요.')
+  }
+
+  async function cancelDeletionRequest() {
+    if (!window.confirm('공연 삭제 요청을 취소할까요?')) return
+    const { error } = await supabase.storage.from('stageflow-files').remove([requestPath])
+    if (error) return setStatus(`요청 취소 실패: ${error.message}`)
+    setRequest(null)
+    setStatus('공연 삭제 요청을 취소했어요.')
+  }
+
+  const requiredIds = request?.requiredUserIds?.length ? request.requiredUserIds : members.map((member) => member.user_id)
+  const approvedCount = requiredIds.filter((id) => request?.approvals?.[id]).length
+  const alreadyApproved = Boolean(request?.approvals?.[currentUserId])
+  return <section className="production-danger-panel">
+    <div className="danger-panel-head"><Settings /><div><p className="eyebrow">PRODUCTION SETTINGS</p><h2>공연 데이터 관리</h2><p>현재 공연에만 적용되며 다른 공연 자료에는 영향을 주지 않아요.</p></div></div>
+    <article className="reset-upload-card"><div><Upload /><span><strong>업로드 자료 초기화</strong><small>대본·표 원본, 음악, 자료실 파일만 삭제합니다.</small></span></div><ul><li>유지: 장면, 배우·배역, 소품, 의상, 큐</li><li>삭제: 자동정리 원본, 음악파일, 자료실 업로드</li></ul><button disabled={busy} onClick={() => clearUploads(production.id)}>업로드 자료 초기화</button></article>
+    <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{id === currentUserId ? '나' : `팀원 ${index + 1}`} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
+    {status && <p className="notice">{status}</p>}
+  </section>
+}
+
 function ProductionMoreSheet({ active, close, choose }) {
   const items = [
     { id: 'props', label: '소품·대도구', description: 'IN/OUT과 준비 상태', icon: <Package /> },
@@ -1604,6 +1725,7 @@ function ProductionMoreSheet({ active, close, choose }) {
     { id: 'schedule', label: '일정', description: '연습·리허설·공연 일정', icon: <CalendarDays /> },
     { id: 'backup', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
     { id: 'import', label: '자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
+    { id: 'settings', label: '공연 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
   ]
   return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close}><X size={18} /></button></div><div className="more-tool-grid">{items.map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section></div>
 }
