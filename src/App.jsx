@@ -548,32 +548,45 @@ export default function App() {
       if (ocrPageNumbers.length) {
         setNotice(`전체 ${ocrPageNumbers.length}쪽 · 저해상도 한국어 OCR 준비 중…`)
         const { createWorker } = await import('tesseract.js')
+        let activeOcrPage = 0
+        let lastProgressStep = -1
         const worker = await createWorker('kor+eng', 1, {
           logger: (message) => {
-            if (message.status === 'recognizing text') setNotice(`OCR 문자 인식 중 · ${Math.round((message.progress || 0) * 100)}%`)
+            if (message.status !== 'recognizing text') return
+            const progressStep = Math.floor((message.progress || 0) * 10)
+            if (progressStep === lastProgressStep) return
+            lastProgressStep = progressStep
+            setNotice(`전체 PDF OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · ${progressStep * 10}%`)
           },
+        })
+        await worker.setParameters({
+          tessedit_pageseg_mode: '6',
+          preserve_interword_spaces: '1',
         })
         try {
           for (let index = 0; index < ocrPageNumbers.length; index += 1) {
             const pageNo = ocrPageNumbers[index]
-            setNotice(`전체 PDF 빠른 OCR · ${index + 1}/${ocrPageNumbers.length}쪽`)
+            activeOcrPage = index + 1
+            lastProgressStep = -1
+            setNotice(`전체 PDF OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · 준비 중`)
             const page = await pdf.getPage(pageNo)
             const baseViewport = page.getViewport({ scale: 1 })
-            // Mobile-first fast OCR: roughly one megapixel per page. This is
-            // about 1/4 of the previous render work while remaining readable
-            // for ordinary Korean scripts and rehearsal tables.
-            const scale = Math.max(0.75, Math.min(1.25, Math.sqrt(1000000 / Math.max(1, baseViewport.width * baseViewport.height))))
+            // Every page is still OCRed, but a ~600k-pixel render keeps mobile
+            // memory and recognition time low enough for long scripts.
+            const scale = Math.max(0.6, Math.min(1, Math.sqrt(600000 / Math.max(1, baseViewport.width * baseViewport.height))))
             const viewport = page.getViewport({ scale })
             const canvas = document.createElement('canvas')
             canvas.width = Math.ceil(viewport.width)
             canvas.height = Math.ceil(viewport.height)
-            const context = canvas.getContext('2d', { alpha: false })
+            const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true })
             await page.render({ canvasContext: context, viewport }).promise
             const result = await worker.recognize(canvas)
             const recognized = String(result.data?.text || '').trim()
             const originalText = pageTexts[pageNo - 1]
             if (recognized.replace(/\s/g, '').length >= 8) {
-              pageTexts[pageNo - 1] = recognized
+              const recognizedLength = recognized.replace(/\s/g, '').length
+              const originalLength = originalText.replace(/\s/g, '').length
+              pageTexts[pageNo - 1] = originalLength > recognizedLength * 1.15 ? originalText : recognized
               ocrPages += 1
               textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
             } else pageTexts[pageNo - 1] = originalText
