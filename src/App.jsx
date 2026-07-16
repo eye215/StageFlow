@@ -1980,7 +1980,7 @@ function ImportSelection({ rows, excluded, existing, toggle, update, selectAll, 
 
 function buildImportAudit(rows) {
   const people = new Set()
-  rows.forEach((row) => [row.main, row.ensemble, row.backstage].filter(Boolean).forEach((value) => String(value).split(/\s*[\/,]\s*/).filter(Boolean).forEach((name) => people.add(normalizeMatch(name)))))
+  rows.forEach((row) => [row.main, row.ensemble, row.backstage].filter(Boolean).forEach((value) => splitRoleEntries(value).forEach((name) => people.add(normalizeMatch(name)))))
   const props = rows.flatMap((row) => row.props || [])
   const numbers = rows.map((row) => Number(row.number)).filter(Boolean)
   const duplicateCount = numbers.length - new Set(numbers).size
@@ -2952,7 +2952,12 @@ function parseStructuredProductionTable(source) {
       const actor = clean(cells[columns.actor])
       const role = clean(cells[columns.role])
       const refs = clean(cells[columns.sceneRefs]).split(/\s*[,/·|]\s*|\s+(?=\d)/).filter(Boolean)
-      refs.forEach((ref) => pendingCastLinks.push({ ref, actor, role }))
+      const actors = splitRoleEntries(actor.replaceAll('·', ',').replaceAll('&', ','))
+      const roles = splitRoleEntries(role.replaceAll('·', ',').replaceAll('&', ','))
+      const pairCount = Math.max(actors.length, roles.length, 1)
+      refs.forEach((ref) => {
+        for (let index = 0; index < pairCount; index += 1) pendingCastLinks.push({ ref, actor: actors.length === 1 ? actors[0] : actors[index] || '', role: roles.length === 1 ? roles[0] : roles[index] || '' })
+      })
       continue
     }
     let lead = sceneLead(cells, columns)
