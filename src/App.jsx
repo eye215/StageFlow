@@ -405,8 +405,21 @@ export default function App() {
     const { error } = await supabase.from('scenes').insert(rows)
     if (error) setNotice(`장면 저장 실패: ${error.message}`)
     else {
+      const nextCast = mergeCastFromScenes(castMembers, rows)
+      const importedProps = importRows.flatMap((row) => (row.props || []).map((item) => ({
+        id: crypto.randomUUID(),
+        kind: item.kind === '대도구' ? '대도구' : '소품',
+        name: String(item.name || '').trim(),
+        sceneNo: Number(row.number),
+        inBy: String(item.inBy || '').trim(),
+        outBy: String(item.outBy || '').trim(),
+        note: String(item.note || '').trim(),
+        ready: false,
+      }))).filter((item) => item.name && !propItems.some((value) => normalizeMatch(value.name) === normalizeMatch(item.name) && Number(value.sceneNo) === item.sceneNo))
+      await persistCastData(nextCast)
+      if (importedProps.length) await persistPropData([...propItems, ...importedProps])
       await loadScenes(selected.id)
-      setNotice(`${rows.length}개 장면을 공연에 저장했어요.`)
+      setNotice(`${rows.length}개 장면과 배역 ${nextCast.length}명, 소품 ${importedProps.length}개, 대본 큐를 자동 연결했어요.`)
       setProductionTab('scenes')
     }
     setBusy(false)
@@ -436,17 +449,64 @@ export default function App() {
     if (!matched.length) return setNotice('업로드할 파일의 넘버를 하나 이상 선택해주세요.')
     setUploadingMusic(true)
     let uploaded = 0
+    const uploadedItems = []
     for (const item of matched) {
       const safeName = safeStorageFileName(item.file.name)
       const path = `${workspace.id}/${selected.id}/music/${item.sceneNo}/${safeName}`
       const { error } = await supabase.storage.from('stageflow-files').upload(path, item.file, { contentType: item.file.type || 'audio/mpeg' })
-      if (!error) uploaded += 1
+      if (!error) {
+        uploaded += 1
+        uploadedItems.push(item)
+      }
       else setNotice(`음악 업로드 실패: ${error.message}`)
     }
     setUploadingMusic(false)
     setPendingMusic([])
+    if (uploadedItems.length) await linkUploadedMusicCues(uploadedItems)
     await loadMusic(selected.id)
-    if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장했어요.`)
+    if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장하고 음향 큐까지 연결했어요.`)
+  }
+
+  async function linkUploadedMusicCues(items) {
+    const grouped = items.reduce((result, item) => {
+      const key = Number(item.sceneNo)
+      if (!result[key]) result[key] = []
+      result[key].push(item.file.name)
+      return result
+    }, {})
+    for (const scene of scenes) {
+      const filenames = grouped[Number(scene.scene_no)] || []
+      if (!filenames.length) continue
+      const cues = filenames.map((filename) => ({
+        type: '음향',
+        label: `${stripFileExtension(filename)} 재생`,
+        trigger: `${scene.title} 시작`,
+      }))
+      const summary = appendUniqueCueLines(scene.summary, cues)
+      if (summary !== String(scene.summary || '')) {
+        await supabase.from('scenes').update({ summary }).eq('id', scene.id)
+      }
+    }
+    await loadScenes(selected.id)
+  }
+
+  async function autoLinkProductionCues() {
+    if (!scenes.length) return setNotice('큐를 연결할 장면이 없어요.')
+    setBusy(true)
+    let added = 0
+    for (const scene of scenes) {
+      const generated = buildAutoCuesForScene(scene, musicByScene[scene.scene_no] || [], castMembers)
+      const before = parseSceneCues(scene.summary).length
+      const summary = appendUniqueCueLines(scene.summary, generated)
+      const after = parseSceneCues(summary).length
+      if (summary !== String(scene.summary || '')) {
+        const { error } = await supabase.from('scenes').update({ summary }).eq('id', scene.id)
+        if (!error) added += Math.max(0, after - before)
+      }
+    }
+    await loadScenes(selected.id)
+    setBusy(false)
+    setNotice(added ? `${added}개 큐를 대본·음악·배역에서 찾아 장면에 자동 연결했어요.` : '새로 연결할 큐가 없어요. 기존 연결을 유지했어요.')
   }
 
   async function loadMusic(productionId) {
@@ -1065,7 +1125,7 @@ function ProductionView(props) {
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
-      {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} />}
+      {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
       {tab === 'rehearsal' && <RehearsalPanel workspace={workspace} production={production} scenes={scenes} />}
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} />}
@@ -1388,7 +1448,7 @@ function PropCard({ item, scenes, sceneTitle, update, remove, toggleReady, busy 
   return <article className={item.ready ? 'prop-card ready' : 'prop-card'}><button className="ready-toggle" onClick={() => toggleReady(item.id)} aria-label="준비 상태 변경"><CheckCircle2 /></button><div className="prop-copy"><div><span className={`prop-kind ${item.kind === '대도구' ? 'set-piece' : ''}`}>{item.kind}</span>{item.sceneNo && <span className="prop-scene">{item.sceneNo}. {sceneTitle(item.sceneNo)}</span>}</div><h3>{item.name}</h3><div className="prop-assignees"><span><b>IN</b>{item.inBy || '미정'}</span><span><b>OUT</b>{item.outBy || '미정'}</span></div>{item.note && <p>{item.note}</p>}</div><button className="icon-button" onClick={() => setEditing(true)} aria-label="소품 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="소품 삭제"><Trash2 size={17} /></button></article>
 }
 
-function CuePanel({ scenes, completed, toggle, updateScene }) {
+function CuePanel({ scenes, completed, toggle, updateScene, autoLink, busy }) {
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ sceneNo: '', type: '조명', label: '', trigger: '' })
   const groups = scenes.map((scene) => ({ scene, cues: parseSceneCues(scene.summary) })).filter((group) => group.cues.length)
@@ -1417,7 +1477,7 @@ function CuePanel({ scenes, completed, toggle, updateScene }) {
     }).join('\n').trim()
     if (removed) await updateScene(scene.id, { ...scene, summary })
   }
-  return <section className="cue-panel"><div className="section-heading"><div><p className="eyebrow">CUE SHEET</p><h2>큐시트</h2></div><div className="cue-heading-actions"><span className="cue-progress">{done}/{total} 완료</span><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={17} /> 큐</button></div></div>{showForm && <form className="panel cue-form" onSubmit={addCue}><div className="two-col"><select required value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 선택</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>조명</option><option>음향</option><option>영상</option><option>무대</option><option>마이크</option></select></div><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="큐 내용 (예: 음악 시작)" /><input value={form.trigger} onChange={(event) => setForm({ ...form, trigger: event.target.value })} placeholder="큐사인 (선택)" /><button className="primary">큐 추가</button></form>}{!groups.length ? <Empty icon={<ListChecks />} title="등록된 큐가 없어요" description="위의 큐 추가 버튼을 눌러 첫 큐를 등록하세요." action={() => setShowForm(true)} /> : <div className="cue-groups">{groups.map(({ scene, cues }) => <article key={scene.id}><div className="cue-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{cues.length}개 큐</small></div></div><CueList cues={cues} sceneNo={scene.scene_no} completed={completed} toggle={toggle} remove={(cue) => removeCue(scene, cue)} /></article>)}</div>}</section>
+  return <section className="cue-panel"><div className="section-heading"><div><p className="eyebrow">CUE SHEET</p><h2>큐시트</h2></div><div className="cue-heading-actions"><span className="cue-progress">{done}/{total} 완료</span><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={17} /> 큐</button></div></div><button className="cue-auto-link" disabled={busy || !scenes.length} onClick={autoLink}><WandSparkles /><span><b>{busy ? '큐 연결 중…' : '대본·음악·배역 자동 연결'}</b><small>음악 GO, 배역 등장 준비, 대본 큐사인을 장면별로 합칩니다.</small></span><ChevronRight /></button>{showForm && <form className="panel cue-form" onSubmit={addCue}><div className="two-col"><select required value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 선택</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>조명</option><option>음향</option><option>영상</option><option>무대</option><option>마이크</option></select></div><input required value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} placeholder="큐 내용 (예: 음악 시작)" /><input value={form.trigger} onChange={(event) => setForm({ ...form, trigger: event.target.value })} placeholder="큐사인 (선택)" /><button className="primary">큐 추가</button></form>}{!groups.length ? <Empty icon={<ListChecks />} title="등록된 큐가 없어요" description="자동 연결을 실행하거나 첫 큐를 직접 등록하세요." action={autoLink} /> : <div className="cue-groups">{groups.map(({ scene, cues }) => <article key={scene.id}><div className="cue-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{cues.length}개 큐</small></div></div><CueList cues={cues} sceneNo={scene.scene_no} completed={completed} toggle={toggle} remove={(cue) => removeCue(scene, cue)} /></article>)}</div>}</section>
 }
 
 function CueList({ cues, sceneNo, completed, toggle, remove, compact = false }) {
@@ -1431,6 +1491,46 @@ function parseSceneCues(summary = '') {
     const parts = match[2].split(/\s*·\s*큐사인\s*/)
     return { type: match[1], label: parts[0].trim(), trigger: parts[1]?.trim() || '', rawLine: line.trim() }
   }).filter(Boolean)
+}
+
+function stripFileExtension(value = '') {
+  return cleanStoredFileName(value).replace(/\.[A-Za-z0-9]{1,8}$/i, '').trim()
+}
+
+function cueIdentity(cue) {
+  return normalizeMatch(`${cue.type || '무대'} ${cue.label || ''} ${cue.trigger || ''}`)
+}
+
+function appendUniqueCueLines(summary = '', cues = []) {
+  const text = String(summary || '').trim()
+  const existing = new Set(parseSceneCues(text).map(cueIdentity))
+  const additions = []
+  cues.forEach((cue) => {
+    if (!cue?.label) return
+    const normalized = { type: String(cue.type || '무대').trim(), label: String(cue.label).trim(), trigger: String(cue.trigger || '').trim() }
+    const key = cueIdentity(normalized)
+    if (!key || existing.has(key)) return
+    existing.add(key)
+    additions.push(`- [${normalized.type}] ${normalized.label}${normalized.trigger ? ` · 큐사인 ${normalized.trigger}` : ''}`)
+  })
+  if (!additions.length) return text
+  return [text, text.includes('큐:') ? '' : '큐:', ...additions].filter(Boolean).join('\n')
+}
+
+function buildAutoCuesForScene(scene, musicFiles, castMembers) {
+  const cues = []
+  musicFiles.forEach((file) => cues.push({ type: '음향', label: `${stripFileExtension(file.name)} 재생`, trigger: `${scene.title} 시작` }))
+  castMembers.filter((member) => (member.sceneNumbers || []).some((value) => Number(value) === Number(scene.scene_no))).forEach((member) => {
+    cues.push({ type: '무대', label: `${member.roleName || member.name} 등장 준비`, trigger: `${scene.title} 진입 전` })
+  })
+  String(scene.summary || '').split('\n').forEach((rawLine) => {
+    const line = rawLine.trim()
+    const trigger = line.match(/큐사인\s*[:：]?\s*(.+)$/i)?.[1]?.trim()
+    if (trigger && !/^[-·\s]*$/.test(trigger)) cues.push({ type: '무대', label: `${trigger} 실행`, trigger })
+    const music = line.match(/^(?:진도\s*:\s*)?음악\s*[:：]?\s*([^·|]+)$/i)?.[1]?.trim()
+    if (music && !/^(O|X|없음|미정|-)$/i.test(music)) cues.push({ type: '음향', label: `${music} 재생`, trigger: `${scene.title} 시작` })
+  })
+  return cues
 }
 
 function parseSceneCostumes(summary = '') {
