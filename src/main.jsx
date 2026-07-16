@@ -9,6 +9,7 @@ import './share-deletion.css'
 import './team-panel.css'
 import './role-switch.css'
 import './task-filter.css'
+import './home-task-scope.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
