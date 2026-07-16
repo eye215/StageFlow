@@ -1,0 +1,20 @@
+.merge-import-duplicates {
+  width: 100%;
+  margin-top: 12px;
+  padding: 13px 14px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid rgba(245, 158, 11, .3);
+  border-radius: 14px;
+  background: rgba(245, 158, 11, .08);
+  color: inherit;
+  text-align: left;
+}
+
+.merge-import-duplicates > svg:first-child { color: #f59e0b; }
+.merge-import-duplicates span { display: grid; gap: 3px; }
+.merge-import-duplicates b { font-size: 14px; }
+.merge-import-duplicates small { color: var(--muted); line-height: 1.35; }
+.merge-import-duplicates:active { transform: scale(.985); }

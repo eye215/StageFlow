@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
+  Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
   MoreHorizontal, Music, Package, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
@@ -1935,13 +1935,18 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
   const toggleImportRow = (number) => setExcludedRows((value) => value.includes(Number(number)) ? value.filter((item) => item !== Number(number)) : [...value, Number(number)])
   const updateImportRow = (index, patch) => setRows((value) => value.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
   const audit = useMemo(() => buildImportAudit(rows), [rows])
+  const mergeDuplicateRows = () => {
+    const merged = mergeDuplicateImportRows(rows)
+    setRows(merged)
+    setExcludedRows([])
+  }
   const existingImportNumbers = useMemo(() => new Set(scenes.map((scene) => Number(scene.scene_no))), [scenes])
   return <section className="import-panel">
     {pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}<p>추출한 표는 탭으로 구분되어 원문에 들어가며, 빠른 표정리가 행·열 헤더를 기준으로 장면·배역·소품을 연결합니다.</p></section>}
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
     {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}
-    {!!rows.length && <ImportAudit audit={audit} />}
+    {!!rows.length && <ImportAudit audit={audit} mergeDuplicates={mergeDuplicateRows} />}
     {!!rows.length && <ImportCastPreview rows={rows} />}
     {!!rows.length && <ImportPlan rows={rows} excluded={excludedRows} existing={existingImportNumbers} mode={mode} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} existing={existingImportNumbers} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
@@ -1954,8 +1959,47 @@ function ImportPanel({ workspace, production, scenes, text, setText, rows, setRo
     <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
 }
-function ImportAudit({ audit }) {
-  return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
+function ImportAudit({ audit, mergeDuplicates }) {
+  return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}{audit.duplicateCount > 0 && <button className="merge-import-duplicates" onClick={mergeDuplicates}><Combine size={17} /><span><b>같은 장면 번호 자동 병합</b><small>{audit.duplicateCount}개 중복 행의 배역·소품·의상·큐를 하나로 합칩니다</small></span><ChevronRight size={17} /></button>}</section>
+}
+
+function mergeDuplicateImportRows(rows) {
+  const byNumber = new Map()
+  const mergeText = (left, right) => {
+    const values = [left, right].flatMap((value) => splitRoleEntries(value)).filter(Boolean)
+    return [...new Map(values.map((value) => [normalizeMatch(value), value])).values()].join(' / ')
+  }
+  const mergeItems = (left = [], right = []) => {
+    const unique = new Map()
+    ;[...left, ...right].forEach((item) => {
+      const value = typeof item === 'string' ? item : item || {}
+      const key = typeof value === 'string'
+        ? normalizeMatch(value)
+        : [value.kind, value.name, value.inBy, value.outBy, value.note].map(normalizeMatch).join('::')
+      if (key && !unique.has(key)) unique.set(key, value)
+    })
+    return [...unique.values()]
+  }
+  rows.forEach((row) => {
+    const number = Number(row.number)
+    if (!byNumber.has(number)) {
+      byNumber.set(number, { ...row, props: [...(row.props || [])], costumes: [...(row.costumes || [])], cues: [...(row.cues || [])] })
+      return
+    }
+    const current = byNumber.get(number)
+    byNumber.set(number, {
+      ...current,
+      title: String(current.title || '').trim() || row.title,
+      main: mergeText(current.main, row.main),
+      ensemble: mergeText(current.ensemble, row.ensemble),
+      backstage: mergeText(current.backstage, row.backstage),
+      status: mergeText(current.status, row.status),
+      props: mergeItems(current.props, row.props),
+      costumes: mergeItems(current.costumes, row.costumes),
+      cues: mergeItems(current.cues, row.cues),
+    })
+  })
+  return [...byNumber.values()].sort((a, b) => Number(a.number) - Number(b.number))
 }
 
 function buildImportedCastAssignments(rows) {
@@ -2024,7 +2068,7 @@ function buildImportAudit(rows) {
   if (missingTitles) warnings.push(`제목이 없는 장면이 ${missingTitles}개 있어요.`)
   if (emptyCast) warnings.push(`등장인물이 비어 있는 장면이 ${emptyCast}개 있어요.`)
   if (unassignedProps) warnings.push(`IN 또는 OUT 담당자가 비어 있는 소품이 ${unassignedProps}개 있어요.`)
-  return { scenes: rows.length, people: [...people].filter(Boolean).length, props: props.length, cues: rows.reduce((sum, row) => sum + (row.cues?.length || 0), 0), warnings }
+  return { scenes: rows.length, people: [...people].filter(Boolean).length, props: props.length, cues: rows.reduce((sum, row) => sum + (row.cues?.length || 0), 0), duplicateCount, warnings }
 }
 
 function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, loading }) {
