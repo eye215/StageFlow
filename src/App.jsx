@@ -83,6 +83,7 @@ export default function App() {
     loadScenes(selected.id)
     loadCastData(selected.id)
     loadPropData(selected.id)
+    loadMusic(selected.id)
     setProductionTab('overview')
     setShowIndex(0)
   }, [selected])
@@ -515,9 +516,13 @@ export default function App() {
     if (await persistPropData([...propItems, ...extracted])) setNotice(`${extracted.length}개 항목을 장면에서 가져왔어요.`)
   }
 
-  const progress = useMemo(() => Math.min(100, scenes.length * 10), [scenes])
+  const selectedMusicCount = useMemo(() => Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0), [musicByScene])
+  const progress = useMemo(() => calculateReadiness(scenes, selectedMusicCount, {
+    total: propItems.length,
+    ready: propItems.filter((item) => item.ready).length,
+  }), [scenes, selectedMusicCount, propItems])
   const defaultProduction = useMemo(() => productions.find((item) => item.id === defaultProductionId) || productions[0] || null, [productions, defaultProductionId])
-  const homeProgress = useMemo(() => Math.min(100, homeScenes.length * 10), [homeScenes])
+  const homeProgress = useMemo(() => calculateReadiness(homeScenes, homeMusicCount, homePropStats), [homeScenes, homeMusicCount, homePropStats])
   const homeDaysLeft = useMemo(() => {
     if (!defaultProduction?.performance_start_date) return null
     return Math.ceil((new Date(`${defaultProduction.performance_start_date}T00:00:00`) - new Date()) / 86400000)
@@ -646,6 +651,16 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
 
 function extractAttention(summary = '') {
   return summary.split('\n').find((line) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(line))?.replace(/^현황:\s*/, '') || '확인 필요'
+}
+
+function calculateReadiness(scenes, musicCount, propStats) {
+  if (!scenes.length) return 0
+  const attentionCount = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).length
+  const sceneScore = 40
+  const musicScore = Math.min(1, musicCount / scenes.length) * 25
+  const propScore = propStats.total ? (propStats.ready / propStats.total) * 25 : 0
+  const reviewScore = (1 - Math.min(1, attentionCount / scenes.length)) * 10
+  return Math.round(sceneScore + musicScore + propScore + reviewScore)
 }
 
 function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, busy }) {
