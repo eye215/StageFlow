@@ -1,0 +1,87 @@
+.scene-list {
+  gap: 8px;
+}
+
+.scene-hub-card {
+  border-color: rgba(148, 163, 184, 0.1);
+  border-radius: 17px;
+  background: linear-gradient(145deg, rgba(18, 27, 47, 0.96), rgba(12, 19, 34, 0.96));
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.13);
+}
+
+.scene-hub-card.open {
+  border-color: rgba(129, 140, 248, 0.28);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+}
+
+.scene-hub-head {
+  min-height: 78px;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.scene-hub-number {
+  width: 40px;
+  height: 48px;
+  border: 1px solid rgba(165, 180, 252, 0.12);
+  border-radius: 13px;
+  background: linear-gradient(155deg, rgba(99, 102, 241, 0.24), rgba(30, 41, 59, 0.32));
+  color: #c7d2fe;
+  font-size: 15px;
+}
+
+.scene-hub-head small {
+  color: #7c8caa;
+  font-size: 8px;
+  letter-spacing: 0.09em;
+}
+
+.scene-hub-head h3 {
+  margin: 3px 0 5px;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-hub-head > svg {
+  width: 17px;
+  color: #4d5c75;
+}
+
+.scene-hub-meta {
+  display: flex;
+  gap: 10px;
+}
+
+.scene-hub-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #8190a9;
+  font-size: 9px;
+}
+
+.scene-hub-meta span svg {
+  width: 11px;
+  height: 11px;
+  color: #818cf8;
+}
+
+.scene-hub-empty-meta {
+  color: #56657d !important;
+  font-size: 9px !important;
+}
+
+.scene-hub-body {
+  gap: 10px;
+  padding: 0 11px 11px;
+}
+
+@media (max-width: 480px) {
+  .scene-hub-head { min-height: 74px; }
+  .scene-hub-number { width: 38px; height: 44px; }
+}
