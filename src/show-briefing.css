@@ -73,3 +73,6 @@
 .show-control-toggle.controller { border-color: rgba(251,191,36,.28); background: rgba(120,53,15,.14); }
 .show-control-toggle.controller > svg,.show-control-toggle.controller > strong { color: #fbbf24; }
 .show-control-toggle.controller > strong { background: rgba(245,158,11,.12); }
+.follow-lock { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 7px 0 0; color: #64748b; font-size: 8px; }
+.follow-lock svg { width: 13px; }
+.show-mode .show-actions button:disabled { cursor: not-allowed; filter: saturate(.35); opacity: .32; }

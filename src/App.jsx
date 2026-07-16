@@ -756,6 +756,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <button className={showController ? 'show-control-toggle controller' : 'show-control-toggle'} onClick={toggleShowController}><Clapperboard /><span><b>{showController ? '진행 제어 중' : '무대감독 장면 따라가기'}</b><small>{showController ? '이 기기의 이전·GO 이동을 팀에 전송합니다.' : '팀에서 공유된 현재 장면으로 자동 이동합니다.'}</small></span><strong>{showController ? 'CONTROL' : 'FOLLOW'}</strong></button>}
+      {tab === 'show' && !showController && <p className="follow-lock"><Clapperboard />FOLLOW 모드 · 장면 이동은 무대감독 기기에서 제어합니다.</p>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
@@ -938,6 +939,12 @@ function ProductionView(props) {
       if (!error) setShowCursorSyncedAt(new Date())
     })
   }, [showIndex, showController, showCursorLoaded, showCursorPath, tab, scenes])
+  useEffect(() => {
+    if (tab !== 'show') return undefined
+    const controls = [...document.querySelectorAll('.show-mode .show-actions button')]
+    controls.forEach((button, index) => { button.disabled = !showController || (index === 0 ? showIndex === 0 : showIndex >= scenes.length - 1) })
+    return undefined
+  }, [tab, showController, showIndex, scenes.length])
   const currentCast = current ? castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentProps = current ? propItems.filter((item) => Number(item.sceneNo) === Number(current.scene_no)) : []
   const currentMusic = current ? (musicByScene[current.scene_no] || []) : []
