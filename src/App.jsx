@@ -61,6 +61,33 @@ async function loadPdfRuntime() {
   return pdfRuntimePromise
 }
 
+function extractPdfPageText(content) {
+  const items = (content.items || []).filter((item) => typeof item.str === 'string' && item.str.trim())
+  if (!items.length) return ''
+  const lines = []
+  for (const item of items) {
+    const x = Number(item.transform?.[4] || 0)
+    const y = Number(item.transform?.[5] || 0)
+    let line = lines.find((candidate) => Math.abs(candidate.y - y) <= 3)
+    if (!line) { line = { y, items: [] }; lines.push(line) }
+    line.items.push({ text: item.str.trim(), x, width: Number(item.width || 0) })
+  }
+  return lines.sort((a, b) => b.y - a.y).map((line) => {
+    const ordered = line.items.sort((a, b) => a.x - b.x)
+    let result = ''
+    let previousEnd = null
+    for (const item of ordered) {
+      if (previousEnd !== null) {
+        const gap = item.x - previousEnd
+        result += gap > 18 ? '\t' : gap > 2 ? ' ' : ''
+      }
+      result += item.text
+      previousEnd = item.x + item.width
+    }
+    return result.trim()
+  }).filter(Boolean).join('\n')
+}
+
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
 const emptyScene = { title: '', act_no: 1, scene_no: 1, summary: '' }
 
@@ -447,9 +474,14 @@ export default function App() {
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
         const page = await pdf.getPage(pageNo)
         const content = await page.getTextContent()
-        pages.push(content.items.map((item) => item.str).join('\t'))
+        const pageText = extractPdfPageText(content)
+        if (pageText) pages.push(`--- PAGE ${pageNo} ---\n${pageText}`)
       }
       const text = pages.join('\n')
+      const characterCount = text.replace(/--- PAGE \d+ ---/g, '').replace(/\s/g, '').length
+      if (characterCount < Math.max(20, pdf.numPages * 4)) {
+        throw new Error('텍스트 레이어가 없는 스캔 이미지 PDF예요. 문자 선택이 가능한 PDF로 다시 저장하거나, 표 내용을 복사해 붙여넣어 주세요.')
+      }
       setImportText(text)
       if (archive) {
         const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
@@ -457,9 +489,12 @@ export default function App() {
       }
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
-      setNotice(parsed.length ? `${parsed.length}개 장면을 찾았어요.` : 'PDF에서 표를 찾지 못했어요. 텍스트를 붙여넣어 주세요.')
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.` : `PDF ${pdf.numPages}쪽에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.`)
     } catch (error) {
-      setNotice(`PDF 읽기 실패: ${error.message}`)
+      const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
+        ? '암호가 설정된 PDF는 읽을 수 없어요. 암호를 해제한 복사본을 올려주세요.'
+        : error.message
+      setNotice(`PDF 읽기 실패: ${message}`)
     }
     setImportingPdf(false)
   }
