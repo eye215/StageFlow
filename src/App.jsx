@@ -1835,12 +1835,14 @@ function ProductionTeamPanel({ workspace, production, session, castMembers, invi
   useEffect(() => {
     supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id).then(({ data }) => setMembers(data || []))
   }, [workspace.id])
-  const claimed = castMembers.filter((member) => member.userId)
+  const claimedRoles = castMembers.filter((member) => member.userId)
+  const claimed = [...new Map(claimedRoles.map((member) => [member.userId, member])).values()]
   function identity(userId) {
-    const roles = claimed.filter((member) => member.userId === userId)
+    const roles = claimedRoles.filter((member) => member.userId === userId)
     return roles.length ? { name: roles[0].name, role: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · ') } : { name: userId === session.user.id ? '나' : '참여 팀원', role: '배역 미선택' }
   }
-  const availableRoles = castMembers.filter((member) => !member.userId || member.userId === session.user.id).reduce((groups, member) => {
+  const unavailableActors = new Set(castMembers.filter((member) => member.userId && member.userId !== session.user.id).map((member) => canonicalActor(member.name)))
+  const availableRoles = castMembers.filter((member) => !unavailableActors.has(canonicalActor(member.name)) && (!member.userId || member.userId === session.user.id)).reduce((groups, member) => {
     const key = canonicalActor(member.name) || member.id
     const group = groups.find((item) => item.key === key)
     if (group) group.roles.push(member.roleName || '배역 미정')
