@@ -2199,7 +2199,7 @@ function SchedulePanel({ workspace, production, scenes, castMembers, propItems, 
   const [events, setEvents] = useState([])
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState('')
-  const [form, setForm] = useState({ title: '', type: '연습', date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [] })
+  const [form, setForm] = useState({ title: '', type: '연습', date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [], reminderMinutes: 60 })
   const [status, setStatus] = useState('')
   const path = `${workspace.id}/${production.id}/data/schedule.json`
 
@@ -2233,14 +2233,14 @@ function SchedulePanel({ workspace, production, scenes, castMembers, propItems, 
       ? events.map((item) => item.id === editingId ? { ...item, ...clean, updatedAt: new Date().toISOString() } : item)
       : [...events, { id: crypto.randomUUID(), ...clean, createdAt: new Date().toISOString() }]
     if (await persist(next, editingId ? '일정을 수정했어요.' : '일정을 추가했어요.')) {
-      setForm({ title: '', type: form.type, date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [] })
+      setForm({ title: '', type: form.type, date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [], reminderMinutes: 60 })
       setEditingId('')
       setShowForm(false)
     }
   }
 
   function editEvent(item) {
-    setForm({ title: item.title || '', type: item.type || '연습', date: item.date || '', time: item.time || '', endTime: item.endTime || '', location: item.location || '', note: item.note || '', sceneNumbers: Array.isArray(item.sceneNumbers) ? item.sceneNumbers : [] })
+    setForm({ title: item.title || '', type: item.type || '연습', date: item.date || '', time: item.time || '', endTime: item.endTime || '', location: item.location || '', note: item.note || '', sceneNumbers: Array.isArray(item.sceneNumbers) ? item.sceneNumbers : [], reminderMinutes: item.reminderMinutes ?? 60 })
     setEditingId(item.id)
     setShowForm(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -2249,7 +2249,7 @@ function SchedulePanel({ workspace, production, scenes, castMembers, propItems, 
   function closeForm() {
     setEditingId('')
     setShowForm(false)
-    setForm({ title: '', type: form.type, date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [] })
+    setForm({ title: '', type: form.type, date: '', time: '', endTime: '', location: '', note: '', sceneNumbers: [], reminderMinutes: 60 })
   }
 
   async function shareCallSheet(item) {
@@ -2396,7 +2396,9 @@ async function shareCalendarEvent(item) {
     starts = `DTSTART;VALUE=DATE:${compactDate}`
     ends = `DTEND;VALUE=DATE:${nextDate}`
   }
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StageFlow//Production Schedule//KO', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', `UID:${item.id}@stageflow`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`, starts, ends, `SUMMARY:${escapeIcs(`[${item.type}] ${item.title}`)}`, `LOCATION:${escapeIcs(item.location)}`, `DESCRIPTION:${escapeIcs(item.note || 'StageFlow 공연 일정')}`, 'END:VEVENT', 'END:VCALENDAR']
+  const reminderMinutes = item.reminderMinutes ?? 60
+  const alarm = Number(reminderMinutes) > 0 ? ['BEGIN:VALARM', `TRIGGER:-PT${Number(reminderMinutes)}M`, 'ACTION:DISPLAY', `DESCRIPTION:${escapeIcs(`${item.title} 일정이 곧 시작됩니다.`)}`, 'END:VALARM'] : []
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StageFlow//Production Schedule//KO', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT', `UID:${item.id}@stageflow`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')}`, starts, ends, `SUMMARY:${escapeIcs(`[${item.type}] ${item.title}`)}`, `LOCATION:${escapeIcs(item.location)}`, `DESCRIPTION:${escapeIcs(item.note || 'StageFlow 공연 일정')}`, ...alarm, 'END:VEVENT', 'END:VCALENDAR']
   const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' })
   const safeName = item.title.replace(/[^0-9a-z가-힣_-]+/gi, '-') || 'stageflow-event'
   const file = new File([blob], `${item.date}-${safeName}.ics`, { type: 'text/calendar' })
