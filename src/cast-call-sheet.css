@@ -1,0 +1,16 @@
+.cast-view-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 12px; padding: 4px; border: 1px solid rgba(255,255,255,.07); border-radius: 13px; background: rgba(15,23,42,.7); }
+.cast-view-switch button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px; border: 0; border-radius: 9px; background: transparent; color: #64748b; font-size: 11px; font-weight: 800; }
+.cast-view-switch button.active { background: rgba(99,102,241,.17); color: #e0e7ff; }
+.cast-scene-groups { display: grid; gap: 10px; }
+.cast-scene-groups > article { overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 17px; background: rgba(15,23,42,.72); }
+.cast-scene-title { display: flex; align-items: center; gap: 10px; padding: 12px; background: rgba(99,102,241,.08); }
+.cast-scene-title > span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 11px; background: #4338ca; font-weight: 900; }
+.cast-scene-title > div { display: grid; gap: 2px; }
+.cast-scene-title small { color: #94a3b8; font-size: 9px; }
+.cast-call-list { display: grid; }
+.cast-call-list > div { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,.055); }
+.cast-call-list svg { width: 17px; color: #a5b4fc; }
+.cast-call-list > div > span { display: grid; gap: 1px; }
+.cast-call-list b { font-size: 11px; }
+.cast-call-list small { color: #94a3b8; font-size: 9px; }
+.cast-call-list em { padding: 4px 6px; border-radius: 7px; background: rgba(148,163,184,.08); color: #94a3b8; font-size: 8px; font-style: normal; }

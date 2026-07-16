@@ -24,6 +24,7 @@ import './show-briefing.css'
 import './costumes.css'
 import './role-grouping.css'
 import './cast-scenes-ux.css'
+import './cast-call-sheet.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -952,7 +953,11 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
 function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, importFromScenes, busy }) {
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
-  const visible = members.filter((member) => !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''}`).includes(normalizeMatch(query)))
+  const [viewMode, setViewMode] = useState('roles')
+  const visible = members.filter((member) => {
+    const memberScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no} ${scene.title}`).join(' ')
+    return !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
+  })
   const roleGroups = visible.reduce((groups, member) => {
     const role = member.roleName?.trim() || '배역 미정'
     const key = canonicalRole(role) || 'unassigned'
@@ -971,12 +976,22 @@ function CastPanel({ members, scenes, form, setForm, showForm, setShowForm, subm
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST & CHARACTERS</p><h2>배우·배역</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 배우</button></div>
     <section className="cast-summary"><article><strong>{members.length}</strong><span>전체 인원</span></article><article><strong>{members.filter((member) => member.type === '주연').length}</strong><span>주연</span></article><article><strong>{members.filter((member) => member.type === '앙상블').length}</strong><span>앙상블</span></article></section>
+    <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배역별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
     <button className="import-props-button" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles size={18} /><div><strong>장면에서 배우·배역 가져오기</strong><span>대본 자동정리 결과의 메인 배역과 등장 앙상블을 장면별로 연결합니다.</span></div><ChevronRight /></button>
     {!!members.length && <button className="role-regroup-button" onClick={regroupRoles}><Sparkles size={17} /><div><strong>배역 다시 분석</strong><span>괄호·번호·띄어쓰기처럼 표기가 비슷한 배역을 자동으로 묶어요.</span></div><ChevronRight /></button>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
-    {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우·배역 검색" /></label><span>{visible.length}/{members.length}명</span></div>}<div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div>
+    {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
   </section>
+}
+
+function CastSceneGroups({ scenes, members, query }) {
+  const visibleScenes = scenes.filter((scene) => {
+    const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no))
+    const text = `${scene.scene_no} ${scene.title} ${cast.map((member) => `${member.name} ${member.roleName || ''}`).join(' ')}`
+    return cast.length && (!normalizeMatch(query) || normalizeMatch(text).includes(normalizeMatch(query)))
+  })
+  return <div className="cast-scene-groups">{!visibleScenes.length && <Empty icon={<Clapperboard />} title="연결된 등장 장면이 없어요" description="배역별 보기에서 배우의 등장 장면을 선택해주세요." />}{visibleScenes.map((scene) => { const cast = members.filter((member) => (member.sceneNumbers || []).includes(scene.scene_no)); return <article key={scene.id}><div className="cast-scene-title"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>ACT {scene.act_no} · {cast.length}명 등장</small></div></div><div className="cast-call-list">{cast.map((member) => <div key={member.id}><UserRound /><span><b>{member.roleName || '배역 미정'}</b><small>{member.name}</small></span><em>{member.type}</em></div>)}</div></article> })}</div>
 }
 
 function CastRoleGroup({ group, scenes, update, remove, toggleScene, busy, forceOpen }) {
