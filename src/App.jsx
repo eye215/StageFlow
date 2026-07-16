@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
+  AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
   MoreHorizontal, Music, Package, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
@@ -1797,8 +1797,7 @@ function ProductionView(props) {
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button><button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button><button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button><button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>준비/공연</span></button><button className={!['overview', 'scenes', 'cast', 'show'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button></nav>
       <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
-      {tab === 'overview' && <section className="overview-v2"><article className="readiness-card"><div className="readiness-head"><div><span>내 연습 준비도</span><strong>{progress}%</strong></div><button onClick={() => setTab('show')}><Play fill="currentColor" /> 런 연습</button></div><div className="progress"><i style={{ width: `${progress}%` }} /></div><div className="readiness-list"><button onClick={() => setTab('scenes')}><Clapperboard /><span>연습 장면</span><b>{scenes.length}</b><ChevronRight /></button><button onClick={() => setTab('cast')}><Users /><span>배우·배역</span><b>{castMembers.length}</b><ChevronRight /></button><button onClick={() => setTab('props')}><Package /><span>챙길 소품</span><b>{readyProps}/{propItems.length}</b><ChevronRight /></button></div></article><button className="continue-card" onClick={() => setTab('import')}><WandSparkles /><div><strong>대본에서 연습자료 만들기</strong><span>PDF를 장면·배역·넘버·소품으로 자동 정리</span></div><ChevronRight /></button></section>}
-      {tab === 'overview' && <PreparationHealth alerts={preparationAlerts} open={setTab} />}
+      {tab === 'overview' && <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} />}
       {tab === 'tasks' && <TasksPanel workspace={workspace} production={production} castMembers={castMembers} session={session} />}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
       {tab === 'cast' && <CastPanel members={castMembers} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
@@ -1826,6 +1825,40 @@ function ProductionView(props) {
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
   </div>
+}
+
+function ConnectedOverview({ progress, scenes, castMembers, propItems, musicByScene, open }) {
+  const actorGroups = [...castMembers.reduce((map, member) => {
+    const key = canonicalActor(member.name) || member.id
+    if (!map.has(key)) map.set(key, { key, name: member.name || '이름 미정', members: [] })
+    map.get(key).members.push(member)
+    return map
+  }, new Map()).values()]
+  const sceneConnections = scenes.map((scene) => {
+    const cast = castMembers.filter((member) => (member.sceneNumbers || []).some((number) => Number(number) === Number(scene.scene_no)))
+    const props = propItems.filter((item) => Number(item.sceneNo) === Number(scene.scene_no))
+    const costumes = parseSceneCostumes(scene.summary)
+    const music = musicByScene[scene.scene_no] || musicByScene[String(scene.scene_no)] || []
+    return { scene, cast, props, costumes, music }
+  })
+  const issues = [
+    { key: 'cast', label: '장면 미연결 배역', count: castMembers.filter((member) => !(member.sceneNumbers || []).length).length, tab: 'cast' },
+    { key: 'scenes', label: '배우 미연결 장면', count: sceneConnections.filter((item) => !item.cast.length).length, tab: 'scenes' },
+    { key: 'props', label: '장면 미지정 소품', count: propItems.filter((item) => !item.sceneNo).length, tab: 'props' },
+    { key: 'music', label: '음악 미연결 장면', count: sceneConnections.filter((item) => !item.music.length).length, tab: 'music' },
+  ].filter((item) => item.count)
+  return <section className="connected-overview">
+    <article className="connected-hero"><div><span>CONNECTED PRODUCTION</span><h2>공연 연결 현황</h2><p>배우와 배역을 기준으로 장면·넘버·의상·소품을 한 번에 확인해요.</p></div><strong>{progress}%</strong><div className="progress"><i style={{ width: `${progress}%` }} /></div><button onClick={() => open('show')}><Play fill="currentColor" /> 준비/공연 시작</button></article>
+    <div className="connected-stats"><button onClick={() => open('cast')}><Users /><b>{actorGroups.length}</b><span>배우</span></button><button onClick={() => open('scenes')}><Clapperboard /><b>{scenes.length}</b><span>장면</span></button><button onClick={() => open('music')}><FileAudio /><b>{Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)}</b><span>음악</span></button><button onClick={() => open('props')}><Package /><b>{propItems.length}</b><span>소품</span></button></div>
+    <section className="connection-issues"><div className="connected-title"><div><span>LINK CHECK</span><h2>연결 확인</h2></div><button onClick={() => open('import')}><WandSparkles /> 자료 자동정리</button></div>{issues.length ? <div>{issues.map((issue) => <button key={issue.key} onClick={() => open(issue.tab)}><AlertTriangle /><span>{issue.label}</span><b>{issue.count}</b><ChevronRight /></button>)}</div> : <p><CheckCircle2 /> 모든 핵심 자료가 장면에 연결되어 있어요.</p>}</section>
+    <section className="actor-connections"><div className="connected-title"><div><span>ACTOR CONNECTIONS</span><h2>배우별 연결 정보</h2></div><button onClick={() => open('cast')}>전체 배우</button></div><div>{actorGroups.slice(0, 6).map((group) => {
+      const sceneNumbers = [...new Set(group.members.flatMap((member) => member.sceneNumbers || []))]
+      const actorProps = propItems.filter((item) => group.members.some((member) => assignmentMatches(item.inBy, member) || assignmentMatches(item.outBy, member)))
+      const actorCostumes = scenes.flatMap((scene) => parseSceneCostumes(scene.summary)).filter((item) => group.members.some((member) => assignmentMatches(item.role, member)))
+      return <button key={group.key} onClick={() => open('cast')}><span className="connected-avatar"><UserRound /></span><div><h3>{group.name}</h3><p>{group.members.map((member) => [member.roleName, member.subRoleName].filter(Boolean).join(' › ') || '배역 미정').join(' · ')}</p><small><Clapperboard /> {sceneNumbers.length}장면 <Shirt /> {actorCostumes.length}의상 <Package /> {actorProps.length}소품</small></div><ChevronRight /></button>
+    })}</div>{!actorGroups.length && <p className="connected-empty">배우를 등록하면 배역과 준비물이 자동으로 연결돼요.</p>}</section>
+    <section className="scene-connections"><div className="connected-title"><div><span>SCENE CONNECTIONS</span><h2>장면별 연결 정보</h2></div><button onClick={() => open('scenes')}>전체 장면</button></div><div>{sceneConnections.slice(0, 8).map(({ scene, cast, props, costumes, music }) => <button key={scene.id} onClick={() => open('scenes')}><span>{scene.scene_no}</span><div><b>{scene.title}</b><small><Users /> {cast.length} <FileAudio /> {music.length} <Shirt /> {costumes.length} <Package /> {props.length}</small></div><ChevronRight /></button>)}</div></section>
+  </section>
 }
 
 function PreparationHealth({ alerts, open }) {
