@@ -899,7 +899,19 @@ export default function App() {
 
   async function consolidateCastDuplicates() {
     const grouped = new Map()
-    for (const member of castMembers) {
+    let splitCount = 0
+    const expandedMembers = castMembers.flatMap((member) => {
+      const roles = splitRoleEntries(member.roleName || '')
+      if (roles.length <= 1) return [member]
+      splitCount += roles.length - 1
+      return roles.map((roleName, index) => ({
+        ...member,
+        id: index === 0 ? member.id : crypto.randomUUID(),
+        roleName,
+        sceneNumbers: [...new Set(member.sceneNumbers || [])],
+      }))
+    })
+    for (const member of expandedMembers) {
       const key = `${canonicalActor(member.name)}::${normalizeMatch(member.roleName || member.name)}`
       if (!grouped.has(key)) { grouped.set(key, { ...member, sceneNumbers: [...new Set(member.sceneNumbers || [])] }); continue }
       const current = grouped.get(key)
@@ -909,13 +921,14 @@ export default function App() {
       if ((member.name || '').trim().length < (current.name || '').trim().length) current.name = member.name.trim()
     }
     const next = [...grouped.values()]
-    const removed = castMembers.length - next.length
-    if (!removed) { setNotice('합칠 중복 배우·배역이 없어요.'); return 0 }
+    const mergedCount = expandedMembers.length - next.length
+    const changes = splitCount + mergedCount
+    if (!changes) { setNotice('정리할 배역 이름이나 중복 배우가 없어요.'); return 0 }
     setBusy(true)
     const saved = await persistCastData(next)
     setBusy(false)
-    if (saved) setNotice(`중복 배우·배역 ${removed}개를 합치고 등장 장면을 통합했어요.`)
-    return saved ? removed : 0
+    if (saved) setNotice(`붙어 있던 배역 ${splitCount}개를 나누고 중복 ${mergedCount}개를 합쳤어요. 등장 장면 연결은 유지했어요.`)
+    return saved ? changes : 0
   }
 
   async function changeMyProductionRole(memberId) {
@@ -2115,14 +2128,14 @@ function CastPanel({ members, scenes, propItems, form, setForm, showForm, setSho
     return groups
   }, []).sort((a, b) => a.role === '이름 미정' ? 1 : b.role === '이름 미정' ? -1 : a.role.localeCompare(b.role, 'ko'))
   async function regroupRoles() {
-    const merged = await consolidate()
-    setGroupNotice(merged ? `중복 배우·배역 ${merged}개를 합치고 등장 장면을 보존했어요.` : '현재 중복된 배우·배역이 없어요.')
+    const changed = await consolidate()
+    setGroupNotice(changed ? `배역 이름 ${changed}건을 구분자 기준으로 정리하고 등장 장면을 보존했어요.` : '현재 정리할 배역 이름이나 중복 배우가 없어요.')
   }
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST</p><h2>배우</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 추가</button></div>
     <section className="cast-summary compact-summary"><article><strong>{actorCount}</strong><span>배우</span></article><article><strong>{roleCount}</strong><span>배역</span></article><article><strong>{linkedSceneCount}</strong><span>연결 장면</span></article></section>
     <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배우별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
-    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>구분자 분석 · 배우·배역 연결</small></span></button>{!!members.length && <button disabled={busy} onClick={regroupRoles}><Sparkles /><span><b>중복 정리</b><small>같은 배우·배역과 등장 장면 병합</small></span></button>}</div>
+    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>구분자 분석 · 배우·배역 연결</small></span></button>{!!members.length && <button disabled={busy} onClick={regroupRoles}><Sparkles /><span><b>이름 정리</b><small>, | / - _ + 로 붙은 배역 분리·중복 병합</small></span></button>}</div>
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form" onSubmit={submit}><div className="two-col"><input required placeholder="배우 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><input placeholder="배역 이름" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></div><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>앙상블</option><option>스태프</option></select><textarea placeholder="더블 캐스팅, 특이사항 등" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /><button className="primary" disabled={busy}>배우 등록</button></form>}
     {!!members.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배우·배역 검색' : '장면·배우·배역 검색'} /></label><span>{visible.length}/{members.length}명</span></div>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 배우가 없어요" description="배우와 배역을 등록하고 등장 장면을 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 배우 이름이나 배역을 검색해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
