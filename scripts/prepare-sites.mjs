@@ -14,6 +14,10 @@ for (const entry of entries) {
 await mkdir(server, { recursive: true })
 await writeFile(new URL('../dist/server/index.js', import.meta.url), `export default {
   async fetch(request, env) {
+    if (request.method === 'GET' && request.headers.get('accept')?.includes('text/html')) {
+      const source = new URL(request.url)
+      return Response.redirect('https://eye215.github.io/StageFlow/' + source.search, 302)
+    }
     const response = await env.ASSETS.fetch(request)
     if (response.status !== 404) return withFreshHtml(response)
     const url = new URL(request.url)
