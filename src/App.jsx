@@ -1249,6 +1249,22 @@ function calculateReadiness(scenes, musicCount, propStats) {
   return Math.round(sceneScore + musicScore + propScore + reviewScore)
 }
 
+function splitRoleEntries(value) {
+  const entries = []
+  let current = ''
+  let depth = 0
+  for (const character of String(value || '')) {
+    if (character === '(' || character === '[' || character === '{') depth += 1
+    if (character === ')' || character === ']' || character === '}') depth = Math.max(0, depth - 1)
+    if (depth === 0 && /[,|/\-_+]/.test(character)) {
+      if (current.trim()) entries.push(current.trim())
+      current = ''
+    } else current += character
+  }
+  if (current.trim()) entries.push(current.trim())
+  return entries.filter(Boolean)
+}
+
 function mergeCastFromScenes(existing, scenes) {
   const members = existing.map((member) => ({ ...member, sceneNumbers: [...(member.sceneNumbers || [])] }))
   const findMember = (name, roleName) => members.find((member) => normalizeMatch(member.name) === normalizeMatch(name) && normalizeMatch(member.roleName || member.name) === normalizeMatch(roleName || name))
@@ -1270,13 +1286,13 @@ function mergeCastFromScenes(existing, scenes) {
       const match = line.match(/^(메인 배역|등장 앙상블):\s*(.+)$/)
       if (!match) return
       const type = match[1] === '메인 배역' ? '주연' : '앙상블'
-      match[2].split(/\s*\/\s*/).forEach((entry) => {
+      splitRoleEntries(match[2]).forEach((entry) => {
         const value = entry.trim()
         if (!value || /없음|논의\s*후|등장\s*or|확인\s*필요/.test(value)) return
         const paired = value.match(/^(.+?)\s*\((.+)\)\s*$/)
         if (paired) {
           const roleName = paired[1].trim()
-          paired[2].split(/\s*[,·&]\s*/).forEach((actor) => add(actor, roleName, type, Number(scene.scene_no)))
+          splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => add(actor, roleName, type, Number(scene.scene_no)))
         } else {
           add(value, value, type, Number(scene.scene_no))
         }
