@@ -252,34 +252,54 @@ export default function App() {
   }
 
   async function loadHomeOverview(productionId) {
+    const cacheKey = `stageflow:home-overview:${productionId}`
+    try {
+      const cached = JSON.parse(window.localStorage.getItem(cacheKey) || 'null')
+      if (cached?.scenes) {
+        setHomeScenes(cached.scenes)
+        setHomeMusicCount(cached.musicCount || 0)
+        setHomeMusicLinkedScenes(cached.musicLinkedScenes || 0)
+        setHomePropStats(cached.propStats || { total: 0, ready: 0 })
+        setHomeTasks(cached.tasks || [])
+      }
+    } catch { /* 손상된 캐시는 무시하고 최신 데이터를 불러옵니다. */ }
     const { data } = await supabase.from('scenes').select('*').eq('production_id', productionId).order('sort_order').order('scene_no')
     const nextScenes = data || []
     setHomeScenes(nextScenes)
     if (!workspace) return
-    const counts = await Promise.all(nextScenes.map(async (scene) => {
-      const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
-      const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
-      return (files || []).filter((file) => file.id).length
-    }))
-    setHomeMusicCount(counts.reduce((sum, value) => sum + value, 0))
-    setHomeMusicLinkedScenes(counts.filter((value) => value > 0).length)
-    const { data: propFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`)
+    const [counts, propResult, taskResult] = await Promise.all([
+      Promise.all(nextScenes.map(async (scene) => {
+        const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
+        const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
+        return (files || []).filter((file) => file.id).length
+      })),
+      supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`),
+      supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/tasks.json`),
+    ])
+    const musicCount = counts.reduce((sum, value) => sum + value, 0)
+    const musicLinkedScenes = counts.filter((value) => value > 0).length
+    setHomeMusicCount(musicCount)
+    setHomeMusicLinkedScenes(musicLinkedScenes)
+    let propStats = { total: 0, ready: 0 }
+    const propFile = propResult.data
     if (propFile) {
       try {
         const payload = JSON.parse(await propFile.text())
         const items = Array.isArray(payload.items) ? payload.items : []
-        setHomePropStats({ total: items.length, ready: items.filter((item) => item.ready).length })
-      } catch {
-        setHomePropStats({ total: 0, ready: 0 })
-      }
-    } else setHomePropStats({ total: 0, ready: 0 })
-    const { data: taskFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/tasks.json`)
+        propStats = { total: items.length, ready: items.filter((item) => item.ready).length }
+      } catch { /* 빈 상태를 사용합니다. */ }
+    }
+    setHomePropStats(propStats)
+    let tasks = []
+    const taskFile = taskResult.data
     if (taskFile) {
       try {
         const payload = JSON.parse(await taskFile.text())
-        setHomeTasks(Array.isArray(payload.tasks) ? payload.tasks : [])
-      } catch { setHomeTasks([]) }
-    } else setHomeTasks([])
+        tasks = Array.isArray(payload.tasks) ? payload.tasks : []
+      } catch { /* 빈 상태를 사용합니다. */ }
+    }
+    setHomeTasks(tasks)
+    try { window.localStorage.setItem(cacheKey, JSON.stringify({ scenes: nextScenes, musicCount, musicLinkedScenes, propStats, tasks, updatedAt: new Date().toISOString() })) } catch { /* 저장 공간이 부족하면 캐시 없이 계속합니다. */ }
   }
 
   function openDefaultAt(tab = 'overview') {
