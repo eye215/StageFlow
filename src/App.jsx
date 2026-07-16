@@ -36,6 +36,7 @@ import './import-options.css'
 import './ux-pass.css'
 import './navigation-hotfix.css'
 import './preparation-health.css'
+import './import-audit.css'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url'
 
@@ -1406,7 +1407,9 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
   useEffect(() => { loadSources() }, [workspace.id, production.id])
   async function applyImport() { await save({ mode, targets }); await loadSources() }
   const toggleTarget = (key) => setTargets((value) => ({ ...value, [key]: !value[key] }))
+  const audit = useMemo(() => buildImportAudit(rows), [rows])
   return <section className="import-panel">
+    {!!rows.length && <ImportAudit audit={audit} />}
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
@@ -1416,6 +1419,27 @@ function ImportPanel({ workspace, production, text, setText, rows, analyze, anal
     <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
 }
+function ImportAudit({ audit }) {
+  return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}</section>
+}
+
+function buildImportAudit(rows) {
+  const people = new Set()
+  rows.forEach((row) => [row.main, row.ensemble, row.backstage].filter(Boolean).forEach((value) => String(value).split(/\s*[\/,]\s*/).filter(Boolean).forEach((name) => people.add(normalizeMatch(name)))))
+  const props = rows.flatMap((row) => row.props || [])
+  const numbers = rows.map((row) => Number(row.number)).filter(Boolean)
+  const duplicateCount = numbers.length - new Set(numbers).size
+  const missingTitles = rows.filter((row) => !String(row.title || '').trim()).length
+  const unassignedProps = props.filter((item) => !String(item.inBy || '').trim() || !String(item.outBy || '').trim()).length
+  const emptyCast = rows.filter((row) => !row.main && !row.ensemble && !row.backstage).length
+  const warnings = []
+  if (duplicateCount) warnings.push(`같은 장면 번호가 ${duplicateCount}개 중복됐어요.`)
+  if (missingTitles) warnings.push(`제목이 없는 장면이 ${missingTitles}개 있어요.`)
+  if (emptyCast) warnings.push(`등장인물이 비어 있는 장면이 ${emptyCast}개 있어요.`)
+  if (unassignedProps) warnings.push(`IN 또는 OUT 담당자가 비어 있는 소품이 ${unassignedProps}개 있어요.`)
+  return { scenes: rows.length, people: [...people].filter(Boolean).length, props: props.length, cues: rows.reduce((sum, row) => sum + (row.cues?.length || 0), 0), warnings }
+}
+
 function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, loading }) {
   const uploadedCount = Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)
   return <section className="import-panel music-panel">
