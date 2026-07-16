@@ -1,0 +1,100 @@
+/* Final mobile system pass. Keep this import last so feature CSS cannot
+   reintroduce horizontal scrolling or undersized touch targets. */
+html,body,#root{max-width:100%;min-height:100%;overflow-x:hidden}
+*{min-width:0}
+button,input,select,textarea{font:inherit}
+
+@media(max-width:759px){
+  :root{--mobile-gutter:14px;--mobile-radius:18px;--mobile-line:rgba(148,163,184,.11)}
+  body{font-size:14px;-webkit-text-size-adjust:100%;overscroll-behavior-y:none}
+  button,a,input,select,textarea{-webkit-tap-highlight-color:transparent}
+  button,a{touch-action:manipulation}
+
+  .app-shell{width:100%;min-height:100dvh}
+  .content{width:100%;padding:14px var(--mobile-gutter) calc(94px + env(safe-area-inset-bottom))}
+  .topbar{position:sticky;top:0;z-index:30;min-height:64px;padding:10px var(--mobile-gutter);background:rgba(7,10,18,.88);backdrop-filter:blur(22px) saturate(140%)}
+  .topbar .brand-inline{gap:9px}
+  .topbar .brand-inline>svg{width:22px;height:22px}
+  .topbar .brand-inline strong{font-size:14px}
+  .avatar,.icon-button{min-width:40px;min-height:40px}
+
+  .section-heading{align-items:center;margin:20px 0 10px}
+  .section-heading h2{font-size:20px;line-height:1.2}
+  .section-heading .primary.compact{min-height:42px;padding:9px 13px;border-radius:13px}
+  .eyebrow{font-size:8px;letter-spacing:.14em}
+
+  .production-content{padding-top:10px}
+  .production-bar{gap:10px;margin:0 0 12px;padding:14px;border:1px solid var(--mobile-line);border-radius:19px;background:rgba(15,23,42,.72)}
+  .production-bar h1{margin:3px 0 4px;font-size:23px;line-height:1.1}
+  .production-bar p{font-size:10px}
+  .production-bar-actions{gap:5px}
+
+  .panel,.readiness-card,.continue-card,.actor-home-focus,.actor-home-actions,.actor-home-check,.materials-panel{border-radius:var(--mobile-radius)}
+  .panel{padding:14px}
+  .form-grid{gap:10px}
+  input,select,textarea{max-width:100%;font-size:16px}
+  .form-grid input,.form-grid select,.form-grid textarea,.two-col input,.two-col select{min-height:48px;padding:12px;border-radius:13px}
+  textarea{line-height:1.5}
+  .two-col{gap:8px}
+
+  .actor-home-content{gap:12px;padding-top:12px}
+  .actor-home-focus{padding:18px}
+  .actor-home-focus h1{margin:11px 0 5px;font-size:26px}
+  .actor-home-focus>button{min-height:48px;margin-top:15px}
+  .actor-home-actions{padding:15px}
+  .actor-home-actions>div:last-child{gap:7px}
+  .actor-home-actions button{min-height:96px;padding:12px;border-radius:15px}
+  .actor-home-actions .primary-action{min-height:58px}
+
+  .scene-toolbar,.task-filter-row,.cast-toolbar,.prop-toolbar{max-width:100%;overflow:hidden}
+  .segmented,.task-filters,.scene-filter-row{display:flex;max-width:100%;flex-wrap:wrap;overflow:visible}
+  .segmented button,.task-filters button,.scene-filter-row button{min-height:36px}
+  .scene-list,.cue-groups,.prop-scene-groups,.material-list{gap:8px}
+  .scene-hub-card,.cue-groups>article,.prop-card,.material-list>article{border-radius:16px}
+  .scene-hub-head{min-height:72px;padding:11px 12px}
+
+  .import-panel{gap:12px}
+  .import-hero{padding:15px}
+  .import-hero h2{font-size:21px}
+  .upload-zone{min-height:112px;padding:16px;border-radius:17px;text-align:center}
+  .import-textarea{min-height:150px;font-size:13px}
+  .import-action-grid{grid-template-columns:1fr;gap:8px}
+  .import-action-grid button{min-height:48px}
+  .import-apply-options fieldset{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .import-apply-options label{min-height:40px}
+  .import-result-head{position:sticky;bottom:78px;z-index:12;margin:0 -4px;padding:10px;border:1px solid rgba(165,180,252,.14);border-radius:16px;background:rgba(9,14,27,.94);backdrop-filter:blur(16px)}
+  .import-result-head h3{font-size:14px}
+  .import-results{max-height:none;overflow:visible}
+  .import-card{padding:11px}
+
+  .material-tabs{width:100%}
+  .material-tabs button{min-height:40px}
+  .material-upload{min-height:118px}
+  .material-list>article{padding:10px}
+  .material-list .icon-button{min-width:38px;min-height:38px}
+
+  .cue-auto-link,.team-invite-button,.import-undo,.spreadsheet-upload{min-height:58px;padding:12px;border-radius:15px}
+  .cue-form button,.primary{min-height:46px}
+  .cue-row{max-width:100%}
+  .cue-toggle{min-height:48px}
+  .cue-toggle>div{overflow:hidden}
+  .cue-toggle strong,.cue-toggle small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .sheet-backdrop,.production-create-backdrop{padding-top:48px}
+  .profile-sheet,.production-more-sheet,.production-create-modal{max-height:92dvh;padding-right:14px;padding-left:14px;border-radius:25px 25px 0 0}
+  .default-production-list{gap:7px}
+  .default-production-list button{min-height:64px;padding:12px}
+  .production-create-modal{overflow:auto}
+
+  .notice{overflow-wrap:anywhere}
+  .empty{min-height:160px;padding:24px 16px}
+  audio,video,img,canvas{max-width:100%}
+}
+
+@media(max-width:370px){
+  :root{--mobile-gutter:11px}
+  .actor-home-actions button{padding:10px}
+  .actor-home-actions button b{font-size:12px}
+  .production-primary-nav button{font-size:8.5px}
+  .two-col{grid-template-columns:1fr}
+}
