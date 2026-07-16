@@ -886,6 +886,23 @@ export default function App() {
     setBusy(false)
   }
 
+  async function changeMyProductionRole(memberId) {
+    const target = castMembers.find((member) => member.id === memberId)
+    if (target?.userId && target.userId !== session.user.id) { setNotice('이미 다른 팀원이 선택한 배역이에요.'); return false }
+    const next = castMembers.map((member) => {
+      if (member.userId === session.user.id) {
+        const { userId, email, claimedAt, ...released } = member
+        return released
+      }
+      return member
+    }).map((member) => member.id === memberId ? { ...member, userId: session.user.id, email: session.user.email, claimedAt: new Date().toISOString() } : member)
+    setBusy(true)
+    const saved = await persistCastData(next)
+    setBusy(false)
+    if (saved) setNotice(target ? `${target.roleName || target.name} 배역으로 변경했어요.` : '내 배역 선택을 해제했어요.')
+    return saved
+  }
+
   function propDataPath(productionId) {
     return `${workspace.id}/${productionId}/data/props.json`
   }
@@ -1041,6 +1058,7 @@ export default function App() {
       restoreProductionBackup={restoreProductionBackup}
       session={session} clearProductionUploads={clearProductionUploads} deleteProduction={deleteProduction}
       createTeamInvite={createTeamInvite}
+      changeMyProductionRole={changeMyProductionRole}
     />
   )
 
@@ -1286,7 +1304,7 @@ function RoleClaimSheet({ members, choose, busy }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, uploadingMusic, castMembers, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const current = scenes[showIndex]
   const next = scenes[showIndex + 1]
   const readyProps = propItems.filter((item) => item.ready).length
@@ -1558,7 +1576,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'schedule' && <SchedulePanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
-      {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} />}
+      {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
@@ -1661,8 +1679,11 @@ function BackupPanel({ workspace, production, scenes, castMembers, propItems, mu
   return <section className="backup-panel"><div className="backup-hero"><Download /><div><p className="eyebrow">PRODUCTION BACKUP</p><h2>공연 데이터 백업</h2><p>현재 공연의 운영 정보를 한 파일로 보관합니다.</p></div></div><div className="backup-summary"><article><b>{scenes.length}</b><span>장면</span></article><article><b>{castMembers.length}</b><span>배우</span></article><article><b>{propItems.length}</b><span>소품</span></article><article><b>{musicCount}</b><span>음악 연결</span></article></div><article className="backup-info"><FileText /><div><strong>백업에 포함되는 정보</strong><p>공연 기본정보, 장면 요약, 배우·배역·등장 장면, 의상·큐, 소품 IN/OUT, 음악 파일 연결 경로</p><small>음악·PDF 원본 파일 자체는 포함되지 않습니다.</small></div></article><button className="primary backup-button" disabled={busy} onClick={exportBackup}><Download /> JSON 백업 저장</button><label className="restore-backup-button"><Upload /><span><b>백업에서 복원</b><small>현재 장면·배우·소품 데이터가 선택한 백업으로 교체됩니다.</small></span><input type="file" accept="application/json,.json" disabled={busy} onChange={(event) => { importBackup(event.target.files?.[0]); event.target.value = '' }} /></label>{status && <p className="notice">{status}</p>}</section>
 }
 
-function ProductionTeamPanel({ workspace, production, session, castMembers, invite }) {
+function ProductionTeamPanel({ workspace, production, session, castMembers, invite, changeMyRole, busy }) {
   const [members, setMembers] = useState([])
+  const myCast = castMembers.find((member) => member.userId === session.user.id)
+  const [selectedRoleId, setSelectedRoleId] = useState(myCast?.id || '')
+  useEffect(() => setSelectedRoleId(myCast?.id || ''), [myCast?.id])
   useEffect(() => {
     supabase.from('workspace_members').select('user_id, role').eq('workspace_id', workspace.id).then(({ data }) => setMembers(data || []))
   }, [workspace.id])
@@ -1671,7 +1692,9 @@ function ProductionTeamPanel({ workspace, production, session, castMembers, invi
     const cast = claimed.find((member) => member.userId === userId)
     return cast ? { name: cast.name, role: cast.roleName || '배역 미정' } : { name: userId === session.user.id ? '나' : '참여 팀원', role: '배역 미선택' }
   }
-  return <section className="production-team-panel"><div className="team-panel-head"><Users /><div><p className="eyebrow">PRODUCTION TEAM</p><h2>참여 팀원</h2><p>{production.title} 공연에 참여하는 팀원과 배역을 관리해요.</p></div></div><button className="team-invite-button" onClick={() => invite(production.id)}><Upload /><span><b>팀원 초대 링크 공유</b><small>가입 후 이 공연의 배역을 직접 선택합니다.</small></span><ChevronRight /></button><div className="team-member-summary"><span><b>{members.length}</b> 참여 계정</span><span><b>{claimed.length}</b> 배역 선택</span><span><b>{Math.max(0, members.length - claimed.length)}</b> 미선택</span></div><div className="team-member-list">{members.map((member) => { const info = identity(member.user_id); return <article key={member.user_id}><span className="team-avatar"><UserRound /></span><div><strong>{info.name}{member.user_id === session.user.id ? ' · 나' : ''}</strong><small>{info.role}</small></div><em>{info.role === '배역 미선택' ? '선택 대기' : '참여 중'}</em></article> })}</div>{!members.length && <Empty icon={<Users />} title="참여 팀원이 없어요" description="초대 링크를 공유해 팀원을 추가해보세요." />}</section>
+  const availableRoles = castMembers.filter((member) => !member.userId || member.userId === session.user.id)
+  async function saveMyRole() { if (await changeMyRole(selectedRoleId)) setSelectedRoleId(selectedRoleId) }
+  return <section className="production-team-panel"><div className="team-panel-head"><Users /><div><p className="eyebrow">PRODUCTION TEAM</p><h2>참여 팀원</h2><p>{production.title} 공연에 참여하는 팀원과 배역을 관리해요.</p></div></div><button className="team-invite-button" onClick={() => invite(production.id)}><Upload /><span><b>팀원 초대 링크 공유</b><small>가입 후 이 공연의 배역을 직접 선택합니다.</small></span><ChevronRight /></button><article className="my-role-card"><div><UserRound /><span><b>내 배역</b><small>{myCast ? `${myCast.roleName || '배역 미정'} · ${myCast.name}` : '아직 선택하지 않았어요.'}</small></span></div><div className="my-role-controls"><select value={selectedRoleId} onChange={(event) => setSelectedRoleId(event.target.value)}><option value="">배역 선택 해제</option>{availableRoles.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}</option>)}</select><button disabled={busy || selectedRoleId === (myCast?.id || '')} onClick={saveMyRole}><Save /> 변경</button></div><small>다른 팀원이 선택한 배역은 목록에 표시되지 않아요.</small></article><div className="team-member-summary"><span><b>{members.length}</b> 참여 계정</span><span><b>{claimed.length}</b> 배역 선택</span><span><b>{Math.max(0, members.length - claimed.length)}</b> 미선택</span></div><div className="team-member-list">{members.map((member) => { const info = identity(member.user_id); return <article key={member.user_id}><span className="team-avatar"><UserRound /></span><div><strong>{info.name}{member.user_id === session.user.id ? ' · 나' : ''}</strong><small>{info.role}</small></div><em>{info.role === '배역 미선택' ? '선택 대기' : '참여 중'}</em></article> })}</div>{!members.length && <Empty icon={<Users />} title="참여 팀원이 없어요" description="초대 링크를 공유해 팀원을 추가해보세요." />}</section>
 }
 
 function ProductionDangerPanel({ workspace, production, session, castMembers, clearUploads, deleteProduction, busy }) {
