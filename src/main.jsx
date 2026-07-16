@@ -15,6 +15,7 @@ import './pdf-extraction.css'
 import './import-cast-preview.css'
 import './import-cast-edit.css'
 import './import-merge.css'
+import './import-prop-edit.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
