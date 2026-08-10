@@ -3598,17 +3598,58 @@ function normalizeMatch(value) {
   return String(value ?? '').toLowerCase().replace(/\.[a-z0-9]+$/i, '').replace(/[^0-9a-z가-힣]/g, '')
 }
 
-function matchMusicToScene(filename, scenes) {
-  const numberMatch = filename.match(/(?:^|[^0-9])(\d{1,3})(?:[^0-9]|$)/)
-  if (numberMatch) {
-    const byNumber = scenes.find((scene) => Number(scene.scene_no) === Number(numberMatch[1]))
-    if (byNumber) return byNumber
+function normalizeMusicTitle(value) {
+  return cleanStoredFileName(String(value || ''))
+    .normalize('NFKC')
+    .replace(/\.[A-Za-z0-9]{1,8}$/i, '')
+    .replace(/\b(?:song|scene)\s*[.#_-]*\s*\d+\b/gi, ' ')
+    .replace(/\d+/g, ' ')
+    .replace(/\b(?:mr|ar|inst|instrumental|guide|vocal|ver|version|final|edit|full|track|mix)\b/gi, ' ')
+    .replace(/(?:엠알|반주|가이드|보컬|최종|수정본|음원)/g, ' ')
+    .toLowerCase()
+    .replace(/[^a-z가-힣]+/g, '')
+}
+
+function sceneSoundtrackTitles(scene) {
+  const titles = []
+  const lines = String(scene?.summary || '').split('\n')
+  let inSoundtracks = false
+  lines.forEach((line) => {
+    if (/^Soundtrack\s*:/i.test(line.trim())) { inSoundtracks = true; return }
+    if (inSoundtracks && /^[^\s-][^:]*:\s*$/.test(line.trim())) { inSoundtracks = false; return }
+    if (!inSoundtracks) return
+    const match = line.trim().match(/^[-•]\s*(?:SONG\s*[.#_-]*\s*\d+\s*)?(.+)$/i)
+    if (match?.[1]) titles.push(match[1].trim())
+  })
+  return titles
+}
+
+function musicTitleSimilarity(left, right) {
+  if (!left || !right) return 0
+  if (left === right) return 1
+  if (left.includes(right) || right.includes(left)) return Math.min(left.length, right.length) / Math.max(left.length, right.length) * 0.95
+  const bigrams = (value) => {
+    if (value.length < 2) return new Set([value])
+    return new Set(Array.from({ length: value.length - 1 }, (_, index) => value.slice(index, index + 2)))
   }
-  const normalizedFile = normalizeMatch(filename)
-  return scenes.find((scene) => {
-    const title = normalizeMatch(scene.title)
-    return title.length >= 2 && normalizedFile.includes(title)
-  }) || null
+  const a = bigrams(left)
+  const b = bigrams(right)
+  const common = [...a].filter((value) => b.has(value)).length
+  return (2 * common) / (a.size + b.size)
+}
+
+function matchMusicToScene(filename, scenes) {
+  const normalizedFile = normalizeMusicTitle(filename)
+  if (normalizedFile.length < 2) return null
+  let best = null
+  scenes.forEach((scene) => {
+    const candidates = [scene.title, ...sceneSoundtrackTitles(scene)]
+      .map(normalizeMusicTitle)
+      .filter((title) => title.length >= 2)
+    const score = candidates.reduce((highest, title) => Math.max(highest, musicTitleSimilarity(normalizedFile, title)), 0)
+    if (!best || score > best.score) best = { scene, score }
+  })
+  return best?.score >= 0.58 ? best.scene : null
 }
 
 function cleanStoredFileName(value) {
