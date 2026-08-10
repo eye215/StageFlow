@@ -153,6 +153,9 @@ Deno.serve(async (request) => {
     if (syncError) throw syncError
     return new Response(JSON.stringify({ rows: normalizedRows, imported: normalizedRows.length, skipped, dataSourceId: sourceId, sourceName: resolved.name }), { headers: { ...cors, 'Content-Type': 'application/json' } })
   } catch (error) {
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } })
+    // Expected connection/validation failures are returned as structured JSON.
+    // The client treats `error` as a failed import while still being able to
+    // show the actionable Notion message instead of the SDK's generic non-2xx text.
+    return new Response(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), { headers: { ...cors, 'Content-Type': 'application/json' } })
   }
 })

@@ -721,7 +721,7 @@ export default function App() {
       if (error) {
         let detail = error.message
         try {
-          const payload = await error.context?.clone?.().json()
+          const payload = await error.context?.json?.()
           detail = payload?.error || detail
         } catch {
           // The response body may already be consumed; use the SDK message instead.
@@ -2480,7 +2480,7 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
       if (error || data?.error) {
         let detail = data?.error || error?.message || '연결 공유와 서버 설정을 확인해 주세요.'
         try {
-          const payload = await error?.context?.clone?.().json()
+          const payload = await error?.context?.json?.()
           detail = payload?.error || payload?.message || detail
         } catch {
           // Use the SDK message when the response body is unavailable.
