@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, ExternalLink, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
-  MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  GripVertical, MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -890,6 +890,11 @@ export default function App() {
   async function loadMusic(productionId) {
     if (!scenes.length) return setMusicByScene({})
     const base = `${workspace.id}/${productionId}/music`
+    let savedOrder = {}
+    const { data: orderFile } = await supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/music-order.json`)
+    if (orderFile) {
+      try { savedOrder = JSON.parse(await orderFile.text()) || {} } catch { savedOrder = {} }
+    }
     const entries = await Promise.all(scenes.map(async (scene) => {
       const { data } = await supabase.storage.from('stageflow-files').list(`${base}/${scene.scene_no}`, { limit: 100, sortBy: { column: 'name', order: 'asc' } })
       const files = (data || []).filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
@@ -897,9 +902,32 @@ export default function App() {
         const { data: urlData } = await supabase.storage.from('stageflow-files').createSignedUrl(file.path, 43200)
         return { ...file, url: urlData?.signedUrl || '' }
       }))
+      const order = savedOrder[String(scene.scene_no)] || []
+      signed.sort((a, b) => {
+        const aIndex = order.indexOf(a.path)
+        const bIndex = order.indexOf(b.path)
+        return (aIndex < 0 ? Number.MAX_SAFE_INTEGER : aIndex) - (bIndex < 0 ? Number.MAX_SAFE_INTEGER : bIndex) || a.name.localeCompare(b.name, 'ko')
+      })
       return [scene.scene_no, signed]
     }))
     setMusicByScene(Object.fromEntries(entries))
+  }
+
+  async function reorderMusic(sceneNo, fromPath, toPath) {
+    if (!fromPath || !toPath || fromPath === toPath) return
+    const key = String(sceneNo)
+    const files = [...(musicByScene[sceneNo] || [])]
+    const from = files.findIndex((item) => item.path === fromPath)
+    const to = files.findIndex((item) => item.path === toPath)
+    if (from < 0 || to < 0) return
+    const [moved] = files.splice(from, 1)
+    files.splice(to, 0, moved)
+    const next = { ...musicByScene, [sceneNo]: files }
+    setMusicByScene(next)
+    const order = Object.fromEntries(Object.entries(next).map(([number, items]) => [String(number), items.map((item) => item.path)]))
+    const path = `${workspace.id}/${selected.id}/data/music-order.json`
+    const { error } = await supabase.storage.from('stageflow-files').upload(path, new Blob([JSON.stringify(order)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+    if (error) setNotice(`음악 순서 저장 실패: ${error.message}`)
   }
 
   async function deleteMusicFile(file) {
@@ -2068,7 +2096,7 @@ function ProductionView(props) {
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
-      {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
+      {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
@@ -2688,7 +2716,19 @@ function buildImportAudit(rows) {
   return { scenes: rows.length, people: [...people].filter(Boolean).length, props: props.length, cues: rows.reduce((sum, row) => sum + (row.cues?.length || 0), 0), duplicateCount, warnings }
 }
 
-function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, loading }) {
+function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, reorder, loading }) {
+  const [dragging, setDragging] = useState(null)
+  const moveOver = (event, sceneNo, targetPath) => {
+    if (!dragging || dragging.sceneNo !== sceneNo || dragging.path === targetPath) return
+    event.preventDefault()
+    reorder(sceneNo, dragging.path, targetPath)
+    setDragging({ sceneNo, path: targetPath })
+  }
+  const pointerMove = (event, sceneNo) => {
+    if (!dragging || dragging.sceneNo !== sceneNo) return
+    const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-track-path]')
+    if (row?.dataset.trackPath) moveOver(event, sceneNo, row.dataset.trackPath)
+  }
   const uploadedCount = Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)
   return <section className="import-panel music-panel">
     <div className="import-hero"><div className="import-icon music-icon"><Music /></div><div><p className="eyebrow">NUMBER MUSIC</p><h2>음악 자동정리</h2><p>음악파일을 한꺼번에 넣으면 파일명의 번호나 제목을 보고 해당 넘버에 자동 연결합니다. 한 넘버에 여러 파일도 저장할 수 있어요.</p></div></div>
@@ -2696,7 +2736,7 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
       <label className="upload-zone music-upload"><FileAudio size={28} /><strong>음악파일 여러 개 선택</strong><span>MP3, M4A, WAV, AAC · 여러 파일 동시 선택 가능</span><input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac" multiple disabled={loading} onChange={(event) => organize(event.target.files || [])} /></label>
       {!!pending.length && <div className="music-match"><div className="import-result-head"><div><p className="eyebrow">AUTO MATCH</p><h3>{pending.length}개 파일 분류 결과</h3></div><button className="primary compact" disabled={loading || !pending.some((item) => item.sceneNo)} onClick={upload}><Upload size={17} /> {loading ? '업로드 중…' : '선택 파일 저장'}</button></div><div className="music-file-list">{pending.map((item, index) => <article className={item.sceneNo ? 'matched' : 'unmatched'} key={`${item.file.name}-${index}`}><FileAudio /><div><strong>{item.file.name}</strong><select aria-label={`${item.file.name} 넘버 선택`} value={item.sceneNo ?? ''} onChange={(event) => assign(index, event.target.value)}><option value="">넘버 선택 안 함</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div></article>)}</div></div>}
       <div className="import-result-head"><div><p className="eyebrow">LIBRARY</p><h3>넘버별 음악 {uploadedCount}개</h3></div></div>
-      <div className="music-library">{scenes.map((scene) => { const files = musicByScene[scene.scene_no] || []; return <article className="music-scene" key={scene.id}><div className="music-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{files.length}개 파일</small></div></div>{files.length ? <div className="audio-list">{files.map((file) => <div className="audio-row" key={file.path}><div className="audio-file-head"><FileAudio size={17} /><span>{cleanStoredFileName(file.name)}</span><button className="icon-button danger" disabled={loading} onClick={() => remove(file)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button></div>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>등록된 음악이 없어요.</p>}</article> })}</div>
+      <div className="music-library">{scenes.map((scene) => { const files = musicByScene[scene.scene_no] || []; return <article className="music-scene" key={scene.id}><div className="music-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{files.length}개 파일 · 드래그해서 순서 변경</small></div></div>{files.length ? <div className="audio-list">{files.map((file) => <div className={dragging?.path === file.path ? 'audio-row dragging' : 'audio-row'} key={file.path} data-track-path={file.path} draggable onDragStart={() => setDragging({ sceneNo: scene.scene_no, path: file.path })} onDragOver={(event) => moveOver(event, scene.scene_no, file.path)} onDragEnd={() => setDragging(null)}><div className="audio-file-head"><button type="button" className="track-drag-handle" aria-label={`${cleanStoredFileName(file.name)} 순서 이동`} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setDragging({ sceneNo: scene.scene_no, path: file.path }) }} onPointerMove={(event) => pointerMove(event, scene.scene_no)} onPointerUp={() => setDragging(null)}><GripVertical size={18} /></button><FileAudio size={17} /><span>{cleanStoredFileName(file.name)}</span><button className="icon-button danger" disabled={loading} onClick={() => remove(file)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button></div>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>등록된 음악이 없어요.</p>}</article> })}</div>
     </>}
   </section>
 }
