@@ -538,10 +538,13 @@ export default function App() {
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
     try {
+      const archivePromise = archive
+        ? supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`, file, { upsert: false, contentType: 'application/pdf' })
+        : Promise.resolve({ error: null })
       const pdfjs = await loadPdfRuntime()
       const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
       const pageTexts = Array(pdf.numPages).fill('')
-      const ocrPageNumbers = Array.from({ length: pdf.numPages }, (_, index) => index + 1)
+      const ocrPageNumbers = []
       const tableRows = []
       let textRows = 0
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
@@ -552,10 +555,13 @@ export default function App() {
         textRows += layout.rows.length
         layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
         pageTexts[pageNo - 1] = layout.text
+        // Embedded text is both faster and more accurate. OCR only scanned or
+        // nearly-empty pages; mixed PDFs still OCR every image-only page.
+        if (layout.text.replace(/\s/g, '').length < 40) ocrPageNumbers.push(pageNo)
       }
       let ocrPages = 0
       if (ocrPageNumbers.length) {
-        setNotice(`전체 ${ocrPageNumbers.length}쪽 · 저해상도 한국어 OCR 준비 중…`)
+        setNotice(`스캔 페이지 ${ocrPageNumbers.length}쪽 · 저해상도 한국어 OCR 준비 중…`)
         const { createWorker } = await import('tesseract.js')
         let activeOcrPage = 0
         let lastProgressStep = -1
@@ -565,7 +571,7 @@ export default function App() {
             const progressStep = Math.floor((message.progress || 0) * 10)
             if (progressStep === lastProgressStep) return
             lastProgressStep = progressStep
-            setNotice(`전체 PDF OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · ${progressStep * 10}%`)
+            setNotice(`스캔 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · ${progressStep * 10}%`)
           },
         })
         await worker.setParameters({
@@ -577,7 +583,7 @@ export default function App() {
             const pageNo = ocrPageNumbers[index]
             activeOcrPage = index + 1
             lastProgressStep = -1
-            setNotice(`전체 PDF OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · 준비 중`)
+            setNotice(`스캔 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · 준비 중`)
             const page = await pdf.getPage(pageNo)
             const baseViewport = page.getViewport({ scale: 1 })
             // Every page is still OCRed, but a ~600k-pixel render keeps mobile
@@ -612,15 +618,13 @@ export default function App() {
         throw new Error('OCR을 실행했지만 읽을 수 있는 글자가 너무 적어요. 해상도가 더 높은 PDF나 원본 이미지를 사용해 주세요.')
       }
       setImportText(text)
-      if (archive) {
-        const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
-        await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: 'application/pdf' })
-      }
+      const { error: archiveError } = await archivePromise
       const parsed = parseProductionSheet(text)
       setImportRows(parsed)
       setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, ocrPages, preview: tableRows.slice(0, 8) })
       const ocrResult = ocrPages ? ` · OCR ${ocrPages}쪽` : ''
-      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.`)
+      const archiveResult = archiveError ? ' · 원본 저장은 실패했어요' : ''
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.${archiveResult}`)
     } catch (error) {
       setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
@@ -636,6 +640,9 @@ export default function App() {
     setImportingPdf(true)
     setNotice('표 파일의 모든 시트와 행·열을 읽고 있어요…')
     try {
+      const archivePromise = archive
+        ? supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`, file, { upsert: false, contentType: file.type || 'application/octet-stream' })
+        : Promise.resolve({ error: null })
       const XLSX = await import('xlsx')
       const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false })
       const sheetTexts = workbook.SheetNames.map((sheetName) => {
@@ -646,11 +653,9 @@ export default function App() {
       const parsed = parseProductionSheet(extracted)
       setImportText(extracted)
       setImportRows(parsed)
-      if (archive) {
-        const sourcePath = `${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`
-        await supabase.storage.from('stageflow-files').upload(sourcePath, file, { upsert: false, contentType: file.type || 'application/octet-stream' })
-      }
-      setNotice(parsed.length ? `${workbook.SheetNames.length}개 시트 전체에서 ${parsed.length}개 장면을 인식했어요.` : '표 전체를 읽었지만 장면 번호와 제목을 찾지 못했어요.')
+      const { error: archiveError } = await archivePromise
+      const archiveResult = archiveError ? ' 원본 저장은 실패했어요.' : ''
+      setNotice(parsed.length ? `${workbook.SheetNames.length}개 시트 전체에서 ${parsed.length}개 장면을 인식했어요.${archiveResult}` : `표 전체를 읽었지만 장면 번호와 제목을 찾지 못했어요.${archiveResult}`)
     } catch (error) {
       setNotice(`표 파일 읽기 실패: ${error.message}`)
     }
