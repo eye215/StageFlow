@@ -43,6 +43,15 @@ const pick = (properties: Record<string, any>, names: string[]) => {
 
 const numeric = (value: string) => Number(String(value || '').match(/\d{1,3}/)?.[0] || 0)
 
+const errorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>
+    return [value.message, value.details, value.hint, value.code].filter(Boolean).join(' · ') || JSON.stringify(value)
+  }
+  return String(error)
+}
+
 const normalizeSourceId = (value: string) => {
   const raw = String(value || '').trim()
   if (!raw) return ''
@@ -115,13 +124,13 @@ Deno.serve(async (request) => {
     const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
     if (!productionId) throw new Error('공연 ID가 필요합니다.')
     const targets = { scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true, ...(requestedTargets || {}) }
-    const { data: production, error: productionError } = await supabase
+    const { error: productionError } = await supabase
       .from('productions')
-      .select('id, notion_data_source_id')
+      .select('id')
       .eq('id', productionId)
       .single()
-    if (productionError) throw productionError
-    const requestedSourceId = normalizeSourceId(dataSourceId || production.notion_data_source_id || '')
+    if (productionError) throw new Error(errorMessage(productionError))
+    const requestedSourceId = normalizeSourceId(dataSourceId || '')
     if (!requestedSourceId) throw new Error('Notion Data Source ID가 필요합니다.')
 
     stage = 'Notion Data Source 연결'
@@ -210,16 +219,12 @@ Deno.serve(async (request) => {
     }
 
     const skipped = pages.filter((page) => !numeric(pick(page.properties || {}, sceneNumberKeys))).length
-    const { error: syncError } = await supabase.from('productions')
-      .update({ notion_data_source_id: sourceId, notion_last_synced_at: new Date().toISOString() })
-      .eq('id', productionId)
-    if (syncError) throw syncError
     return new Response(JSON.stringify({
       rows: normalizedRows, imported: normalizedRows.length, skipped,
       dataSourceId: sourceId, sourceName: resolved.name,
     }), { headers: { ...cors, 'Content-Type': 'application/json' } })
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
+    const message = errorMessage(error)
     console.error('sync-notion failed', { stage, message })
     return new Response(JSON.stringify({ ok: false, error: `${stage}: ${message}` }), {
       headers: { ...cors, 'Content-Type': 'application/json' },
