@@ -166,7 +166,7 @@ export default function App() {
     loadPropData(selected.id)
     setProductionTab('overview')
     setShowIndex(0)
-  }, [selected])
+  }, [selected?.id])
 
   useEffect(() => {
     if (selected && scenes.length) loadMusic(selected.id)
