@@ -188,6 +188,11 @@ export default function App() {
 
   async function submitAuth(event) {
     event.preventDefault()
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    if (!/^\S+@\S+\.\S+$/.test(normalizedEmail)) {
+      setNotice('올바른 이메일 주소를 입력해주세요.')
+      return
+    }
     if (authMode === 'signup' && password !== passwordConfirm) {
       setNotice('비밀번호가 서로 달라요.')
       return
@@ -198,33 +203,44 @@ export default function App() {
     }
     setBusy(true)
     setNotice(authMode === 'signup' ? '계정을 만드는 중이에요…' : '로그인 중이에요…')
-    const result = authMode === 'signup'
-      ? await supabase.auth.signUp({ email, password })
-      : await supabase.auth.signInWithPassword({ email, password })
-    if (result.error) setNotice(`${authMode === 'signup' ? '회원가입' : '로그인'} 실패: ${result.error.message}`)
-    else if (authMode === 'signup' && !result.data.session) setNotice('계정은 만들어졌지만 이메일 확인 설정이 켜져 있어요. Supabase에서 Confirm email을 꺼주세요.')
-    else setNotice(authMode === 'signup' ? '가입 완료! StageFlow를 시작합니다.' : '로그인 완료!')
-    setBusy(false)
+    try {
+      const result = authMode === 'signup'
+        ? await supabase.auth.signUp({ email: normalizedEmail, password })
+        : await supabase.auth.signInWithPassword({ email: normalizedEmail, password })
+      if (result.error) setNotice(`${authMode === 'signup' ? '회원가입' : '로그인'} 실패: ${result.error.message}`)
+      else if (authMode === 'signup' && !result.data.session) setNotice('계정은 만들어졌지만 이메일 확인 설정이 켜져 있어요. Supabase에서 Confirm email을 꺼주세요.')
+      else setNotice(authMode === 'signup' ? '가입 완료! StageFlow를 시작합니다.' : '로그인 완료!')
+    } catch (error) {
+      setNotice(`${authMode === 'signup' ? '회원가입' : '로그인'} 실패: ${error.message || '네트워크 연결을 확인해주세요.'}`)
+    } finally { setBusy(false) }
   }
 
   async function loadWorkspace() {
     setLoading(true)
-    const inviteToken = new URLSearchParams(window.location.search).get('invite')
-    if (inviteToken) {
-      const { data: joinedProduction, error: joinError } = await supabase.rpc('join_workspace_by_invite', { invite_token: inviteToken })
-      if (joinError) setNotice(`팀 초대 확인 실패: ${joinError.message}`)
-      else if (joinedProduction) setInviteProductionId(String(joinedProduction))
-    }
-    const { data, error } = await supabase
-      .from('workspace_members')
-      .select('workspace_id, workspaces(*)')
-      .eq('user_id', session.user.id)
-      .limit(1)
-    if (error) setNotice(`팀 정보를 불러오지 못했어요: ${error.message}`)
-    const current = data?.[0]?.workspaces || null
-    setWorkspace(current)
-    if (current) await loadProductions(current.id)
-    setLoading(false)
+    try {
+      const inviteToken = new URLSearchParams(window.location.search).get('invite')
+      if (inviteToken) {
+        const { data: joinedProduction, error: joinError } = await supabase.rpc('join_workspace_by_invite', { invite_token: inviteToken })
+        if (joinError) setNotice(`팀 초대 확인 실패: ${joinError.message}`)
+        else if (joinedProduction) setInviteProductionId(String(joinedProduction))
+      }
+      const { data, error } = await supabase
+        .from('workspace_members')
+        .select('workspace_id, workspaces(*)')
+        .eq('user_id', session.user.id)
+        .limit(1)
+      if (error) {
+        setWorkspace(null)
+        setNotice(`팀 정보를 불러오지 못했어요: ${error.message}`)
+        return
+      }
+      const current = data?.[0]?.workspaces || null
+      setWorkspace(current)
+      if (current) await loadProductions(current.id)
+    } catch (error) {
+      setWorkspace(null)
+      setNotice(`팀 정보를 불러오지 못했어요: ${error.message || '네트워크 연결을 확인해주세요.'}`)
+    } finally { setLoading(false) }
   }
 
   useEffect(() => {
@@ -267,13 +283,16 @@ export default function App() {
     event.preventDefault()
     if (!workspaceName.trim()) return
     setBusy(true)
-    const { error } = await supabase.rpc('create_workspace', { workspace_name: workspaceName.trim() })
-    if (error) setNotice(`팀 생성 실패: ${error.message}`)
-    else {
-      setWorkspaceName('')
-      await loadWorkspace()
-    }
-    setBusy(false)
+    try {
+      const { error } = await supabase.rpc('create_workspace', { workspace_name: workspaceName.trim() })
+      if (error) setNotice(`팀 생성 실패: ${error.message}`)
+      else {
+        setWorkspaceName('')
+        await loadWorkspace()
+      }
+    } catch (error) {
+      setNotice(`팀 생성 실패: ${error.message || '네트워크 연결을 확인해주세요.'}`)
+    } finally { setBusy(false) }
   }
 
   async function loadProductions(workspaceId) {
@@ -349,21 +368,8 @@ export default function App() {
     }
     setHomePropStats(propStats)
     setHomePropItems(homeProps)
-    let tasks = []
-    const taskFile = null
-    if (taskFile) {
-      try {
-        const payload = JSON.parse(await taskFile.text())
-        tasks = Array.isArray(payload.tasks) ? payload.tasks : []
-      } catch { /* 빈 상태를 사용합니다. */ }
-    }
-    let events = []
-    if (false) {
-      try {
-        const payload = { events: [] }
-        events = Array.isArray(payload.events) ? payload.events : []
-      } catch { /* 일정이 없거나 손상되면 빈 상태를 사용합니다. */ }
-    }
+    const tasks = []
+    const events = []
     let homeCast = []
     if (castResult.data) {
       try {
@@ -383,48 +389,59 @@ export default function App() {
 
   async function createProduction(event) {
     event.preventDefault()
+    const title = String(productionForm.title || '').trim()
+    if (!title) return setNotice('공연명을 입력해 주세요.')
     setBusy(true)
-    const { data: createdProduction, error } = await supabase.from('productions').insert({
-      ...productionForm,
-      workspace_id: workspace.id,
-      created_by: session.user.id,
-      performance_start_date: productionForm.performance_start_date || null,
-    }).select().single()
-    if (error) setNotice(`공연 생성 실패: ${error.message}`)
-    else {
-      setProductionForm(emptyProduction)
-      setShowProductionForm(false)
-      await loadProductions(workspace.id)
-      if (createdProduction) {
-        setSelected(createdProduction)
-        window.setTimeout(() => setProductionTab('import'), 0)
-        setNotice('공연을 만들었어요. 기존 자료가 있다면 지금 자동 업로드로 정리하세요.')
+    try {
+      const { data: createdProduction, error } = await supabase.from('productions').insert({
+        ...productionForm,
+        title,
+        venue: String(productionForm.venue || '').trim(),
+        workspace_id: workspace.id,
+        created_by: session.user.id,
+        performance_start_date: productionForm.performance_start_date || null,
+      }).select().single()
+      if (error) setNotice(`공연 생성 실패: ${error.message}`)
+      else {
+        setProductionForm(emptyProduction)
+        setShowProductionForm(false)
+        await loadProductions(workspace.id)
+        if (createdProduction) {
+          setSelected(createdProduction)
+          window.setTimeout(() => setProductionTab('import'), 0)
+          setNotice('공연을 만들었어요. 기존 자료가 있다면 지금 자동 업로드로 정리하세요.')
+        }
       }
-    }
-    setBusy(false)
+    } catch (error) {
+      setNotice(`공연 생성 실패: ${error.message}`)
+    } finally { setBusy(false) }
   }
 
   async function deleteProduction(id, options = {}) {
     if (!options.skipConfirm && !window.confirm('이 공연 전체를 삭제할까요? 이 작업은 되돌릴 수 없어요.')) return false
     setBusy(true)
-    const prefix = `${workspace.id}/${id}`
-    const paths = await listStorageFilesRecursive(prefix)
-    if (paths.length) {
-      const { error: storageError } = await supabase.storage.from('stageflow-files').remove(paths)
-      if (storageError) { setBusy(false); setNotice(`공연 파일 삭제 실패: ${storageError.message}`); return false }
-    }
-    const { data: deleted, error } = await supabase.from('productions').delete().eq('id', id).select('id')
-    setBusy(false)
-    if (error) { setNotice(`삭제 실패: ${error.message}`); return false }
-    if (!deleted?.length) { setNotice('공연을 삭제하지 못했어요. 공연을 만든 계정인지 확인해 주세요.'); return false }
-    if (defaultProductionId === id) {
-      window.localStorage.removeItem('stageflow:default-production')
-      setDefaultProductionId('')
-    }
-    setSelected(null)
-    await loadProductions(workspace.id)
-    setNotice('공연과 연결된 모든 자료를 삭제했어요.')
-    return true
+    try {
+      const prefix = `${workspace.id}/${id}`
+      const paths = await listStorageFilesRecursive(prefix)
+      if (paths.length) {
+        const { error: storageError } = await supabase.storage.from('stageflow-files').remove(paths)
+        if (storageError) throw new Error(`공연 파일 삭제 실패: ${storageError.message}`)
+      }
+      const { data: deleted, error } = await supabase.from('productions').delete().eq('id', id).select('id')
+      if (error) throw new Error(`삭제 실패: ${error.message}`)
+      if (!deleted?.length) throw new Error('공연을 삭제하지 못했어요. 공연을 만든 계정인지 확인해 주세요.')
+      if (defaultProductionId === id) {
+        window.localStorage.removeItem('stageflow:default-production')
+        setDefaultProductionId('')
+      }
+      setSelected(null)
+      await loadProductions(workspace.id)
+      setNotice('공연과 연결된 모든 자료를 삭제했어요.')
+      return true
+    } catch (error) {
+      setNotice(error.message)
+      return false
+    } finally { setBusy(false) }
   }
 
   async function listStorageFilesRecursive(prefix) {
@@ -465,10 +482,15 @@ export default function App() {
   }
 
   async function updateProduction(values) {
+    const title = String(values?.title || '').trim()
+    if (!title) {
+      setNotice('공연명을 입력해 주세요.')
+      return false
+    }
     const payload = {
-      title: values.title.trim(),
-      venue: values.venue.trim(),
-      performance_start_date: values.performance_start_date || null,
+      title,
+      venue: String(values?.venue || '').trim(),
+      performance_start_date: values?.performance_start_date || null,
       ...(Object.prototype.hasOwnProperty.call(values, 'notion_data_source_id') ? { notion_data_source_id: values.notion_data_source_id || null } : {}),
     }
     const { data, error } = await supabase.from('productions').update(payload).eq('id', selected.id).select().single()
@@ -495,19 +517,30 @@ export default function App() {
 
   async function createScene(event) {
     event.preventDefault()
+    const title = String(sceneForm.title || '').trim()
+    const sceneNo = Number(sceneForm.scene_no)
+    if (!title) return setNotice('장면 제목을 입력해 주세요.')
+    if (!Number.isFinite(sceneNo) || sceneNo < 0) return setNotice('장면 번호를 0 이상의 숫자로 입력해 주세요.')
     setBusy(true)
-    const { error } = await supabase.from('scenes').insert({
-      ...sceneForm,
-      production_id: selected.id,
-      sort_order: scenes.length,
-    })
-    if (error) setNotice(`장면 생성 실패: ${error.message}`)
-    else {
-      setSceneForm({ ...emptyScene, scene_no: scenes.length + 2 })
-      setShowSceneForm(false)
-      await loadScenes(selected.id)
-    }
-    setBusy(false)
+    try {
+      const { error } = await supabase.from('scenes').insert({
+        ...sceneForm,
+        title,
+        act_no: Math.max(1, Number(sceneForm.act_no) || 1),
+        scene_no: sceneNo,
+        summary: String(sceneForm.summary || '').trim(),
+        production_id: selected.id,
+        sort_order: scenes.length,
+      })
+      if (error) setNotice(`장면 생성 실패: ${error.message}`)
+      else {
+        setSceneForm({ ...emptyScene, scene_no: Math.max(1, ...scenes.map((scene) => Number(scene.scene_no) || 0)) + 1 })
+        setShowSceneForm(false)
+        await loadScenes(selected.id)
+      }
+    } catch (error) {
+      setNotice(`장면 생성 실패: ${error.message}`)
+    } finally { setBusy(false) }
   }
 
   async function deleteScene(id) {
@@ -518,11 +551,15 @@ export default function App() {
   }
 
   async function updateScene(id, values) {
+    const title = String(values?.title || '').trim()
+    const sceneNo = Number(values?.scene_no)
+    if (!title) { setNotice('장면 제목을 입력해 주세요.'); return false }
+    if (!Number.isFinite(sceneNo) || sceneNo < 0) { setNotice('장면 번호를 0 이상의 숫자로 입력해 주세요.'); return false }
     const payload = {
-      title: values.title.trim(),
-      act_no: Number(values.act_no) || 1,
-      scene_no: Number(values.scene_no),
-      summary: values.summary.trim(),
+      title,
+      act_no: Math.max(1, Number(values?.act_no) || 1),
+      scene_no: sceneNo,
+      summary: String(values?.summary || '').trim(),
     }
     const { error } = await supabase.from('scenes').update(payload).eq('id', id)
     if (error) {
@@ -536,6 +573,7 @@ export default function App() {
 
   async function readPdf(file, archive = true) {
     if (!file) return
+    if (file.size > 50 * 1024 * 1024) return setNotice(`PDF는 50MB 이하만 분석할 수 있어요. 현재 파일: ${formatBytes(file.size)}`)
     setImportingPdf(true)
     setNotice('PDF에서 글자를 읽는 중이에요…')
     try {
@@ -638,6 +676,7 @@ export default function App() {
 
   async function readSpreadsheet(file, archive = true) {
     if (!file) return
+    if (file.size > 20 * 1024 * 1024) return setNotice(`표 파일은 20MB 이하만 분석할 수 있어요. 현재 파일: ${formatBytes(file.size)}`)
     setImportingPdf(true)
     setNotice('표 파일의 모든 시트와 행·열을 읽고 있어요…')
     try {
@@ -675,30 +714,35 @@ export default function App() {
     setImportText(sourceText)
     setAiAnalyzing(true)
     setNotice('AI가 대본의 장면·인물·넘버·소품을 분석하고 있어요…')
-    const { data, error } = await supabase.functions.invoke('analyze-production', {
-      body: { text: sourceText.slice(0, 120000), productionTitle: selected.title },
-    }).select().single()
-    if (error) {
-      let detail = error.message
-      try {
-        const payload = await error.context?.json()
-        detail = payload?.error || detail
-      } catch {
-        // The response body may already be consumed; use the SDK message instead.
-      }
-      if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
-        applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.', sourceText)
-      } else if (/OPENAI_API_KEY/i.test(detail)) {
-        applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.', sourceText)
+    try {
+      const { data, error } = await supabase.functions.invoke('analyze-production', {
+        body: { text: sourceText.slice(0, 120000), productionTitle: selected.title },
+      })
+      if (error) {
+        let detail = error.message
+        try {
+          const payload = await error.context?.clone?.().json()
+          detail = payload?.error || detail
+        } catch {
+          // The response body may already be consumed; use the SDK message instead.
+        }
+        if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
+          applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.', sourceText)
+        } else if (/OPENAI_API_KEY/i.test(detail)) {
+          applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.', sourceText)
+        } else {
+          applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`, sourceText)
+        }
       } else {
-        applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`, sourceText)
+        const parsed = normalizeAiScenes(data?.scenes)
+        setImportRows(parsed)
+        setNotice(parsed.length ? `AI가 ${parsed.length}개 장면과 연결 정보를 정리했어요.` : 'AI 응답에서 장면을 찾지 못했어요.')
       }
-    } else {
-      const parsed = normalizeAiScenes(data?.scenes)
-      setImportRows(parsed)
-      setNotice(parsed.length ? `AI가 ${parsed.length}개 장면과 연결 정보를 정리했어요.` : 'AI 응답에서 장면을 찾지 못했어요.')
+    } catch (error) {
+      applyRuleFallback(`AI 분석 중 오류가 발생해 규칙 분석으로 전환했어요. (${error.message})`, sourceText)
+    } finally {
+      setAiAnalyzing(false)
     }
-    setAiAnalyzing(false)
   }
 
   function applyRuleFallback(message, sourceText = importText) {
@@ -916,7 +960,6 @@ export default function App() {
 
   async function reorderMusic(sceneNo, fromPath, toPath) {
     if (!fromPath || !toPath || fromPath === toPath) return
-    const key = String(sceneNo)
     const files = [...(musicByScene[sceneNo] || [])]
     const from = files.findIndex((item) => item.path === fromPath)
     const to = files.findIndex((item) => item.path === toPath)
@@ -1035,7 +1078,7 @@ export default function App() {
   async function updateCastMember(id, values) {
     const next = castMembers.map((member) => member.id === id ? { ...member, ...values, name: String(values.name || '').trim(), gender: ['남', '여'].includes(values.gender) ? values.gender : '미지정', pairGroup: String(values.pairGroup || '').trim(), roleName: String(values.roleName || '').trim(), subRoleName: String(values.subRoleName || '').trim(), notes: String(values.notes || '').trim() } : member)
     const saved = await persistCastData(next)
-    if (saved) setNotice(`${values.name.trim()} 배우 정보를 수정했어요.`)
+    if (saved) setNotice(`${String(values.name || '').trim() || '배우'} 정보를 수정했어요.`)
     return saved
   }
 
@@ -1220,14 +1263,14 @@ export default function App() {
     const next = propItems.map((item) => item.id === id ? {
       ...item,
       ...values,
-      name: values.name.trim(),
+      name: String(values.name || '').trim(),
       sceneNo: Number(values.sceneNo) || null,
-      inBy: values.inBy.trim(),
-      outBy: values.outBy.trim(),
-      note: values.note.trim(),
+      inBy: String(values.inBy || '').trim(),
+      outBy: String(values.outBy || '').trim(),
+      note: String(values.note || '').trim(),
     } : item)
     const saved = await persistPropData(next)
-    if (saved) setNotice(`${values.name.trim()} 정보를 수정했어요.`)
+    if (saved) setNotice(`${String(values.name || '').trim() || '소품'} 정보를 수정했어요.`)
     return saved
   }
 
@@ -1288,7 +1331,7 @@ export default function App() {
   }, [selected])
 
   if (loading) return <Loading />
-  if (!session) return <Auth email={email} setEmail={setEmail} password={password} setPassword={setPassword} passwordConfirm={passwordConfirm} setPasswordConfirm={setPasswordConfirm} authMode={authMode} setAuthMode={setAuthMode} submit={submitAuth} notice={notice} busy={busy} />
+  if (!session) return <Auth email={email} setEmail={setEmail} password={password} setPassword={setPassword} passwordConfirm={passwordConfirm} setPasswordConfirm={setPasswordConfirm} authMode={authMode} setAuthMode={setAuthMode} submit={submitAuth} notice={notice} setNotice={setNotice} busy={busy} />
   if (!workspace) return (
     <main className="auth-page"><section className="auth-card">
       <BrandMark icon={<Sparkles size={30} />} />
@@ -1606,7 +1649,7 @@ function mergeCastFromScenes(existing, scenes) {
   return members
 }
 
-function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, busy }) {
+function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, setNotice, busy }) {
   return <main className="auth-page"><section className="auth-card">
     <BrandMark icon={<Theater size={34} />} /><p className="eyebrow">MUSICAL PRODUCTION OS</p><h1>StageFlow</h1>
     <p className="muted">공연 준비부터 실전 큐 진행까지, 하나의 흐름으로.</p>
@@ -2432,16 +2475,28 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
     if (!Object.values(targets).some(Boolean)) return setStatus('가져올 항목을 하나 이상 선택해 주세요.')
     setSyncing(true); setStatus('Notion 데이터를 분석하는 중이에요…')
     setDataSourceId(sourceId)
-    const saved = await updateProduction({ ...production, notion_data_source_id: sourceId })
-    if (!saved) { setSyncing(false); return setStatus('Notion 연결 정보를 저장하지 못했어요.') }
-    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: sourceId, targets } })
-    if (error || data?.error) setStatus(`Notion 불러오기에 실패했어요. ${data?.error || error?.message || '연결 공유와 서버 설정을 확인해 주세요.'}`)
-    else {
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: sourceId, targets } })
+      if (error || data?.error) {
+        let detail = data?.error || error?.message || '연결 공유와 서버 설정을 확인해 주세요.'
+        try {
+          const payload = await error?.context?.clone?.().json()
+          detail = payload?.error || payload?.message || detail
+        } catch {
+          // Use the SDK message when the response body is unavailable.
+        }
+        setStatus(`Notion 불러오기에 실패했어요. ${detail}`)
+        return
+      }
+      const resolvedSourceId = data?.dataSourceId || sourceId
       const importedRows = Array.isArray(data?.rows) ? mergeDuplicateImportRows(data.rows) : []
+      setDataSourceId(resolvedSourceId)
       setRows(importedRows)
-      setStatus(`${importedRows.length}개 장면의 정보를 미리보기에 불러왔어요.${data?.skipped ? ` 씬 번호가 없는 ${data.skipped}개 행은 제외했어요.` : ''} 아래에서 신규 추가 또는 기존 병합을 선택해 주세요.`)
-    }
-    setSyncing(false)
+      await updateProduction({ ...production, notion_data_source_id: resolvedSourceId })
+      setStatus(`${importedRows.length}개 장면의 정보를 미리보기에 불러왔어요.${data?.sourceName ? ` · ${data.sourceName}` : ''}${data?.skipped ? ` 씬 번호가 없는 ${data.skipped}개 행은 제외했어요.` : ''} 아래에서 신규 추가 또는 기존 병합을 선택해 주세요.`)
+    } catch (error) {
+      setStatus(`Notion 불러오기에 실패했어요. ${error.message || '잠시 후 다시 시도해 주세요.'}`)
+    } finally { setSyncing(false) }
   }
   async function disconnect() {
     setSyncing(true)
@@ -2493,8 +2548,6 @@ function SceneCard({ scene, update, remove }) {
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState({ title: scene.title, act_no: scene.act_no, scene_no: scene.scene_no, summary: scene.summary || '' })
-  const summaryLines = (scene.summary || '').split('\n').map((line) => line.trim()).filter(Boolean)
-  const summaryPreview = summaryLines.find((line) => !line.startsWith('[') && !line.startsWith('-')) || summaryLines[0] || '등록된 상세 정보가 없어요.'
   async function save(event) {
     event.preventDefault()
     if (!draft.title.trim()) return
@@ -2517,7 +2570,6 @@ function SceneCard({ scene, update, remove }) {
       <div className="scene-hub-actions"><button onClick={() => setEditing(true)}><Pencil /> 정보 수정</button><button className="danger" onClick={remove}><Trash2 /> 장면 삭제</button></div>
     </div>}
   </article>
-  return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
 function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
@@ -3662,8 +3714,8 @@ function BrandMark({ icon }) { return <div className="brand-mark">{icon}</div> }
 function Loading() { return <div className="center"><div className="spinner" /><span>StageFlow 불러오는 중…</span></div> }
 
 function splitCells(value) {
-  const delimiter = value.includes('\t') ? /\t+/ : value.includes('|') ? /\s*\|\s*/ : / {2,}|,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/
-  return value.split(delimiter).map((cell) => cell.trim().replace(/^\"|\"$/g, '')).filter(Boolean)
+  const delimiter = value.includes('\t') ? /\t+/ : value.includes('|') ? /\s*\|\s*/ : / {2,}|,(?=(?:[^"]*"[^"]*")*[^"]*$)/
+  return value.split(delimiter).map((cell) => cell.trim().replace(/^"|"$/g, '')).filter(Boolean)
 }
 
 function normalizeMatch(value) {
@@ -3780,7 +3832,7 @@ function parseScriptByMarkers(source) {
 
       const propLine = line.match(/^(소품|대도구)\s*[:：]\s*(.+)$/i)
       if (propLine) {
-        propLine[2].split(/\s*[\/|·]\s*|\s*,\s*/).filter(Boolean).forEach((name) => {
+        propLine[2].split(/\s*[/|·]\s*|\s*,\s*/).filter(Boolean).forEach((name) => {
           if (!/^(없음|미정|-)$/.test(name)) props.push({ kind: propLine[1] === '대도구' ? '대도구' : '소품', name: name.trim(), inBy: '', outBy: '', note: '담당자 확인 필요' })
         })
       }

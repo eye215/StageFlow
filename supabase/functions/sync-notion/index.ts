@@ -37,6 +37,42 @@ const mergeText = (left = '', right = '') => {
   return [...new Map(values.map((value) => [value.toLowerCase().replace(/\s/g, ''), value])).values()].join(' / ')
 }
 
+const notionFailure = async (response: Response, action: string) => {
+  let message = ''
+  try {
+    const payload = await response.json()
+    message = payload?.message || payload?.code || ''
+  } catch {
+    message = await response.text().catch(() => '')
+  }
+  if (response.status === 401) return new Error('Notion 토큰이 올바르지 않아요. Edge Function의 NOTION_TOKEN을 다시 확인해 주세요.')
+  if (response.status === 403) return new Error('Notion 연결에 콘텐츠 읽기 권한이 없어요. Integration의 Read content 권한을 켜주세요.')
+  if (response.status === 404) return new Error('Notion 데이터베이스를 찾지 못했어요. 원본 데이터베이스의 ··· → 연결 추가에서 이 Integration을 공유해 주세요.')
+  if (response.status === 429) return new Error('Notion 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.')
+  return new Error(`${action} 실패 (${response.status})${message ? `: ${message}` : ''}`)
+}
+
+const queryDataSource = (sourceId: string, cursor?: string) => fetch(`https://api.notion.com/v1/data_sources/${sourceId}/query`, {
+  method: 'POST',
+  headers: notionHeaders(),
+  body: JSON.stringify({ page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
+})
+
+const resolveDataSource = async (inputId: string) => {
+  const direct = await queryDataSource(inputId)
+  if (direct.ok) return { id: inputId, name: '', firstPage: await direct.json() }
+  if (direct.status !== 404) throw await notionFailure(direct, 'Notion 데이터 조회')
+
+  const database = await fetch(`https://api.notion.com/v1/databases/${inputId}`, { headers: notionHeaders() })
+  if (!database.ok) throw await notionFailure(database, 'Notion 데이터베이스 확인')
+  const payload = await database.json()
+  const source = payload?.data_sources?.[0]
+  if (!source?.id) throw new Error('이 Notion 데이터베이스에 연결 가능한 Data Source가 없어요.')
+  const firstPage = await queryDataSource(source.id)
+  if (!firstPage.ok) throw await notionFailure(firstPage, 'Notion Data Source 조회')
+  return { id: source.id, name: source.name || '', firstPage: await firstPage.json() }
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors })
   try {
@@ -44,23 +80,25 @@ Deno.serve(async (request) => {
     const auth = request.headers.get('Authorization') || ''
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: auth } } })
     const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
+    if (!productionId) throw new Error('공연 ID가 필요합니다.')
     const targets = { scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true, ...(requestedTargets || {}) }
     const { data: production, error: productionError } = await supabase.from('productions').select('id, notion_data_source_id').eq('id', productionId).single()
     if (productionError) throw productionError
-    const sourceId = normalizeSourceId(dataSourceId || production.notion_data_source_id || '')
-    if (!sourceId) throw new Error('Notion Data Source ID가 필요합니다.')
+    const requestedSourceId = normalizeSourceId(dataSourceId || production.notion_data_source_id || '')
+    if (!requestedSourceId) throw new Error('Notion Data Source ID가 필요합니다.')
+
+    const resolved = await resolveDataSource(requestedSourceId)
+    const sourceId = resolved.id
 
     const pages: any[] = []
-    let cursor: string | undefined
-    do {
-      const response = await fetch(`https://api.notion.com/v1/data_sources/${sourceId}/query`, {
-        method: 'POST', headers: notionHeaders(), body: JSON.stringify({ page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
-      })
-      if (!response.ok) throw new Error(`Notion 읽기 실패 (${response.status}): ${await response.text()}`)
-      const payload = await response.json()
+    let payload = resolved.firstPage
+    while (payload) {
       pages.push(...(payload.results || []))
-      cursor = payload.has_more ? payload.next_cursor : undefined
-    } while (cursor)
+      if (!payload.has_more || !payload.next_cursor) break
+      const response = await queryDataSource(sourceId, payload.next_cursor)
+      if (!response.ok) throw await notionFailure(response, 'Notion 다음 페이지 조회')
+      payload = await response.json()
+    }
 
     const rows = new Map<number, any>()
     for (const page of pages) {
@@ -111,8 +149,9 @@ Deno.serve(async (request) => {
     }
 
     const skipped = pages.filter((page) => !numeric(pick(page.properties || {}, ['씬 번호', '장면 번호', 'Scene No', 'Scene', 'SCENE']))).length
-    await supabase.from('productions').update({ notion_data_source_id: sourceId, notion_last_synced_at: new Date().toISOString() }).eq('id', productionId)
-    return new Response(JSON.stringify({ rows: normalizedRows, imported: normalizedRows.length, skipped }), { headers: { ...cors, 'Content-Type': 'application/json' } })
+    const { error: syncError } = await supabase.from('productions').update({ notion_data_source_id: sourceId, notion_last_synced_at: new Date().toISOString() }).eq('id', productionId)
+    if (syncError) throw syncError
+    return new Response(JSON.stringify({ rows: normalizedRows, imported: normalizedRows.length, skipped, dataSourceId: sourceId, sourceName: resolved.name }), { headers: { ...cors, 'Content-Type': 'application/json' } })
   } catch (error) {
     return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } })
   }
