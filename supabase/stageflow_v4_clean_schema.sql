@@ -68,10 +68,12 @@ create table if not exists public.scene_cast (
   scene_id uuid not null references public.scenes(id) on delete cascade,
   cast_assignment_id uuid not null references public.cast_assignments(id) on delete cascade,
   appearance_type text not null default 'onstage' check (appearance_type in ('main', 'onstage', 'back', 'standby')),
+  choreography_participates boolean not null default false,
   entrance_note text not null default '',
   exit_note text not null default '',
   unique (scene_id, cast_assignment_id, appearance_type)
 );
+alter table public.scene_cast add column if not exists choreography_participates boolean not null default false;
 
 -- Canonical read model:
 -- production -> scene -> role depth 1 -> role depth 2 -> pair -> actor.
@@ -94,6 +96,7 @@ select
   person.name as actor_name,
   assignment.id as cast_assignment_id,
   scene_cast.appearance_type,
+  scene_cast.choreography_participates,
   scene_cast.entrance_note,
   scene_cast.exit_note
 from public.cast_assignments assignment

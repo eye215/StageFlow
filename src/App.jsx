@@ -249,7 +249,11 @@ export default function App() {
   async function loadInviteRoles(productionId) {
     const { data, error } = await supabase.storage.from('stageflow-files').download(castDataPath(productionId))
     if (error) return setInviteCastMembers([])
-    try { const parsed = JSON.parse(await data.text()); setInviteCastMembers(Array.isArray(parsed.members) ? parsed.members : []) } catch { setInviteCastMembers([]) }
+    try {
+      const parsed = JSON.parse(await data.text())
+      const assignments = Array.isArray(parsed.members) ? parsed.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment).filter(isCastAssignment) : []
+      setInviteCastMembers(assignments)
+    } catch { setInviteCastMembers([]) }
   }
   async function createTeamInvite(targetProductionId) {
     const productionId = typeof targetProductionId === 'string' ? targetProductionId : (defaultProductionId || productions[0]?.id)
@@ -374,7 +378,9 @@ export default function App() {
     if (castResult.data) {
       try {
         const payload = JSON.parse(await castResult.data.text())
-        homeCast = Array.isArray(payload.members) ? payload.members : []
+        homeCast = Array.isArray(payload.members)
+          ? ensureActorRosterRecords(payload.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment))
+          : []
       } catch { /* 배우 자료가 없으면 빈 상태를 사용합니다. */ }
     }
     setHomeCastMembers(homeCast)
@@ -999,7 +1005,7 @@ export default function App() {
     if (error) { setCastMembers([]); setCastPairs([]); return }
     try {
       const parsed = JSON.parse(await data.text())
-      const members = Array.isArray(parsed.members) ? parsed.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment) : []
+      const members = Array.isArray(parsed.members) ? ensureActorRosterRecords(parsed.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment)) : []
       setCastMembers(members)
       const savedPairs = Array.isArray(parsed.pairs) ? parsed.pairs.flatMap(splitPairEntries) : []
       setCastPairs([...new Set([...savedPairs, ...members.map((member) => member.pairGroup?.trim()).filter(Boolean)])])
@@ -1010,9 +1016,9 @@ export default function App() {
   }
 
   async function persistCastData(members, pairs = castPairs) {
-    const normalizedMembers = members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment)
+    const normalizedMembers = ensureActorRosterRecords(members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment))
     const normalizedPairs = [...new Set([...(pairs || []).flatMap(splitPairEntries), ...normalizedMembers.map((member) => member.pairGroup)].map((pair) => String(pair || '').trim()).filter(Boolean))]
-    const body = new Blob([JSON.stringify({ version: 6, model: 'role-pair-actor-assignments', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const body = new Blob([JSON.stringify({ version: 7, model: 'role-pair-actor-roster', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
     const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
     if (error) {
       setNotice(`배우 정보 저장 실패: ${error.message}`)
@@ -1041,9 +1047,11 @@ export default function App() {
       return
     }
     setBusy(true)
-    const member = normalizeCastAssignment({ id: crypto.randomUUID(), ...castForm, name: actorName, pairGroup, roleName, subRoleName: castForm.subRoleName.trim(), notes: castForm.notes.trim(), sceneNumbers: [] })
+    const member = normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'cast_assignment', ...castForm, name: actorName, pairGroup, roleName, subRoleName: castForm.subRoleName.trim(), notes: castForm.notes.trim(), sceneNumbers: [] })
+    const hasRosterActor = castMembers.some((item) => isActorRoster(item) && canonicalActor(item.name) === canonicalActor(actorName) && normalizeMatch(item.pairGroup) === normalizeMatch(pairGroup))
+    const rosterActor = normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'actor_roster', name: actorName, pairGroup, roleName: '', gender: castForm.gender, notes: '' })
     const nextPairs = member.pairGroup && !castPairs.includes(member.pairGroup) ? [...castPairs, member.pairGroup] : castPairs
-    if (await persistCastData([...castMembers, member], nextPairs)) {
+    if (await persistCastData([...castMembers, ...(hasRosterActor ? [] : [rosterActor]), member], nextPairs)) {
       setCastForm({ name: '', gender: '미지정', pairGroup: '', roleName: '', subRoleName: '', type: '주연', notes: '' })
       setShowCastForm(false)
       setNotice(`${member.roleName} · ${member.pairGroup}에 ${member.name} 배우를 캐스팅했어요.`)
@@ -1086,6 +1094,67 @@ export default function App() {
     return persistCastData(castMembers, castPairs.filter((pair) => normalizeMatch(pair) !== normalizeMatch(name)))
   }
 
+  async function addCastRosterActor(pairName, actorName) {
+    const pairGroup = String(pairName || '').trim()
+    const name = String(actorName || '').trim()
+    if (!pairGroup || !name) return false
+    const duplicate = castMembers.some((member) => isActorRoster(member) && canonicalActor(member.name) === canonicalActor(name)
+      && normalizeMatch(member.pairGroup) === normalizeMatch(pairGroup))
+    if (duplicate) {
+      setNotice(`${pairGroup}에 ${name} 배우가 이미 있어요.`)
+      return false
+    }
+    const actor = normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'actor_roster', name, pairGroup, roleName: '', notes: '' })
+    const nextPairs = castPairs.some((pair) => normalizeMatch(pair) === normalizeMatch(pairGroup)) ? castPairs : [...castPairs, pairGroup]
+    const saved = await persistCastData([...castMembers, actor], nextPairs)
+    if (saved) setNotice(`${pairGroup} 배우 명단에 ${name}을(를) 추가했어요.`)
+    return saved
+  }
+
+  async function removeCastRosterActor(id) {
+    const actor = castMembers.find((member) => member.id === id && isActorRoster(member))
+    if (!actor) return false
+    const assigned = castMembers.some((member) => isCastAssignment(member)
+      && canonicalActor(member.name) === canonicalActor(actor.name)
+      && normalizeMatch(member.pairGroup) === normalizeMatch(actor.pairGroup))
+    if (assigned) {
+      setNotice('배역이 연결된 배우는 캐스팅을 먼저 삭제해 주세요.')
+      return false
+    }
+    return persistCastData(castMembers.filter((member) => member.id !== id))
+  }
+
+  async function assignCastRole({ roleName, subRoleName = '', type = '주연', sceneNumbers = [], pairGroup, actorName }) {
+    const role = String(roleName || '').trim()
+    const pair = String(pairGroup || '').trim()
+    const actor = String(actorName || '').trim()
+    if (!role || !pair || !actor) return false
+    const duplicate = castMembers.some((member) => isCastAssignment(member)
+      && normalizeMatch(member.roleName) === normalizeMatch(role)
+      && normalizeMatch(member.subRoleName) === normalizeMatch(subRoleName)
+      && normalizeMatch(member.pairGroup) === normalizeMatch(pair)
+      && canonicalActor(member.name) === canonicalActor(actor))
+    if (duplicate) {
+      setNotice(`${role} · ${pair} · ${actor} 캐스팅은 이미 연결되어 있어요.`)
+      return false
+    }
+    const roster = castMembers.find((member) => isActorRoster(member) && canonicalActor(member.name) === canonicalActor(actor)
+      && normalizeMatch(member.pairGroup) === normalizeMatch(pair))
+    const assignment = normalizeCastAssignment({
+      id: crypto.randomUUID(), entityType: 'cast_assignment', name: actor, pairGroup: pair,
+      roleName: role, subRoleName, type, gender: roster?.gender || '미지정',
+      notes: '배역 캐스팅에서 연결', sceneNumbers,
+    })
+    const next = roster ? [...castMembers, assignment] : [
+      ...castMembers,
+      normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'actor_roster', name: actor, pairGroup: pair, roleName: '' }),
+      assignment,
+    ]
+    const saved = await persistCastData(next)
+    if (saved) setNotice(`${role} · ${pair}에 ${actor} 배우를 연결했어요.`)
+    return saved
+  }
+
   async function removeCastMember(id) {
     if (!window.confirm('이 배우 정보를 삭제할까요?')) return
     await persistCastData(castMembers.filter((member) => member.id !== id))
@@ -1108,6 +1177,16 @@ export default function App() {
     await persistCastData(next)
   }
 
+  async function toggleCastChoreography(memberId, sceneNo) {
+    const next = castMembers.map((member) => {
+      if (member.id !== memberId) return member
+      const numbers = member.choreographySceneNumbers || []
+      const hasScene = numbers.includes(sceneNo)
+      return { ...member, choreographySceneNumbers: hasScene ? numbers.filter((value) => value !== sceneNo) : [...numbers, sceneNo].sort((a, b) => a - b) }
+    })
+    await persistCastData(next)
+  }
+
   async function importCastFromScenes() {
     const next = mergeCastFromScenes(castMembers, scenes)
     const added = next.length - castMembers.length
@@ -1117,11 +1196,11 @@ export default function App() {
       if (!previous) return sum
       return sum + (member.sceneNumbers || []).filter((sceneNo) => !previous.has(sceneNo)).length
     }, 0)
-    if (!added && !linked) return setNotice('장면에서 새로 가져오거나 연결할 배우·배역이 없어요.')
+    if (!added && !linked) return setNotice('장면에서 새로 가져오거나 연결할 배역이 없어요.')
     setBusy(true)
     if (await persistCastData(next)) {
-      const result = [added ? `새 배우·배역 ${added}개` : '', linked ? `기존 배우 등장 장면 ${linked}개` : ''].filter(Boolean).join(' · ')
-      setNotice(`${result}를 장면 정보에서 자동 연결했어요.`)
+      const result = [added ? `새 배역 후보 ${added}개` : '', linked ? `기존 캐스팅 등장 장면 ${linked}개` : ''].filter(Boolean).join(' · ')
+      setNotice(`${result}를 정리했어요. 배역별로 페어 배우를 선택해 주세요.`)
     }
     setBusy(false)
   }
@@ -1151,7 +1230,7 @@ export default function App() {
       }))
     })
     for (const member of expandedMembers) {
-      const key = [normalizeMatch(member.roleName || member.name), normalizeMatch(member.subRoleName), normalizeMatch(member.pairGroup), canonicalActor(member.name)].join('::')
+      const key = [member.entityType, normalizeMatch(member.roleName || member.name), normalizeMatch(member.subRoleName), normalizeMatch(member.pairGroup), canonicalActor(member.name)].join('::')
       if (!grouped.has(key)) { grouped.set(key, { ...member, sceneNumbers: [...new Set(member.sceneNumbers || [])] }); continue }
       const current = grouped.get(key)
       current.sceneNumbers = [...new Set([...(current.sceneNumbers || []), ...(member.sceneNumbers || [])])].sort((a, b) => Number(a) - Number(b))
@@ -1381,8 +1460,9 @@ export default function App() {
       uploadingMusic={uploadingMusic}
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
       castPairs={castPairs} addCastPair={addCastPair} renameCastPair={renameCastPair} removeCastPair={removeCastPair}
+      addCastRosterActor={addCastRosterActor} removeCastRosterActor={removeCastRosterActor} assignCastRole={assignCastRole}
       showCastForm={showCastForm} setShowCastForm={setShowCastForm}
-      addCastMember={addCastMember} updateCastMember={updateCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene} importCastFromScenes={importCastFromScenes}
+      addCastMember={addCastMember} updateCastMember={updateCastMember} removeCastMember={removeCastMember} toggleCastScene={toggleCastScene} toggleCastChoreography={toggleCastChoreography} importCastFromScenes={importCastFromScenes}
       consolidateCastDuplicates={consolidateCastDuplicates}
       undoCastNameCleanup={undoCastNameCleanup}
       propItems={propItems} propForm={propForm} setPropForm={setPropForm}
@@ -1464,7 +1544,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
     notice={notice} showForm={showForm} setShowForm={setShowForm} productionForm={productionForm} setProductionForm={setProductionForm}
     createProduction={createProduction} busy={busy} createTeamInvite={createTeamInvite} showRoleClaim={showRoleClaim}
     inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole}
-    castCount={castMembers.length}
+    castCount={new Set(castMembers.filter((member) => isActorRoster(member) || isCastAssignment(member)).map((member) => canonicalActor(member.name)).filter(Boolean)).size}
   />
   /* Legacy home is kept temporarily for migration comparison. */
   /* c8 ignore next */
@@ -1628,15 +1708,29 @@ function splitRoleEntries(value) {
 // therefore appear in several roles and pairs without those records colliding.
 function normalizeCastAssignment(member = {}) {
   const id = String(member.id || member.assignmentId || crypto.randomUUID())
-  const name = String(member.name || member.actorName || '').trim()
+  const rawName = String(member.name || member.actorName || '').trim()
   const roleName = String(member.roleName || member.roleDepth1 || '').trim()
   const subRoleName = String(member.subRoleName || member.roleDepth2 || '').trim()
   const pairGroup = String(member.pairGroup || member.pairName || '').trim()
+  const autoRolePlaceholder = Boolean(roleName && rawName && !pairGroup && normalizeMatch(roleName) === normalizeMatch(rawName))
+  const name = autoRolePlaceholder ? '' : rawName
+  const requestedType = String(member.entityType || '')
+  const entityType = autoRolePlaceholder
+    ? 'role_candidate'
+    : ['cast_assignment', 'actor_roster', 'role_candidate'].includes(requestedType)
+    ? requestedType
+    : roleName && name && pairGroup
+      ? 'cast_assignment'
+      : roleName && !name
+        ? 'role_candidate'
+        : name && pairGroup && !roleName
+          ? 'actor_roster'
+          : 'cast_assignment'
   return {
     ...member,
     id,
     assignmentId: id,
-    entityType: 'cast_assignment',
+    entityType,
     name,
     actorName: name,
     actorKey: canonicalActor(name),
@@ -1650,7 +1744,27 @@ function normalizeCastAssignment(member = {}) {
     type: ['주연', '조연', '앙상블'].includes(member.type) ? member.type : '주연',
     notes: String(member.notes || '').trim(),
     sceneNumbers: [...new Set((member.sceneNumbers || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
+    choreographySceneNumbers: [...new Set((member.choreographySceneNumbers || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
   }
+}
+
+const isCastAssignment = (member) => member?.entityType === 'cast_assignment'
+  && Boolean(member.name?.trim() && member.roleName?.trim() && member.pairGroup?.trim())
+const isActorRoster = (member) => member?.entityType === 'actor_roster'
+const isRoleCandidate = (member) => member?.entityType === 'role_candidate'
+
+function ensureActorRosterRecords(members = []) {
+  const result = [...members]
+  members.filter(isCastAssignment).forEach((assignment) => {
+    const exists = result.some((member) => isActorRoster(member)
+      && canonicalActor(member.name) === canonicalActor(assignment.name)
+      && normalizeMatch(member.pairGroup) === normalizeMatch(assignment.pairGroup))
+    if (!exists) result.push(normalizeCastAssignment({
+      id: crypto.randomUUID(), entityType: 'actor_roster', name: assignment.name,
+      pairGroup: assignment.pairGroup, roleName: '', gender: assignment.gender, notes: '',
+    }))
+  })
+  return result
 }
 
 function splitPairEntries(value = '') {
@@ -1680,18 +1794,24 @@ function expandLegacyCastAssignment(member = {}) {
 
 function mergeCastFromScenes(existing, scenes) {
   const members = existing.map((member) => normalizeCastAssignment({ ...member, sceneNumbers: [...(member.sceneNumbers || [])] }))
-  const findMember = (name, roleName) => members.find((member) => canonicalActor(member.name) === canonicalActor(name) && normalizeMatch(member.roleName || member.name) === normalizeMatch(roleName || name))
-  const add = (name, roleName, type, sceneNo) => {
-    const cleanName = name.trim()
+  const addRoleCandidate = (roleName, type, sceneNo) => {
     const cleanRole = roleName.trim()
-    if (!cleanName || /^(없음|미정|확인\s*필요|논의|\?)$/i.test(cleanName)) return
-    const current = findMember(cleanName, cleanRole)
-    if (current) {
-      if (!current.sceneNumbers.includes(sceneNo)) current.sceneNumbers.push(sceneNo)
-      current.sceneNumbers.sort((a, b) => a - b)
+    if (!cleanRole || /^(없음|미정|확인\s*필요|논의|\?)$/i.test(cleanRole)) return
+    const roleAssignments = members.filter((member) => isCastAssignment(member) && normalizeMatch(member.roleName) === normalizeMatch(cleanRole))
+    if (roleAssignments.length) {
+      roleAssignments.forEach((member) => {
+        if (!member.sceneNumbers.includes(sceneNo)) member.sceneNumbers.push(sceneNo)
+        member.sceneNumbers.sort((a, b) => a - b)
+      })
       return
     }
-    members.push(normalizeCastAssignment({ id: crypto.randomUUID(), name: cleanName, roleName: cleanRole, type, notes: '장면 자동정리에서 가져옴', sceneNumbers: [sceneNo] }))
+    const candidate = members.find((member) => isRoleCandidate(member) && normalizeMatch(member.roleName) === normalizeMatch(cleanRole))
+    if (candidate) {
+      if (!candidate.sceneNumbers.includes(sceneNo)) candidate.sceneNumbers.push(sceneNo)
+      candidate.sceneNumbers.sort((a, b) => a - b)
+      return
+    }
+    members.push(normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'role_candidate', name: '', pairGroup: '', roleName: cleanRole, type, notes: '대본에서 찾은 배역 · 페어별 배우 선택 필요', sceneNumbers: [sceneNo] }))
   }
 
   scenes.forEach((scene) => {
@@ -1705,13 +1825,9 @@ function mergeCastFromScenes(existing, scenes) {
         const paired = value.match(/^(.+?)\s*\((.+)\)\s*$/)
         if (paired) {
           const roleName = paired[1].trim()
-          splitRoleEntries(paired[2].replaceAll('·', ',').replaceAll('&', ',')).forEach((actor) => add(actor, roleName, type, Number(scene.scene_no)))
+          addRoleCandidate(roleName, type, Number(scene.scene_no))
         } else {
-          const roleMatches = members.filter((member) => normalizeMatch(member.roleName) === normalizeMatch(value))
-          const actorMatches = members.filter((member) => canonicalActor(member.name) === canonicalActor(value))
-          if (roleMatches.length) roleMatches.forEach((member) => add(member.name, member.roleName || value, type, Number(scene.scene_no)))
-          else if (actorMatches.length) actorMatches.forEach((member) => add(member.name, member.roleName || value, type, Number(scene.scene_no)))
-          else add(value, value, type, Number(scene.scene_no))
+          addRoleCandidate(value, type, Number(scene.scene_no))
         }
       })
     })
@@ -1749,8 +1865,9 @@ function ProfileSheet({ session, workspace, productions, defaultId, choose, crea
 
 function RoleClaimSheet({ members, choose, busy }) {
   const [query, setQuery] = useState('')
-  const claimedActors = new Set(members.filter((member) => member.userId).map((member) => canonicalActor(member.name)))
-  const available = members.filter((member) => !claimedActors.has(canonicalActor(member.name)) && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
+  const assignments = members.filter(isCastAssignment)
+  const claimedActors = new Set(assignments.filter((member) => member.userId).map((member) => canonicalActor(member.name)))
+  const available = assignments.filter((member) => !claimedActors.has(canonicalActor(member.name)) && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
   const actorGroups = available.reduce((groups, member) => {
     const key = canonicalActor(member.name) || member.id
     const group = groups.find((item) => item.key === key)
@@ -1863,7 +1980,7 @@ function SharedMusicPlayer({ controller, playlist, visible = true }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const current = scenes[showIndex]
   const pdfExtractionReport = props.pdfExtractionReport
   const consolidateCastDuplicates = props.consolidateCastDuplicates
@@ -1921,14 +2038,15 @@ function ProductionView(props) {
   const showCursorPath = `${workspace.id}/${production.id}/data/show-cursor.json`
   const showLogPath = `${workspace.id}/${production.id}/data/show-log.json`
   const runLogPath = `${workspace.id}/${production.id}/data/full-runs.json`
-  const briefingMember = castMembers.find((member) => member.id === briefingMemberId)
-  const briefingMembers = briefingMember ? castMembers.filter((member) => canonicalActor(member.name) === canonicalActor(briefingMember.name)) : []
-  const availableRunPairs = [...new Set([...(castPairs || []), ...castMembers.map((member) => member.pairGroup?.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ko'))
-  const runPairMembers = selectedRunPair ? castMembers.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair)) : castMembers
+  const castingAssignments = castMembers.filter(isCastAssignment)
+  const briefingMember = castingAssignments.find((member) => member.id === briefingMemberId)
+  const briefingMembers = briefingMember ? castingAssignments.filter((member) => canonicalActor(member.name) === canonicalActor(briefingMember.name)) : []
+  const availableRunPairs = [...new Set([...(castPairs || []), ...castingAssignments.map((member) => member.pairGroup?.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ko'))
+  const runPairMembers = selectedRunPair ? castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair)) : castingAssignments
   const runPairRoster = buildCastRoleHierarchy(runPairMembers)
   const runFeedbackActors = groupCastMembersByActor(runPairMembers)
   useEffect(() => {
-    if (briefingMemberId && selectedRunPair && !castMembers.some((member) => member.id === briefingMemberId && normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair))) {
+    if (briefingMemberId && selectedRunPair && !castingAssignments.some((member) => member.id === briefingMemberId && normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair))) {
       setBriefingMemberId('')
       window.localStorage.removeItem(`stageflow-briefing-${production.id}`)
     }
@@ -2130,7 +2248,7 @@ function ProductionView(props) {
   }, [tab, showController, showHold, showIndex, scenes.length])
   const currentSceneAssignments = current ? runPairMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentCast = groupCastMembersByRole(currentSceneAssignments)
-  const currentCharacters = current ? [...new Set(castMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)).map((member) => member.roleName?.trim()).filter(Boolean))] : []
+  const currentCharacters = current ? [...new Set(castMembers.filter((member) => !isActorRoster(member) && (member.sceneNumbers || []).includes(current.scene_no)).map((member) => member.roleName?.trim()).filter(Boolean))] : []
   const currentAssignedCharacters = new Set(currentSceneAssignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean))
   const missingCharacters = selectedRunPair ? currentCharacters.filter((character) => !currentAssignedCharacters.has(normalizeMatch(character))) : []
   const runCostumeChanges = useMemo(() => buildActorCostumeChanges(scenes, runPairMembers), [scenes, runPairMembers])
@@ -2196,8 +2314,8 @@ function ProductionView(props) {
   }
   const setupState = {
     script: scenes.length > 0,
-    actors: castMembers.length > 0,
-    casting: castMembers.some((member) => String(member.roleName || '').trim() && String(member.pairGroup || '').trim()),
+    actors: castMembers.some((member) => isActorRoster(member) || isCastAssignment(member)),
+    casting: castingAssignments.length > 0,
     operations: propItems.length > 0 || Object.values(musicByScene).some((files) => files?.length) || scenes.some((scene) => parseSceneCostumes(scene.summary).length || parseSceneCues(scene.summary).length),
   }
   const canRun = setupState.script && setupState.actors && setupState.casting
@@ -2209,7 +2327,7 @@ function ProductionView(props) {
       <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
       {tab === 'overview' && <><ProductionSetupProgress state={setupState} open={setTab} />{setupState.script ? <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} /> : <section className="setup-first-action"><FileText /><div><h2>대본을 등록해 주세요</h2><p>PDF·엑셀·텍스트를 올리면 장면과 등장인물을 먼저 정리합니다.</p></div><button className="primary" onClick={() => setTab('import')}>대본 등록 시작 <ChevronRight /></button></section>}</>}
       {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
-      {tab === 'cast' && <CastPanel members={castMembers} pairs={castPairs} addPair={addCastPair} renamePair={renameCastPair} removePair={removeCastPair} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
+      {tab === 'cast' && <CastPanel members={castMembers} pairs={castPairs} addPair={addCastPair} renamePair={renameCastPair} removePair={removeCastPair} addRosterActor={addCastRosterActor} removeRosterActor={removeCastRosterActor} assignRole={assignCastRole} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} toggleChoreography={toggleCastChoreography} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
@@ -2223,14 +2341,14 @@ function ProductionView(props) {
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <section className="actor-run-intro"><UserRound /><div><b>배우 런 연습</b><small>내 배역을 고르고 장면별 등장·의상·소품·음악을 확인하세요.</small></div></section>}
-      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고르면 그 페어에 배정된 배역과 배우만 전체 장면에 적용돼요.</p></div><div className="run-pair-options"><button className={!selectedRunPair ? 'selected' : ''} onClick={() => setSelectedRunPair('')}><CheckCircle2 /><span><b>전체 보기</b><small>모든 캐스팅 표시</small></span></button>{availableRunPairs.map((pair) => { const assignments = castMembers.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 전체 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.members.map((member) => member.name).join(' · ')}</span></article>)}</div>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
+      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고르면 그 페어에 배정된 배역과 배우만 전체 장면에 적용돼요.</p></div><div className="run-pair-options"><button className={!selectedRunPair ? 'selected' : ''} onClick={() => setSelectedRunPair('')}><CheckCircle2 /><span><b>전체 보기</b><small>모든 캐스팅 표시</small></span></button>{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 전체 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
       {tab === 'show' && <RunControl type={runType} setType={setRunType} session={runSession} elapsed={runElapsed} history={runHistory} current={current} start={startFullRun} finish={goNextWithTiming} enabled={showController} isLast={!next} />}
       {tab === 'show' && !runSession && !!runHistory.length && <RunHistory runs={runHistory} />}
       {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>한 배우가 여러 배역을 맡아도 입력칸은 하나이며, 해당 배우에게만 전달돼요.</p></div><div className="run-feedback-list">{runFeedbackActors.map((member) => { const actorKey = canonicalActor(member.name); return <label key={actorKey}><span><UserRound /><b>{member.name}</b><small>{member.roleName || '배역 미정'}{selectedRunPair ? ` · ${selectedRunPair}` : ''}</small></span><textarea value={feedbackDrafts[actorKey] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [actorKey]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label> })}</div>{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary"><Upload size={16} /> 개인 피드백 전달</button></div></form>}
       {tab === 'show' && !!showEvents.length && <ShowEventLog events={showEvents} />}
       <SharedMusicPlayer controller={sharedPlayback} playlist={sharedPlaylist} visible={tab === 'show'} />
       {tab === 'show' && current && selectedRunPair && <section className="run-pair-scene-summary"><div className="active-run-pair"><Combine /><span><small>RUN PAIR · SCENE {current.scene_no}</small><b>{selectedRunPair}</b></span><em>{currentSceneAssignments.length}개 캐스팅</em></div>{missingCharacters.length > 0 ? <div className="run-missing-cast"><AlertTriangle /><span><b>미배정 Character</b><small>{missingCharacters.join(' · ')}</small></span></div> : <div className="run-cast-complete"><CheckCircle2 /><span>이 장면의 Character가 모두 배정됐어요.</span></div>}{currentCostumeChanges.length > 0 && <div className="run-costume-changes"><Shirt /><div><b>의상·배역 체인지</b>{currentCostumeChanges.map((change) => <span key={`${change.actor}-${change.sceneNo}`}><strong>{change.actor}</strong><small>{change.previousRole} · {change.previousCostume} → {change.role} · {change.costume}</small></span>)}</div></div>}</section>}
-      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
+      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}{(member.choreographySceneNumbers || []).includes(current.scene_no) ? ' · 안무 참여' : ''}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} setup={setupState} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
@@ -2238,21 +2356,22 @@ function ProductionView(props) {
 }
 
 function ConnectedOverview({ progress, scenes, castMembers, propItems, musicByScene, open }) {
-  const actorGroups = [...castMembers.reduce((map, member) => {
+  const assignments = castMembers.filter(isCastAssignment)
+  const actorGroups = [...assignments.reduce((map, member) => {
     const key = canonicalActor(member.name) || member.id
     if (!map.has(key)) map.set(key, { key, name: member.name || '이름 미정', members: [] })
     map.get(key).members.push(member)
     return map
   }, new Map()).values()]
   const sceneConnections = scenes.map((scene) => {
-    const cast = castMembers.filter((member) => (member.sceneNumbers || []).some((number) => Number(number) === Number(scene.scene_no)))
+    const cast = assignments.filter((member) => (member.sceneNumbers || []).some((number) => Number(number) === Number(scene.scene_no)))
     const props = propItems.filter((item) => Number(item.sceneNo) === Number(scene.scene_no))
     const costumes = parseSceneCostumes(scene.summary)
     const music = musicByScene[scene.scene_no] || musicByScene[String(scene.scene_no)] || []
     return { scene, cast, props, costumes, music }
   })
   const issues = [
-    { key: 'cast', label: '장면 미연결 배역', count: castMembers.filter((member) => !(member.sceneNumbers || []).length).length, tab: 'cast' },
+    { key: 'cast', label: '장면 미연결 캐스팅', count: assignments.filter((member) => !(member.sceneNumbers || []).length).length, tab: 'cast' },
     { key: 'scenes', label: '배우 미연결 장면', count: sceneConnections.filter((item) => !item.cast.length).length, tab: 'scenes' },
     { key: 'props', label: '장면 미지정 소품', count: propItems.filter((item) => !item.sceneNo).length, tab: 'props' },
     { key: 'music', label: '음악 미연결 장면', count: sceneConnections.filter((item) => !item.music.length).length, tab: 'music' },
@@ -2354,22 +2473,23 @@ function BackupPanel({ workspace, production, scenes, castMembers, propItems, mu
 }
 
 function ProductionTeamPanel({ workspace, production, session, castMembers, invite, changeMyRole, busy }) {
+  const assignments = castMembers.filter(isCastAssignment)
   const [members, setMembers] = useState([])
-  const myCasts = castMembers.filter((member) => member.userId === session.user.id)
+  const myCasts = assignments.filter((member) => member.userId === session.user.id)
   const myCast = myCasts.length ? { ...myCasts[0], roleName: [...new Set(myCasts.map((member) => member.roleName || '배역 미정'))].join(' · ') } : null
   const [selectedRoleId, setSelectedRoleId] = useState(myCast?.id || '')
   useEffect(() => setSelectedRoleId(myCast?.id || ''), [myCast?.id])
   useEffect(() => {
     supabase.from('production_members').select('user_id, role').eq('production_id', production.id).then(({ data }) => setMembers(data || []))
   }, [production.id])
-  const claimedRoles = castMembers.filter((member) => member.userId)
+  const claimedRoles = assignments.filter((member) => member.userId)
   const claimed = [...new Map(claimedRoles.map((member) => [member.userId, member])).values()]
   function identity(userId) {
     const roles = claimedRoles.filter((member) => member.userId === userId)
     return roles.length ? { name: roles[0].name, role: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · ') } : { name: userId === session.user.id ? '나' : '참여 팀원', role: '배역 미선택' }
   }
-  const unavailableActors = new Set(castMembers.filter((member) => member.userId && member.userId !== session.user.id).map((member) => canonicalActor(member.name)))
-  const availableRoles = castMembers.filter((member) => !unavailableActors.has(canonicalActor(member.name)) && (!member.userId || member.userId === session.user.id)).reduce((groups, member) => {
+  const unavailableActors = new Set(assignments.filter((member) => member.userId && member.userId !== session.user.id).map((member) => canonicalActor(member.name)))
+  const availableRoles = assignments.filter((member) => !unavailableActors.has(canonicalActor(member.name)) && (!member.userId || member.userId === session.user.id)).reduce((groups, member) => {
     const key = canonicalActor(member.name) || member.id
     const group = groups.find((item) => item.key === key)
     if (group) group.roles.push(member.roleName || '배역 미정')
@@ -2895,7 +3015,7 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
     </>}
   </section>
 }
-function CastPanel({ members, pairs = [], addPair, renamePair, removePair, scenes, propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, importFromScenes, consolidate, undoCleanup, busy }) {
+function CastPanel({ members, pairs = [], addPair, renamePair, removePair, addRosterActor, removeRosterActor, assignRole, scenes, propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, toggleChoreography, importFromScenes, consolidate, undoCleanup, busy }) {
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
@@ -2904,28 +3024,31 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, scene
   const [cleanupPreviewOpen, setCleanupPreviewOpen] = useState(false)
   const [cleanupSelectedIds, setCleanupSelectedIds] = useState([])
   const [cleanupRoleDrafts, setCleanupRoleDrafts] = useState({})
-  const actorCount = new Set(members.map((member) => canonicalActor(member.name)).filter(Boolean)).size
-  const roleCount = new Set(members.map((member) => normalizeMatch(member.roleName || '')).filter(Boolean)).size
-  const linkedSceneCount = new Set(members.flatMap((member) => member.sceneNumbers || [])).size
+  const assignments = members.filter(isCastAssignment)
+  const rosterRecords = members.filter(isActorRoster)
+  const roleRecords = members.filter((member) => !isActorRoster(member) && member.roleName?.trim())
+  const actorCount = new Set([...rosterRecords, ...assignments].map((member) => canonicalActor(member.name)).filter(Boolean)).size
+  const roleCount = new Set(roleRecords.map((member) => normalizeMatch(member.roleName || '')).filter(Boolean)).size
+  const linkedSceneCount = new Set(assignments.flatMap((member) => member.sceneNumbers || [])).size
   const pairGroups = [...new Set([...pairs, ...members.map((member) => member.pairGroup?.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ko'))
-  const cleanupPreview = useMemo(() => members.flatMap((member) => {
+  const cleanupPreview = useMemo(() => assignments.flatMap((member) => {
     const roles = splitRoleEntries(member.roleName || '')
     return roles.length > 1 ? [{ member, roles }] : []
-  }), [members])
+  }), [assignments])
   const statusCounts = useMemo(() => ({
-    all: members.length,
-    unlinked: members.filter((member) => !(member.sceneNumbers || []).length).length,
-    unclaimed: members.filter((member) => !member.userId).length,
-    cleanup: members.filter((member) => splitRoleEntries(member.roleName || '').length > 1).length,
-  }), [members])
-  const visible = members.filter((member) => {
+    all: roleRecords.length,
+    unlinked: roleRecords.filter((member) => !(member.sceneNumbers || []).length).length,
+    unclaimed: assignments.filter((member) => !member.userId).length,
+    cleanup: assignments.filter((member) => splitRoleEntries(member.roleName || '').length > 1).length,
+  }), [roleRecords, assignments])
+  const visible = roleRecords.filter((member) => {
     const memberScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no)).map((scene) => `${scene.scene_no} ${scene.title}`).join(' ')
     const matchesQuery = !normalizeMatch(query) || normalizeMatch(`${member.name} ${member.pairGroup || ''} ${member.roleName || ''} ${member.type} ${member.notes || ''} ${memberScenes}`).includes(normalizeMatch(query))
     const matchesStatus = statusFilter === 'all'
       || (statusFilter === 'unlinked' && !(member.sceneNumbers || []).length)
       || (statusFilter === 'unclaimed' && !member.userId)
       || (statusFilter === 'cleanup' && splitRoleEntries(member.roleName || '').length > 1)
-    const matchesGender = genderFilter === 'all' || member.gender === genderFilter
+    const matchesGender = genderFilter === 'all' || (!isRoleCandidate(member) && member.gender === genderFilter)
     return matchesQuery && matchesStatus && matchesGender
   })
   const roleGroups = buildCastRoleHierarchy(visible)
@@ -2957,10 +3080,10 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, scene
   }
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST</p><h2>배우</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 추가</button></div>
-    <PairCastingManager pairs={pairGroups} members={members} addPair={addPair} renamePair={renamePair} removePair={removePair} busy={busy} />
+    <PairCastingManager pairs={pairGroups} members={members} addPair={addPair} renamePair={renamePair} removePair={removePair} addRosterActor={addRosterActor} removeRosterActor={removeRosterActor} busy={busy} />
     <section className="cast-summary compact-summary"><article><strong>{actorCount}</strong><span>배우</span></article><article><strong>{roleCount}</strong><span>배역</span></article><article><strong>{linkedSceneCount}</strong><span>연결 장면</span></article></section>
     <div className="cast-view-switch"><button className={viewMode === 'roles' ? 'active' : ''} onClick={() => setViewMode('roles')}><Users size={16} /> 배역별</button><button className={viewMode === 'scenes' ? 'active' : ''} onClick={() => setViewMode('scenes')}><Clapperboard size={16} /> 장면별</button></div>
-    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면에서 가져오기</b><small>구분자 분석 · 배우·배역 연결</small></span></button>{!!members.length && <button disabled={busy} onClick={toggleCleanupPreview}><Sparkles /><span><b>이름 정리</b><small>, | / - _ + 로 붙은 배역 분리·중복 병합</small></span></button>}{!!members.length && <button disabled={busy} onClick={undoRegroupRoles}><RotateCcw /><span><b>정리 되돌리기</b><small>마지막 이름 정리 직전 상태 복원</small></span></button>}</div>
+    <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>대본 배역 다시 찾기</b><small>배우 이름을 만들지 않고 배역 후보만 정리</small></span></button>{!!assignments.length && <button disabled={busy} onClick={toggleCleanupPreview}><Sparkles /><span><b>배역 이름 정리</b><small>, | / - _ + 로 붙은 배역 분리·중복 병합</small></span></button>}{!!assignments.length && <button disabled={busy} onClick={undoRegroupRoles}><RotateCcw /><span><b>정리 되돌리기</b><small>마지막 배역 정리 직전 상태 복원</small></span></button>}</div>
     {cleanupPreviewOpen && <section className="cast-cleanup-preview"><div className="cast-cleanup-preview-head"><div><span>NAME CLEANUP</span><h3>정리 결과 미리보기</h3></div><strong>{cleanupSelectedIds.length}/{cleanupPreview.length}명 선택</strong></div>{cleanupPreview.length ? <><div className="cast-cleanup-select-actions"><button onClick={() => setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))}>전체 선택</button><button onClick={() => setCleanupSelectedIds([])}>전체 해제</button></div><div className="cast-cleanup-preview-list">{cleanupPreview.slice(0, 20).map(({ member }) => { const checked = cleanupSelectedIds.includes(member.id); const draft = cleanupRoleDrafts[member.id] ?? member.roleName ?? ''; const draftRoles = splitRoleEntries(draft); return <article className={checked ? 'selected' : ''} key={member.id}><label><input type="checkbox" checked={checked} onChange={() => toggleCleanupMember(member.id)} /><UserRound /></label><div><b>{member.name}</b><small>원본: {member.roleName}</small><input className="cast-cleanup-role-input" value={draft} disabled={!checked} onChange={(event) => setCleanupRoleDrafts((value) => ({ ...value, [member.id]: event.target.value }))} aria-label={`${member.name} 정리할 배역명`} /><p>{draftRoles.map((role) => { const roleScenes = matchScenesForSplitRole(member.name, role, scenes, member.sceneNumbers || []); return <span key={role}>{role}<i>{roleScenes.length}장면</i></span> })}</p></div><em>{draftRoles.length}개</em></article> })}</div></> : <p className="cast-cleanup-empty">구분자로 붙어 있는 배역은 없어요. 적용하면 같은 배우·배역 중복만 병합합니다.</p>}{cleanupPreview.length > 20 && <small className="cast-cleanup-more">외 {cleanupPreview.length - 20}명은 적용 후 함께 정리돼요.</small>}<div className="cast-cleanup-preview-actions"><button onClick={() => setCleanupPreviewOpen(false)}>취소</button><button className="primary compact" disabled={busy || (cleanupPreview.length > 0 && !cleanupSelectedIds.length)} onClick={regroupRoles}><CheckCircle2 size={16} /> 선택 정리 적용</button></div></section>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
     {showForm && <form className="panel form-grid cast-form casting-assignment-form" onSubmit={submit}>
@@ -2968,20 +3091,23 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, scene
       <div className="two-col"><label className="cast-field"><span>1Depth 배역</span><input required placeholder="예: 대니" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></label><label className="cast-field"><span>2Depth 세부배역 <small>선택</small></span><input placeholder="예: 고등학생 대니" value={form.subRoleName || ''} onChange={(event) => setForm({ ...form, subRoleName: event.target.value })} /></label></div>
       <label className="cast-field pair-group-field"><span>페어명</span><input required list="production-pair-groups" placeholder="예: A페어" value={form.pairGroup || ''} onChange={(event) => setForm({ ...form, pairGroup: event.target.value })} /><small>런에서 이 페어를 선택하면 같은 페어의 캐스팅을 전부 불러와요.</small></label>
       <datalist id="production-pair-groups">{pairGroups.map((pair) => <option value={pair} key={pair} />)}</datalist>
-      <label className="cast-field"><span>배우 이름</span><input required placeholder="예: 김민석" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+      <label className="cast-field"><span>배우 이름</span><input required list="pair-actor-roster" placeholder="페어 명단에서 선택" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+      <datalist id="pair-actor-roster">{rosterRecords.filter((member) => !form.pairGroup || normalizeMatch(member.pairGroup) === normalizeMatch(form.pairGroup)).map((member) => <option key={member.id} value={member.name}>{member.pairGroup}</option>)}</datalist>
       <label className="cast-field"><span>성별</span><select value={form.gender || '미지정'} onChange={(event) => setForm({ ...form, gender: event.target.value })}><option>미지정</option><option>남</option><option>여</option></select></label>
       <label className="cast-field"><span>배역 구분</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>조연</option><option>앙상블</option></select></label>
       <label className="cast-field"><span>메모</span><textarea placeholder="더블 캐스팅, 참고사항" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label><button className="primary" disabled={busy}>캐스팅 등록</button>
     </form>}
-    {!!members.length && <><div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배역·페어·배우 검색' : '장면·배역·배우 검색'} /></label><span>{visible.length}/{members.length}건</span></div><div className="cast-gender-filter" aria-label="배우 성별 빠른 선택">{[['all','모두'],['남','남자들'],['여','여자들']].map(([key,label]) => <button className={genderFilter === key ? 'active' : ''} key={key} onClick={() => setGenderFilter(key)}>{label}<b>{key === 'all' ? members.length : members.filter((member) => member.gender === key).length}</b></button>)}</div><div className="cast-status-filters">{[['all','전체'],['unlinked','장면 미연결'],['unclaimed','팀원 미선택'],['cleanup','이름 정리 필요']].map(([key, label]) => <button className={statusFilter === key ? 'active' : ''} key={key} onClick={() => setStatusFilter(key)}><span>{label}</span><b>{statusCounts[key]}</b></button>)}</div></>}{viewMode === 'roles' ? <div className="cast-role-groups">{!members.length && <Empty icon={<Users />} title="등록된 캐스팅이 없어요" description="배역과 페어를 고른 뒤 배우를 연결해보세요." action={() => setShowForm(true)} />}{!!members.length && !visible.length && <Empty icon={<Search />} title="조건에 맞는 캐스팅이 없어요" description="검색어나 상태 필터를 변경해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={visible} query={query} />}
+    {!!roleRecords.length && <><div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배역·페어·배우 검색' : '장면·배역·배우 검색'} /></label><span>{visible.length}/{roleRecords.length}건</span></div><div className="cast-gender-filter" aria-label="배우 성별 빠른 선택">{[['all','모두'],['남','남자들'],['여','여자들']].map(([key,label]) => <button className={genderFilter === key ? 'active' : ''} key={key} onClick={() => setGenderFilter(key)}>{label}<b>{key === 'all' ? assignments.length : assignments.filter((member) => member.gender === key).length}</b></button>)}</div><div className="cast-status-filters">{[['all','전체'],['unlinked','장면 미연결'],['unclaimed','팀원 미선택'],['cleanup','이름 정리 필요']].map(([key, label]) => <button className={statusFilter === key ? 'active' : ''} key={key} onClick={() => setStatusFilter(key)}><span>{label}</span><b>{statusCounts[key]}</b></button>)}</div></>}{viewMode === 'roles' ? <div className="cast-role-groups">{!roleRecords.length && <Empty icon={<Users />} title="대본에서 찾은 배역이 없어요" description="대본 배역 다시 찾기를 먼저 실행해 주세요." />}{!!roleRecords.length && !visible.length && <Empty icon={<Search />} title="조건에 맞는 배역이 없어요" description="검색어나 상태 필터를 변경해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} allPairs={pairGroups} roster={rosterRecords} assignRole={assignRole} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={assignments.filter((member) => visible.some((item) => item.id === member.id))} query={query} />}
   </section>
 }
 
-function PairCastingManager({ pairs, members, addPair, renamePair, removePair, busy }) {
+function PairCastingManager({ pairs, members, addPair, renamePair, removePair, addRosterActor, removeRosterActor, busy }) {
   const [open, setOpen] = useState(true)
   const [draft, setDraft] = useState('')
+  const [actorDraft, setActorDraft] = useState({ pair: '', name: '' })
   const [status, setStatus] = useState('')
-  const characters = [...new Set(members.map((member) => member.roleName?.trim()).filter(Boolean))]
+  const characters = [...new Set(members.filter((member) => !isActorRoster(member)).map((member) => member.roleName?.trim()).filter(Boolean))]
+  const roster = members.filter(isActorRoster)
   async function submit(event) {
     event.preventDefault()
     const value = draft.trim()
@@ -2996,18 +3122,32 @@ function PairCastingManager({ pairs, members, addPair, renamePair, removePair, b
       setStatus(`${value} 등록 완료`)
     } else setStatus('저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
   }
+  async function submitActor(event) {
+    event.preventDefault()
+    const pair = actorDraft.pair.trim()
+    const name = actorDraft.name.trim()
+    if (!pair || !name) return
+    setStatus('배우 명단 저장 중…')
+    if (await addRosterActor?.(pair, name)) {
+      setActorDraft({ pair, name: '' })
+      setStatus(`${pair} · ${name} 등록 완료`)
+    }
+  }
   return <section className="pair-casting-manager">
-    <button className="pair-manager-head" onClick={() => setOpen((value) => !value)}><span><Combine /><b>페어·캐스팅</b><small>Actor × Character × Pair</small></span><strong>{pairs.length}페어</strong><ChevronRight /></button>
+    <button className="pair-manager-head" onClick={() => setOpen((value) => !value)}><span><Combine /><b>초기 배우 명단</b><small>페어를 만들고 배우 이름부터 등록</small></span><strong>{pairs.length}페어 · {roster.length}명</strong><ChevronRight /></button>
     {open && <div className="pair-manager-body">
+      <div className="pair-setup-guide"><b>1. 페어 등록</b><span>→</span><b>2. 페어별 배우 명단</b><span>→</span><b>3. 배역 카드에서 캐스팅</b></div>
       <form onSubmit={submit}><input value={draft} onChange={(event) => { setDraft(event.target.value); setStatus('') }} placeholder="새 페어명 (예: A페어)" /><button type="submit" className="primary compact" disabled={busy || !draft.trim()}><Plus /> {busy ? '저장 중' : '페어 등록'}</button></form>
+      <form className="pair-actor-form" onSubmit={submitActor}><select required value={actorDraft.pair} onChange={(event) => setActorDraft({ ...actorDraft, pair: event.target.value })}><option value="">페어 선택</option>{pairs.map((pair) => <option key={pair}>{pair}</option>)}</select><input required value={actorDraft.name} onChange={(event) => setActorDraft({ ...actorDraft, name: event.target.value })} placeholder="배우 이름" /><button className="primary compact" disabled={busy || !actorDraft.pair || !actorDraft.name.trim()}><UserRound /> 배우 추가</button></form>
+      <div className="pair-roster-board">{pairs.map((pair) => { const actors = roster.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <article key={pair}><div><b>{pair}</b><small>{actors.length}명</small></div><p>{actors.map((actor) => <span key={actor.id}><UserRound />{actor.name}<button onClick={() => removeRosterActor?.(actor.id)} aria-label={`${actor.name} 명단에서 삭제`}><X /></button></span>)}{!actors.length && <em>배우 이름을 등록해 주세요.</em>}</p></article> })}</div>
       {status && <p className="pair-save-status" role="status">{status}</p>}
       <div className="pair-list">{pairs.map((pair) => {
-        const assignments = members.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair))
+        const assignments = members.filter((member) => isCastAssignment(member) && normalizeMatch(member.pairGroup) === normalizeMatch(pair))
         const assignedRoles = new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean))
         const missing = characters.filter((role) => !assignedRoles.has(normalizeMatch(role)))
         return <article key={pair}><div className="pair-list-head"><span><b>{pair}</b><small>{assignments.length}개 캐스팅</small></span><div><button disabled={busy} onClick={() => { const next = window.prompt('변경할 페어명', pair); if (next && next.trim() !== pair) renamePair?.(pair, next) }} aria-label={`${pair} 이름 변경`}><Pencil /></button><button disabled={busy || assignments.length > 0} onClick={() => removePair?.(pair)} aria-label={`${pair} 삭제`}><Trash2 /></button></div></div>
           <div className="pair-assignment-list">{assignments.map((member) => <span key={member.id}><b>{member.roleName || '배역 미정'}</b><ChevronRight /><em>{member.name}</em>{member.subRoleName && <small>{member.subRoleName}</small>}</span>)}</div>
-          {!assignments.length && <p>배우 등록에서 이 페어를 선택해 캐스팅을 연결하세요.</p>}
+          {!assignments.length && <p>아래 배역 카드에서 이 페어의 배우를 선택해 주세요.</p>}
           {!!missing.length && <div className="pair-missing"><AlertTriangle /><span>미배정 Character</span><b>{missing.slice(0, 4).join(' · ')}{missing.length > 4 ? ` 외 ${missing.length - 4}` : ''}</b></div>}
         </article>
       })}</div>
@@ -3052,15 +3192,22 @@ function buildCastRoleHierarchy(members = []) {
     if (!groups.has(key)) groups.set(key, { key, roleName, members: [] })
     groups.get(key).members.push(member)
   })
-  return [...groups.values()].map((group) => ({
-    ...group,
-    actors: [...new Set(group.members.map((member) => member.name?.trim()).filter(Boolean))],
-    pairs: [...new Set(group.members.map((member) => member.pairGroup?.trim()).filter(Boolean))],
-    subRoles: [...new Set(group.members.map((member) => member.subRoleName?.trim()).filter(Boolean))],
-  })).sort((a, b) => a.roleName === '배역 미정' ? 1 : b.roleName === '배역 미정' ? -1 : a.roleName.localeCompare(b.roleName, 'ko'))
+  return [...groups.values()].map((group) => {
+    const assignments = group.members.filter(isCastAssignment)
+    const candidates = group.members.filter(isRoleCandidate)
+    return {
+      ...group,
+      assignments,
+      candidates,
+      actors: [...new Set(assignments.map((member) => member.name?.trim()).filter(Boolean))],
+      pairs: [...new Set(assignments.map((member) => member.pairGroup?.trim()).filter(Boolean))],
+      subRoles: [...new Set(group.members.map((member) => member.subRoleName?.trim()).filter(Boolean))],
+      sceneNumbers: [...new Set(group.members.flatMap((member) => member.sceneNumbers || []))].sort((a, b) => Number(a) - Number(b)),
+    }
+  }).sort((a, b) => a.roleName === '배역 미정' ? 1 : b.roleName === '배역 미정' ? -1 : a.roleName.localeCompare(b.roleName, 'ko'))
 }
 
-function CastRoleGroup({ group, scenes, propItems, update, remove, toggleScene, busy, forceOpen }) {
+function CastRoleGroup({ group, allPairs = [], roster = [], assignRole, scenes, propItems, update, remove, toggleScene, toggleChoreography, busy, forceOpen }) {
   const [open, setOpen] = useState(false)
   const [shareStatus, setShareStatus] = useState('')
   const expanded = forceOpen || open
@@ -3073,10 +3220,23 @@ function CastRoleGroup({ group, scenes, propItems, update, remove, toggleScene, 
       props: propItems.filter((item) => Number(item.sceneNo) === Number(scene.scene_no) && assignments.some((member) => assignmentMatches(item.inBy, member) || assignmentMatches(item.outBy, member))),
     }
   })
-  const pairRows = [...new Set([...group.pairs, ...(group.pairs.length ? [] : ['페어 미정'])])].map((pair) => ({
+  const pairRows = [...new Set([...allPairs, ...group.pairs])].map((pair) => ({
     pair,
-    members: group.members.filter((member) => pair === '페어 미정' ? !member.pairGroup?.trim() : normalizeMatch(member.pairGroup) === normalizeMatch(pair)),
+    members: group.assignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)),
+    actors: roster.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)),
   }))
+  const primaryCandidate = group.candidates[0] || group.assignments[0]
+  async function connectActor(pair, actorName) {
+    if (!actorName || !primaryCandidate) return
+    await assignRole?.({
+      roleName: group.roleName,
+      subRoleName: group.subRoles.length === 1 ? group.subRoles[0] : '',
+      type: primaryCandidate.type || '주연',
+      sceneNumbers: group.sceneNumbers,
+      pairGroup: pair,
+      actorName,
+    })
+  }
   async function shareRoleCall() {
     const casting = pairRows.map((row) => `${row.pair}: ${row.members.map((member) => member.name).join(', ') || '미배정'}`)
     const lines = roleScenes.map((scene) => [`${scene.scene_no}. ${scene.title}`, scene.costumes.length ? `  의상: ${scene.costumes.map((item) => item.name).join(' · ')}` : '', scene.props.length ? `  소품: ${scene.props.map((item) => item.name).join(' · ')}` : ''].filter(Boolean).join('\n'))
@@ -3087,12 +3247,14 @@ function CastRoleGroup({ group, scenes, propItems, update, remove, toggleScene, 
     } catch (error) { if (error?.name !== 'AbortError') setShareStatus('콜시트를 공유하지 못했어요.') }
   }
   return <section className={expanded ? 'cast-role-group role-first open' : 'cast-role-group role-first'}>
-    <button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ROLE</span><h3>{group.roleName}</h3>{group.subRoles.length > 0 && <small>{group.subRoles.join(' · ')}</small>}<p>{group.pairs.length}페어 · {group.actors.length}명</p></div><strong>{group.members.length} 캐스팅 <ChevronRight /></strong></button>
+    <button className="cast-role-heading" onClick={() => setOpen((value) => !value)} aria-expanded={expanded}><div><span>ROLE</span><h3>{group.roleName}</h3>{group.subRoles.length > 0 && <small>{group.subRoles.join(' · ')}</small>}<p>{group.pairs.length}/{allPairs.length}페어 · {group.actors.length}명</p></div><strong>{group.assignments.length ? `${group.assignments.length} 캐스팅` : '배우 선택 필요'} <ChevronRight /></strong></button>
     {expanded && <div className="actor-group-body role-group-body">
-      <div className="role-casting-matrix">{pairRows.map((row) => <article key={row.pair}><b>{row.pair}</b><div>{row.members.map((member) => <span key={member.id}><UserRound /><em>{member.name}</em>{member.subRoleName && <small>{member.subRoleName}</small>}</span>)}{!row.members.length && <small>배우 미배정</small>}</div></article>)}</div>
+      {group.candidates.length > 0 && <p className="role-candidate-note"><Sparkles /> 대본에서 찾은 배역이에요. 페어별 배우를 선택하면 장면 전체에 연결됩니다.</p>}
+      {!pairRows.length && <p className="role-candidate-note"><Users /> 초기 배우 명단에서 A/B 페어와 배우 이름을 먼저 등록해 주세요.</p>}
+      <div className="role-casting-matrix">{pairRows.map((row) => <article key={row.pair}><b>{row.pair}</b><div>{row.members.map((member) => <span key={member.id}><UserRound /><em>{member.name}</em>{member.subRoleName && <small>{member.subRoleName}</small>}</span>)}<select aria-label={`${group.roleName} ${row.pair} 배우 선택`} value="" disabled={busy || !row.actors.length} onChange={(event) => connectActor(row.pair, event.target.value)}><option value="">{row.actors.length ? '+ 배우 선택' : '명단 없음'}</option>{row.actors.filter((actor) => !row.members.some((member) => canonicalActor(member.name) === canonicalActor(actor.name))).map((actor) => <option value={actor.name} key={actor.id}>{actor.name}</option>)}</select></div></article>)}</div>
       <div className="role-scene-strip"><span>등장 장면</span><div>{roleScenes.map((scene) => <b key={scene.id}>{scene.scene_no}. {scene.title}</b>)}{!roleScenes.length && <small>연결된 장면 없음</small>}</div></div>
       <button className="actor-call-share" onClick={shareRoleCall}><Upload /><span><b>배역 콜시트 공유</b><small>페어별 배우·등장 장면·준비물 정리</small></span></button>{shareStatus && <p>{shareStatus}</p>}
-      <div className="cast-list">{group.members.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} busy={busy} />)}</div>
+      <div className="cast-list">{group.assignments.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} />)}</div>
     </div>}
   </section>
 }
@@ -3155,7 +3317,7 @@ function analyzeScenesForSplitRole(actorName, roleName, scenes, originalSceneNum
     : { sceneNumbers: originals.sort((a, b) => a - b), matched: false }
 }
 
-function CastCard({ member, scenes, update, remove, toggleScene, busy }) {
+function CastCard({ member, scenes, update, remove, toggleScene, toggleChoreography, busy }) {
   const [editing, setEditing] = useState(false)
   const [editingScenes, setEditingScenes] = useState(false)
   const [sceneSearch, setSceneSearch] = useState('')
@@ -3168,7 +3330,7 @@ function CastCard({ member, scenes, update, remove, toggleScene, busy }) {
     if (await update(member.id, draft)) setEditing(false)
   }
   if (editing) return <article className="cast-card"><form className="cast-edit-form" onSubmit={save}><div className="two-col"><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="배우 이름" /><select value={draft.gender} onChange={(event) => setDraft({ ...draft, gender: event.target.value })}><option>미지정</option><option>남</option><option>여</option></select></div><input value={draft.pairGroup} onChange={(event) => setDraft({ ...draft, pairGroup: event.target.value })} placeholder="페어/그룹" /><div className="two-col"><input value={draft.roleName} onChange={(event) => setDraft({ ...draft, roleName: event.target.value })} placeholder="1Depth 배역" /><input value={draft.subRoleName} onChange={(event) => setDraft({ ...draft, subRoleName: event.target.value })} placeholder="2Depth 세부배역" /></div><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}><option>주연</option><option>조연</option><option>앙상블</option></select><textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="개인 연습 메모" /><div className="cast-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact" disabled={busy}><Save size={16} /> 저장</button></div></form></article>
-  return <article className="cast-card"><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.pairGroup || '페어 미정'} · {member.type}</span><h3>{member.name}</h3><p>{[member.roleName || '배역 미정', member.subRoleName].filter(Boolean).join(' › ')}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="캐스팅 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(member.id)} aria-label="캐스팅 삭제"><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장 장면</strong><button className="scene-edit-toggle" onClick={() => setEditingScenes((value) => !value)}>{editingScenes ? '완료' : '장면 편집'} · {selectedScenes.length}개</button></div>{!editingScenes ? <div className="selected-scene-summary">{selectedScenes.map((scene) => <span key={scene.id}><b>{scene.scene_no}</b>{scene.title}</span>)}{!selectedScenes.length && <small>등록된 등장 장면이 없어요.</small>}</div> : <div className="scene-picker"><label><Search size={15} /><input value={sceneSearch} onChange={(event) => setSceneSearch(event.target.value)} placeholder="장면 번호·제목 검색" /></label><div>{filteredScenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span><b>{scene.scene_no}</b><strong>{scene.title}</strong></span><CheckCircle2 /></button> })}{!filteredScenes.length && <small>검색 결과가 없어요.</small>}</div></div>}</article>
+  return <article className="cast-card"><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.pairGroup || '페어 미정'} · {member.type}</span><h3>{member.name}</h3><p>{[member.roleName || '배역 미정', member.subRoleName].filter(Boolean).join(' › ')}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="캐스팅 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(member.id)} aria-label="캐스팅 삭제"><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장·안무 설정</strong><button className="scene-edit-toggle" onClick={() => setEditingScenes((value) => !value)}>{editingScenes ? '완료' : '등장 장면 편집'} · {selectedScenes.length}개</button></div>{!editingScenes ? <div className="cast-scene-activity-list">{selectedScenes.map((scene) => { const choreography = (member.choreographySceneNumbers || []).includes(scene.scene_no); return <div key={scene.id}><span><b>{scene.scene_no}</b>{scene.title}</span><button className={choreography ? 'active' : ''} onClick={() => toggleChoreography?.(member.id, scene.scene_no)}><CheckCircle2 />{choreography ? '안무 참여' : '안무 제외'}</button></div> })}{!selectedScenes.length && <small>등록된 등장 장면이 없어요.</small>}</div> : <div className="scene-picker"><label><Search size={15} /><input value={sceneSearch} onChange={(event) => setSceneSearch(event.target.value)} placeholder="장면 번호·제목 검색" /></label><div>{filteredScenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span><b>{scene.scene_no}</b><strong>{scene.title}</strong></span><CheckCircle2 /></button> })}{!filteredScenes.length && <small>검색 결과가 없어요.</small>}</div></div>}</article>
 }
 
 function CostumePanel({ scenes, castMembers, updateScene }) {
