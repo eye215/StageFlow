@@ -30,6 +30,7 @@ import './design-v5.css'
 import './shared-player.css'
 import './mobile-v6.css'
 import './gui-v7.css'
+import './master-flow-v8.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
