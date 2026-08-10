@@ -760,7 +760,7 @@ export default function App() {
       if (targets.cast) await persistCastData(nextCast)
       if (targets.props && importedProps.length) await persistPropData([...propItems, ...importedProps])
       const archiveName = `${Date.now()}--${btoa(unescape(encodeURIComponent('표-자동정리'))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}.txt`
-      await supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${archiveName}`, new Blob([importText], { type: 'text/plain;charset=utf-8' }), { upsert: false, contentType: 'text/plain;charset=utf-8' })
+      await supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${archiveName}`, createUtf8TextBlob(importText), { upsert: false, contentType: 'text/plain;charset=utf-8' })
       await loadScenes(selected.id)
       setNotice(`새 장면 ${rows.length}개 · 업데이트 ${updated}개를 적용했어요. 기존 자료는 삭제하지 않았어요.`)
       setProductionTab('scenes')
@@ -2444,7 +2444,7 @@ function ImportPanel({ workspace, production, scenes, castMembers, text, setText
       if (/\.(xlsx?|csv|tsv)$/i.test(name)) await readSpreadsheet(file, false)
       else if (/\.pdf$/i.test(name)) await readPdf(file, false)
       else {
-        const sourceText = await blob.text()
+        const sourceText = await decodeKoreanTextBlob(blob)
         setText(sourceText)
         analyzeSourceText(sourceText, setRows)
       }
@@ -3587,6 +3587,21 @@ function cleanStoredFileName(value) {
     }
   }
   return value.replace(/^\d{13}-/, '')
+}
+
+function createUtf8TextBlob(value) {
+  // BOM keeps Korean intact in iOS Files, Windows Notepad and spreadsheet apps.
+  return new Blob([new Uint8Array([0xef, 0xbb, 0xbf]), String(value ?? '')], { type: 'text/plain;charset=utf-8' })
+}
+
+async function decodeKoreanTextBlob(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const payload = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? bytes.subarray(3) : bytes
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(payload)
+  } catch {
+    try { return new TextDecoder('euc-kr').decode(payload) } catch { return new TextDecoder().decode(payload) }
+  }
 }
 
 function parseScriptByMarkers(source) {
