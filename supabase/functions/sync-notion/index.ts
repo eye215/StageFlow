@@ -41,7 +41,10 @@ const pick = (properties: Record<string, any>, names: string[]) => {
   return ''
 }
 
-const numeric = (value: string) => Number(String(value || '').match(/\d{1,3}/)?.[0] || 0)
+const numeric = (value: string) => {
+  const match = String(value || '').match(/\d{1,3}/)?.[0]
+  return match === undefined ? null : Number(match)
+}
 
 const errorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message
@@ -123,7 +126,8 @@ Deno.serve(async (request) => {
     )
     const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
     if (!productionId) throw new Error('공연 ID가 필요합니다.')
-    const targets = { scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true, ...(requestedTargets || {}) }
+    const targetKeys = ['scenes', 'cast', 'props', 'costumes', 'cues', 'soundtracks'] as const
+    const targets = Object.fromEntries(targetKeys.map((key) => [key, requestedTargets?.[key] !== false])) as Record<(typeof targetKeys)[number], boolean>
     const { error: productionError } = await supabase
       .from('productions')
       .select('id')
@@ -138,9 +142,12 @@ Deno.serve(async (request) => {
     const sourceId = resolved.id
     const pages: any[] = []
     let payload = resolved.firstPage
+    let pageCount = 0
     while (payload) {
       pages.push(...(payload.results || []))
       if (!payload.has_more || !payload.next_cursor) break
+      pageCount += 1
+      if (pageCount >= 100 || pages.length >= 10000) throw new Error('Notion 행이 너무 많아요. 한 번에 최대 10,000개까지 불러올 수 있어요.')
       const response = await queryDataSource(sourceId, payload.next_cursor)
       if (!response.ok) throw await notionFailure(response, 'Notion 다음 페이지 조회')
       payload = await response.json()
@@ -151,7 +158,7 @@ Deno.serve(async (request) => {
     for (const page of pages) {
       const properties = page.properties || {}
       const sceneNo = numeric(pick(properties, sceneNumberKeys))
-      if (!sceneNo) continue
+      if (sceneNo === null || !Number.isFinite(sceneNo) || sceneNo < 0) continue
       const current = rows.get(sceneNo) || {
         number: sceneNo, title: `SCENE ${sceneNo}`, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '',
         props: [], costumes: [], cues: [], details: [], soundtracks: [], characters: [],
@@ -201,24 +208,10 @@ Deno.serve(async (request) => {
     }
 
     const normalizedRows = [...rows.values()].sort((a, b) => a.number - b.number)
-    stage = 'StageFlow 데이터 연결'
-    if (targets.soundtracks && normalizedRows.length) {
-      const { data: scenes } = await supabase.from('scenes').select('id, scene_no').eq('production_id', productionId)
-      const sceneIds = new Map((scenes || []).map((scene: any) => [Number(scene.scene_no), scene.id]))
-      const records = normalizedRows
-        .flatMap((row) => row.soundtracks.map((track: any, index: number) => ({
-          production_id: productionId, scene_id: sceneIds.get(row.number), scene_detail_id: null,
-          code: track.code, title: track.title, sort_order: index,
-          notion_page_id: track.notionPageId, notion_last_edited_at: track.notionLastEditedAt,
-        })))
-        .filter((record) => record.scene_id)
-      if (records.length) {
-        const { error } = await supabase.from('soundtracks').upsert(records, { onConflict: 'production_id,code,title' })
-        if (error) throw error
-      }
-    }
-
-    const skipped = pages.filter((page) => !numeric(pick(page.properties || {}, sceneNumberKeys))).length
+    // This endpoint is preview-only. The browser writes selected rows only after
+    // the user confirms add/merge, preventing a preview from changing data.
+    stage = '미리보기 생성'
+    const skipped = pages.filter((page) => numeric(pick(page.properties || {}, sceneNumberKeys)) === null).length
     return new Response(JSON.stringify({
       rows: normalizedRows, imported: normalizedRows.length, skipped,
       dataSourceId: sourceId, sourceName: resolved.name,
@@ -227,6 +220,7 @@ Deno.serve(async (request) => {
     const message = errorMessage(error)
     console.error('sync-notion failed', { stage, message })
     return new Response(JSON.stringify({ ok: false, error: `${stage}: ${message}` }), {
+      status: /권한|토큰|필요|찾지 못|형식|너무 많/i.test(message) ? 400 : 500,
       headers: { ...cors, 'Content-Type': 'application/json' },
     })
   }

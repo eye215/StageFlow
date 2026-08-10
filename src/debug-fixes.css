@@ -1,0 +1,45 @@
+.shared-player-progress,.run-cue-player>div{display:grid;gap:5px;min-width:0}
+.shared-player-progress input,.run-cue-player input{width:100%;height:18px;padding:0;border:0;background:transparent;accent-color:#8b7cff}
+.shared-player-progress span,.run-cue-player small{color:#a9a5bd;font-size:10px}
+
+.run-setup .show-mode,
+.run-setup .next-appearance-card,
+.run-setup .team-readiness,
+.run-setup .show-system-status,
+.run-setup .run-pair-scene-summary{display:none!important}
+.run-active .actor-run-intro,
+.run-active .next-appearance-card,
+.run-active .team-readiness,
+.run-active .show-system-status{display:none!important}
+.run-active .show-mode{min-height:calc(100dvh - 210px);margin-top:10px}
+.run-active .show-mode .show-head,
+.run-active .show-mode .briefing-picker,
+.run-active .show-mode .current-scene{display:none!important}
+.run-active .show-operations>article:first-child,
+.run-active .show-operations>article:last-child{display:none}
+
+.run-current-scene{display:grid;gap:5px;margin:10px 0 0;padding:18px;border:1px solid rgba(139,124,246,.32);border-radius:19px;background:linear-gradient(145deg,rgba(99,77,224,.24),rgba(17,20,38,.98));box-shadow:0 14px 36px rgba(0,0,0,.16)}
+.run-current-scene span{color:#b7adff;font-size:10px;font-weight:850;letter-spacing:.11em}.run-current-scene h2{margin:0;color:#fff;font-size:24px;line-height:1.18}.run-current-scene small{color:#aaa5bd;font-size:11px}
+
+.run-first-prep{margin:12px 0;padding:14px;border:1px solid rgba(139,124,246,.25);border-radius:16px;background:rgba(139,124,246,.08)}
+.run-first-prep>span{color:#b7adff;font-size:10px;font-weight:850;letter-spacing:.1em}
+.run-first-prep h3{margin:5px 0 12px;font-size:18px}
+.run-first-prep>div{display:grid;gap:7px}
+.run-first-prep p{display:grid;grid-template-columns:20px 54px 1fr;align-items:start;gap:6px;margin:0;color:#d9d7e5}
+.run-first-prep p svg{width:16px;color:#a899ff}.run-first-prep p b{font-size:11px}.run-first-prep p small{color:#9995aa;font-size:10px;line-height:1.45}
+
+.run-scene-cues{display:grid;gap:10px;margin:10px 0 18px;padding:14px;border:1px solid rgba(139,124,246,.22);border-radius:18px;background:#111426}
+.run-scene-cues>div:last-of-type{display:grid;gap:8px}
+.run-cue-card{display:grid;grid-template-columns:36px minmax(0,1fr);gap:9px;padding:11px;border:1px solid rgba(255,255,255,.08);border-radius:14px;background:#0b0e1c}
+.run-cue-card.done{opacity:.6}.run-cue-card.done .run-cue-copy>b{text-decoration:line-through}
+.run-cue-check{width:34px;height:34px;padding:0;border:0;border-radius:11px;background:rgba(139,124,246,.12);color:#77728a}.run-cue-card.done .run-cue-check{color:#7de3be}
+.run-cue-copy{display:grid;gap:3px;min-width:0}.run-cue-copy>span{color:#a99cff;font-size:9px;font-weight:850}.run-cue-copy>b{overflow:hidden;color:#f7f5ff;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.run-cue-copy>small{color:#89859a;font-size:9px}
+.run-cue-player{display:grid;grid-template-columns:38px minmax(0,1fr);gap:9px;margin-top:7px;padding:9px;border-radius:12px;background:#171a30}.run-cue-player>button{display:grid;width:36px;height:36px;padding:0;border:0;border-radius:11px;place-items:center;background:linear-gradient(135deg,#806cff,#d46daf);color:#fff}.run-cue-player svg{width:16px}.run-cue-player strong{overflow:hidden;color:#eeeaff;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.run-player-error{margin:0;padding:9px;border-radius:10px;background:rgba(245,158,11,.09);color:#f9d78f;font-size:10px}
+
+@media(max-width:520px){
+  .run-active .production-content{padding-left:10px;padding-right:10px}
+  .run-active .show-mode,.run-scene-cues,.run-setup .full-run-control,.run-setup .run-pair-picker{border-radius:16px!important}
+  .run-active .show-mode{padding:13px!important}
+  .run-cue-card{padding:9px}
+}
