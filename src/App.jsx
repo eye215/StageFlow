@@ -2443,8 +2443,18 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
     }
     setSyncing(false)
   }
+  async function disconnect() {
+    setSyncing(true)
+    const saved = await updateProduction({ ...production, notion_data_source_id: '' })
+    if (saved) {
+      setDataSourceId('')
+      setRows([])
+      setStatus('이 공연의 Notion 연결을 해제했어요.')
+    } else setStatus('Notion 연결을 해제하지 못했어요.')
+    setSyncing(false)
+  }
   const labels = { scenes: '장면', cast: '배우·배역', props: '소품·대도구', costumes: '의상', cues: '큐', soundtracks: '사운드트랙' }
-  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Notion 주소 또는 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion 데이터베이스 주소를 붙여넣어도 돼요" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 정보는 현재 공연에만 저장됩니다. 공연마다 서로 다른 Notion 데이터베이스를 연결해도 섞이지 않아요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{status && <p className="notice">{status}</p>}</form>}</section>
+  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Notion 주소 또는 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion 데이터베이스 주소를 붙여넣어도 돼요" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 정보는 현재 공연에만 저장됩니다. 공연마다 서로 다른 Notion 데이터베이스를 연결해도 섞이지 않아요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{production.notion_data_source_id && <button className="secondary" type="button" disabled={disabled || syncing} onClick={disconnect}>이 공연의 Notion 연결 해제</button>}{status && <p className="notice">{status}</p>}</form>}</section>
 }
 
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
