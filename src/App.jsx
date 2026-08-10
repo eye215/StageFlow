@@ -1395,12 +1395,20 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
 
 function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, nextEvent = null, pendingTasks = [], attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole, castCount = 0 }) {
   const unresolvedCount = attentionScenes.length
+  const nextStep = !scenes.length
+    ? { step: '1', title: '대본이나 공연표를 먼저 올려주세요', description: '장면·배역·소품을 자동으로 정리해드려요.', tab: 'import', action: '자료 올리기', icon: <WandSparkles /> }
+    : !castCount
+      ? { step: '2', title: '배우와 배역을 연결해 주세요', description: '페어별 캐스팅과 등장 장면을 정리할 수 있어요.', tab: 'cast', action: '배우 등록', icon: <Users /> }
+      : !musicCount
+        ? { step: '3', title: '넘버 음악을 연결해 주세요', description: '파일명을 기준으로 장면에 자동 연결해드려요.', tab: 'music', action: '음악 올리기', icon: <FileAudio /> }
+        : { step: '✓', title: '런을 시작할 준비가 됐어요', description: '페어를 선택하고 장면별 시간을 기록해보세요.', tab: 'show', action: '런 시작', icon: <Play /> }
   return <div className="app-shell actor-home">
     <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>{production?.title || '배우용 공연 노트'}</span></div></div><div className="actor-home-header-actions"><button className="actor-share-button" disabled={!production} onClick={() => createTeamInvite(production?.id)} aria-label="현재 공연 팀원 초대"><Upload /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div></header>
     <main className="content actor-home-content">
       {showForm && <ProductionCreateModal form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} close={() => setShowForm(false)} />}
       {production ? <>
         <section className="actor-home-focus"><div className="focus-label"><span>현재 공연</span>{daysLeft !== null && <b>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</b>}</div><h1>{production.title}</h1><p><MapPin /> {production.venue || '공연 장소 미정'}</p><div className="focus-progress"><span>자료 연결률 <b>{progress}%</b></span><div className="progress"><i style={{ width: `${progress}%` }} /></div></div><div className="focus-stats"><span><b>{scenes.length}</b>장면</span><span><b>{musicCount}</b>음악</span><span><b>{propStats.total}</b>준비물</span></div><button onClick={() => openAt('overview')}>공연 개요 <ChevronRight /></button></section>
+        <button className="actor-home-next-step" onClick={() => openAt(nextStep.tab)}><span className="next-step-icon">{nextStep.icon}</span><span><small>다음 할 일 · STEP {nextStep.step}</small><b>{nextStep.title}</b><em>{nextStep.description}</em></span><strong>{nextStep.action}<ChevronRight /></strong></button>
         <section className="actor-home-actions"><div className="actor-home-title"><h2>공연 준비</h2></div><div>{scenes.length > 0 && <button className="primary-action" onClick={() => openAt('show')}><Play fill="currentColor" /><span><b>런 시작</b><small>페어 선택 · 장면별 시간 기록</small></span><ChevronRight /></button>}{scenes.length > 0 && <button onClick={() => openAt('scenes')}><Clapperboard /><span><b>장면</b><small>{scenes.length}개 장면</small></span></button>}{castCount > 0 && <button onClick={() => openAt('cast')}><Users /><span><b>배우·배역</b><small>{castCount}개 캐스팅</small></span></button>}<button onClick={() => openAt('import')}><WandSparkles /><span><b>자료 정리</b><small>{scenes.length ? '자료 추가·자동연결' : 'PDF·표부터 가져오기'}</small></span></button><button onClick={() => openAt('materials')}><FileText /><span><b>자료실</b><small>대본·악보·영상</small></span></button></div></section>
         {(scenes.length > 0 || propStats.total > 0 || musicCount > 0) && <section className="actor-home-check"><div className="actor-home-title"><h2>연결 상태</h2></div><div className="check-summary">{scenes.length > 0 && <button onClick={() => openAt('scenes')}><AlertTriangle /><span>확인 장면</span><b>{unresolvedCount}</b></button>}{propStats.total > 0 && <button onClick={() => openAt('props')}><Package /><span>준비된 소품</span><b>{propStats.ready}/{propStats.total}</b></button>}{musicCount > 0 && <button onClick={() => openAt('music')}><FileAudio /><span>음악 파일</span><b>{musicCount}</b></button>}</div>{attentionScenes.length > 0 && <button className="attention-summary" onClick={() => openAt('scenes')}><AlertTriangle /><div><b>정리가 필요한 장면</b><small>{attentionScenes.map((scene) => `${scene.scene_no}. ${scene.title}`).join(' · ')}</small></div><ChevronRight /></button>}</section>}
       </> : <section className="actor-home-empty"><Theater /><h1>첫 공연을 만들어볼까요?</h1><p>공연을 만들면 대본과 배역, 장면, 음악을 연결해서 연습할 수 있어요.</p><button className="primary" onClick={() => setShowForm(true)}><Plus /> 공연 만들기</button></section>}
@@ -2432,6 +2440,7 @@ function ImportPanel({ workspace, production, scenes, castMembers, text, setText
     setExcludedRows([])
   }
   const existingImportNumbers = useMemo(() => new Set(scenes.map((scene) => Number(scene.scene_no))), [scenes])
+  const importStep = rows.length ? 2 : text.trim() || sources.length ? 1 : 0
   const uploadSuggestions = [
     { label: '대본·장면표', description: '장면과 넘버 제목을 만들어요', ready: scenes.length > 0 },
     { label: '배우·배역표', description: '이름과 배역을 자동 연결해요', ready: castMembers.length > 0 },
@@ -2439,9 +2448,10 @@ function ImportPanel({ workspace, production, scenes, castMembers, text, setText
     { label: '음악·악보', description: '자료실에서 넘버별로 추가해 주세요', ready: false },
   ]
   return <section className="import-panel">
+    <nav className="import-progress" aria-label="자료 자동정리 진행 단계">{[['1','자료 입력'],['2','내용 확인'],['3','선택 적용']].map(([number, label], index) => <span className={importStep >= index ? 'active' : ''} key={number}><b>{number}</b><small>{label}</small></span>)}</nav>
     {pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}<p>추출한 표는 탭으로 구분되어 원문에 들어가며, 빠른 표정리가 행·열 헤더를 기준으로 장면·배역·소품을 연결합니다.</p></section>}
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
-    <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>
+    {(sources.length > 0 || rows.length > 0) && <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>}
     {!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}
     {!!rows.length && <ImportAudit audit={audit} mergeDuplicates={mergeDuplicateRows} />}
     {!!rows.length && <ImportCastPreview rows={rows} castMembers={castMembers} />}
