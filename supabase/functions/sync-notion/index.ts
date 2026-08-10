@@ -1,7 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
-const notionHeaders = () => ({ Authorization: `Bearer ${Deno.env.get('NOTION_TOKEN')}`, 'Notion-Version': '2026-03-11', 'Content-Type': 'application/json' })
+const notionToken = () => String(Deno.env.get('NOTION_TOKEN') || '')
+  .trim()
+  .replace(/^NOTION_TOKEN\s*=\s*/i, '')
+  .replace(/^['"]|['"]$/g, '')
+  .replace(/[^\x21-\x7E]/g, '')
+const notionHeaders = () => ({ Authorization: `Bearer ${notionToken()}`, 'Notion-Version': '2026-03-11', 'Content-Type': 'application/json' })
 
 const text = (property: any) => {
   if (!property) return ''
@@ -76,7 +81,7 @@ const resolveDataSource = async (inputId: string) => {
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors })
   try {
-    if (!Deno.env.get('NOTION_TOKEN')) throw new Error('NOTION_TOKEN이 설정되지 않았습니다.')
+    if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았거나 값 형식이 올바르지 않아요.')
     const auth = request.headers.get('Authorization') || ''
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: auth } } })
     const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
