@@ -2135,7 +2135,7 @@ function ShowEventLog({ events }) {
       else { await navigator.clipboard.writeText(report); setReportStatus('공연 리포트를 복사했어요.') }
     } catch (error) { if (error?.name !== 'AbortError') setReportStatus('리포트를 공유하지 못했어요.') }
   }
-  return <section className="show-event-log"><div><Clock3 /><strong>공연 기록</strong><span>{events.length}건</span></div><div className="show-report-summary"><span><b>{durationMinutes}</b>분</span><span><b>{goCount}</b>GO</span><span><b>{holdEvents.length}</b>HOLD</span><button onClick={shareReport}><Upload /> 리포트</button></div>{reportStatus && <p>{reportStatus}</p>}<ol>{recent.map((event) => <li className={`event-${event.type.toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
+  return <section className="show-event-log"><div><Clock3 /><strong>공연 기록</strong><span>{events.length}건</span></div><div className="show-report-summary"><span><b>{durationMinutes}</b>분</span><span><b>{goCount}</b>GO</span><span><b>{holdEvents.length}</b>HOLD</span><button onClick={shareReport}><Upload /> 리포트</button></div>{reportStatus && <p>{reportStatus}</p>}<ol>{recent.map((event) => <li className={`event-${String(event?.type || 'note').toLowerCase()}`} key={event.id}><time>{new Date(event.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><b>{event.type || 'NOTE'}</b><span>{event.sceneNo}. {event.label}</span></li>)}</ol></section>
 }
 
 function BackupPanel({ workspace, production, scenes, castMembers, propItems, musicByScene, restore, busy }) {
