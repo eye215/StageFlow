@@ -404,8 +404,8 @@ export default function App() {
     setBusy(false)
   }
 
-  async function deleteProduction(id) {
-    if (!window.confirm('이 공연 전체를 삭제할까요? 이 작업은 되돌릴 수 없어요.')) return false
+  async function deleteProduction(id, options = {}) {
+    if (!options.skipConfirm && !window.confirm('이 공연 전체를 삭제할까요? 이 작업은 되돌릴 수 없어요.')) return false
     setBusy(true)
     const prefix = `${workspace.id}/${id}`
     const paths = await listStorageFilesRecursive(prefix)
@@ -413,9 +413,10 @@ export default function App() {
       const { error: storageError } = await supabase.storage.from('stageflow-files').remove(paths)
       if (storageError) { setBusy(false); setNotice(`공연 파일 삭제 실패: ${storageError.message}`); return false }
     }
-    const { error } = await supabase.from('productions').delete().eq('id', id)
+    const { data: deleted, error } = await supabase.from('productions').delete().eq('id', id).select('id')
     setBusy(false)
     if (error) { setNotice(`삭제 실패: ${error.message}`); return false }
+    if (!deleted?.length) { setNotice('공연을 삭제하지 못했어요. 공연을 만든 계정인지 확인해 주세요.'); return false }
     if (defaultProductionId === id) {
       window.localStorage.removeItem('stageflow:default-production')
       setDefaultProductionId('')
@@ -2174,7 +2175,7 @@ function ProductionDangerPanel({ workspace, production, session, castMembers, cl
       supabase.from('production_members').select('user_id, role').eq('production_id', production.id),
       supabase.storage.from('stageflow-files').download(requestPath),
     ])
-    setMembers(memberRows || [])
+    setMembers(memberRows?.length ? memberRows : [{ user_id: currentUserId, role: production.created_by === currentUserId ? 'owner' : 'member' }])
     if (!requestFile) return setRequest(null)
     try { setRequest(JSON.parse(await requestFile.text())) } catch { setRequest(null) }
   }
@@ -2194,10 +2195,13 @@ function ProductionDangerPanel({ workspace, production, session, castMembers, cl
 
   async function startDeletionRequest() {
     if (!window.confirm(`'${production.title}' 공연 전체 삭제 승인을 요청할까요?`)) return
-    const requiredUserIds = members.map((member) => member.user_id)
+    const requiredUserIds = [...new Set([currentUserId, ...members.map((member) => member.user_id)])]
     const next = { id: crypto.randomUUID(), productionId: production.id, productionTitle: production.title, createdBy: currentUserId, createdAt: new Date().toISOString(), requiredUserIds, approvals: { [currentUserId]: new Date().toISOString() } }
+    if (requiredUserIds.length <= 1) {
+      await deleteProduction(production.id, { skipConfirm: true })
+      return
+    }
     if (!(await saveRequest(next))) return
-    if (requiredUserIds.length <= 1) await deleteProduction(production.id)
     else setStatus(`삭제 요청을 만들었어요. 참여 팀원 ${requiredUserIds.length}명 전원의 승인이 필요해요.`)
   }
 
@@ -2245,7 +2249,7 @@ function ProductionDangerPanel({ workspace, production, session, castMembers, cl
   return <section className="production-danger-panel">
     <div className="danger-panel-head"><Settings /><div><p className="eyebrow">PRODUCTION SETTINGS</p><h2>공연 데이터 관리</h2><p>현재 공연에만 적용되며 다른 공연 자료에는 영향을 주지 않아요.</p></div></div>
     <article className="reset-upload-card"><div><Upload /><span><strong>업로드 자료 초기화</strong><small>삭제할 자료 종류만 선택할 수 있어요.</small></span></div><div className="reset-target-list">{[['imports','대본·표 원본','PDF, 엑셀, 빠른 표정리 원본'],['music','음악파일','넘버별로 연결된 모든 재생 파일'],['materials','자료실','악보, 영상, 이미지 및 기타 파일']].map(([folder, label, description]) => <button className={resetTargets[folder] ? 'selected' : ''} key={folder} onClick={() => toggleResetTarget(folder)}><CheckCircle2 /><span><b>{label}</b><small>{description}</small></span></button>)}</div><ul><li>항상 유지: 장면, 배우·배역, 소품, 의상, 큐</li><li>초기화 후에도 새 파일을 다시 업로드할 수 있어요.</li></ul><button disabled={busy || !selectedResetTargets.length} onClick={() => clearUploads(production.id, selectedResetTargets)}>선택한 자료 초기화 · {selectedResetTargets.length}종</button></article>
-    <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{approvalIdentity(id, index)} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><button className="share-deletion-request" onClick={shareDeletionRequest}><Upload /> 승인 링크 공유</button><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy || !members.length} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
+    <article className="delete-production-card"><div><Trash2 /><span><strong>공연 전체 삭제</strong><small>공연 정보와 연결된 모든 데이터를 영구 삭제합니다.</small></span></div>{request ? <><div className="approval-progress"><span><b>{approvedCount}/{requiredIds.length}</b>명 승인</span><i><em style={{ width: `${requiredIds.length ? (approvedCount / requiredIds.length) * 100 : 0}%` }} /></i></div><div className="approval-members">{requiredIds.map((id, index) => <span className={request.approvals?.[id] ? 'approved' : ''} key={id}><CheckCircle2 />{approvalIdentity(id, index)} · {request.approvals?.[id] ? '승인' : '대기'}</span>)}</div><button className="share-deletion-request" onClick={shareDeletionRequest}><Upload /> 승인 링크 공유</button><div className="deletion-actions">{!alreadyApproved && <button className="danger-confirm" disabled={busy} onClick={approveDeletion}>삭제 승인하기</button>}{alreadyApproved && <button disabled>내 승인 완료</button>}{request.createdBy === currentUserId && <button onClick={cancelDeletionRequest}>요청 취소</button>}</div><small>참여 팀원 전원이 승인하면 마지막 승인 직후 공연이 삭제돼요.</small></> : <><p>혼자 참여 중이면 바로 삭제되고, 참여 팀원이 있으면 전원 승인 요청으로 전환돼요.</p><button className="danger-confirm" disabled={busy} onClick={startDeletionRequest}>공연 전체 삭제 요청</button></>}</article>
     {status && <p className="notice">{status}</p>}
   </section>
 }
