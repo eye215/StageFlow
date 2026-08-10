@@ -761,11 +761,32 @@ export default function App() {
       if (targets.props && importedProps.length) await persistPropData([...propItems, ...importedProps])
       const archiveName = `${Date.now()}--${btoa(unescape(encodeURIComponent('표-자동정리'))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}.txt`
       await supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${archiveName}`, createUtf8TextBlob(importText), { upsert: false, contentType: 'text/plain;charset=utf-8' })
+      await persistImportedSoundtracks(selectedImportRows)
       await loadScenes(selected.id)
       setNotice(`새 장면 ${rows.length}개 · 업데이트 ${updated}개를 적용했어요. 기존 자료는 삭제하지 않았어요.`)
       setProductionTab('scenes')
     }
     setBusy(false)
+  }
+
+  async function persistImportedSoundtracks(importedRows) {
+    const soundtrackRows = importedRows.flatMap((row) => (row.soundtracks || []).map((track, index) => ({ row, track, index })))
+    if (!soundtrackRows.length) return
+    const { data: storedScenes, error: sceneError } = await supabase.from('scenes').select('id, scene_no').eq('production_id', selected.id)
+    if (sceneError || !storedScenes?.length) return
+    const sceneIds = new Map(storedScenes.map((scene) => [Number(scene.scene_no), scene.id]))
+    const records = soundtrackRows.map(({ row, track, index }) => ({
+      production_id: selected.id,
+      scene_id: sceneIds.get(Number(row.number)),
+      scene_detail_id: null,
+      code: String(track.code || `SONG.${row.number}`).trim(),
+      title: String(track.title || row.title || `SONG ${row.number}`).trim(),
+      sort_order: index,
+    })).filter((record) => record.scene_id)
+    if (!records.length) return
+    const { error } = await supabase.from('soundtracks').upsert(records, { onConflict: 'production_id,code,title' })
+    // Older projects may not have the relational migration yet. Summary text remains readable until it is applied.
+    if (error && !/soundtracks|schema cache|relation/i.test(error.message || '')) console.error('Soundtrack relation save failed', error)
   }
 
   async function undoLastImport() {
@@ -2049,6 +2070,7 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
+      {tab === 'notion' && <NotionSyncPanel production={production} updateProduction={updateProduction} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
@@ -2348,16 +2370,35 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
     { id: 'cues', group: '공연 운영', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
     { id: 'materials', group: '연결·자료', label: '공연 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
     { id: 'team', group: '연결·자료', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },
+    { id: 'notion', group: '연결·자료', label: 'Notion 연결', description: '씬 번호 기준 사운드트랙 동기화', icon: <ExternalLink /> },
     { id: 'backup', group: '연결·자료', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
   ]
   const visibleItems = items.filter((item) => {
     if (['settings', 'import'].includes(item.id)) return true
-    if (['materials', 'backup'].includes(item.id)) return setup.script
+    if (['materials', 'backup', 'notion'].includes(item.id)) return setup.script
     if (item.id === 'team') return setup.script && setup.actors
     return setup.casting
   })
   const groups = [...new Set(visibleItems.map((item) => item.group))]
   return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close} aria-label="공연 도구 닫기"><X size={18} /></button></div><div className="more-tool-groups">{groups.map((group) => <section key={group}><h3>{group}</h3><div className="more-tool-grid">{visibleItems.filter((item) => item.group === group).map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section>)}</div></section></div>
+}
+
+function NotionSyncPanel({ production, updateProduction }) {
+  const [dataSourceId, setDataSourceId] = useState(production.notion_data_source_id || '')
+  const [syncing, setSyncing] = useState(false)
+  const [status, setStatus] = useState('')
+  async function sync(event) {
+    event.preventDefault()
+    if (!dataSourceId.trim()) return
+    setSyncing(true); setStatus('Notion 데이터를 불러오는 중이에요…')
+    const saved = await updateProduction({ ...production, notion_data_source_id: dataSourceId.trim() })
+    if (!saved) { setSyncing(false); return setStatus('Notion 연결 정보를 저장하지 못했어요.') }
+    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: dataSourceId.trim() } })
+    if (error) setStatus('Notion 동기화에 실패했어요. 연결 공유와 서버 설정을 확인해 주세요.')
+    else setStatus(`${data?.imported || 0}개 사운드트랙을 씬 번호에 연결했어요.${data?.skipped ? ` ${data.skipped}개는 씬 번호를 확인해 주세요.` : ''}`)
+    setSyncing(false)
+  }
+  return <section className="notion-sync-panel"><div className="import-hero"><div className="import-icon"><ExternalLink /></div><div><p className="eyebrow">NOTION DATA SOURCE</p><h2>Notion 사운드트랙 연결</h2><p>Notion의 씬 번호를 StageFlow 장면과 맞춰 사운드트랙을 직접 연결합니다. 세부장면은 없어도 됩니다.</p></div></div><form className="panel form-grid labeled-form" onSubmit={sync}><label><span>Notion Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion에서 Copy data source ID" /></label><div className="notion-schema-guide"><b>필요한 열</b><span><code>씬 번호</code> 숫자 · <code>사운드트랙</code> 제목 · <code>사운드트랙 코드</code> 선택</span></div><button className="primary" disabled={syncing}>{syncing ? '동기화 중…' : 'Notion에서 가져오기'}</button></form>{status && <p className="notice">{status}</p>}<p className="notion-security-note">Notion 연결 토큰은 앱에 저장하지 않고 Supabase 서버에서만 사용합니다.</p></section>
 }
 
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
@@ -3656,6 +3697,9 @@ function parseScriptByMarkers(source) {
       props: uniqueProps,
       costumes: [],
       cues,
+      details: [],
+      soundtracks: [{ code: `SONG.${marker.number}`, title: marker.title || `SONG ${marker.number}` }],
+      characters: [...speakers],
     }
   }).sort((a, b) => a.number - b.number)
 }
@@ -3724,7 +3768,7 @@ function parseScriptSceneHierarchy(source) {
     if (!current) return
     const songMatch = line.match(/^SONG\s*[.#_-]?\s*(\d+)\s*(.*)$/i)
     if (songMatch) {
-      const soundtrack = { code: `Song. ${Number(songMatch[1])}`, title: cleanTitle(songMatch[2], `Song ${Number(songMatch[1])}`), detailCode: current.details.at(-1)?.code || '' }
+      const soundtrack = { code: `SONG.${Number(songMatch[1])}`, title: cleanTitle(songMatch[2], `SONG ${Number(songMatch[1])}`) }
       if (!current.soundtracks.some((item) => normalizeMatch(`${item.code}${item.title}`) === normalizeMatch(`${soundtrack.code}${soundtrack.title}`))) current.soundtracks.push(soundtrack)
       current.music = current.soundtracks.map((item) => `${item.code} ${item.title}`).join(' / ')
       return
@@ -3963,7 +4007,7 @@ function formatSceneSummary(row) {
   }
   if (row.soundtracks?.length) {
     lines.push('Soundtrack:')
-    row.soundtracks.forEach((item) => lines.push(`- ${item.code} ${item.title}${item.detailCode ? ` · SCENE #${item.detailCode}` : ''}`))
+    row.soundtracks.forEach((item) => lines.push(`- ${item.code} ${item.title}`))
   }
   if (row.music || row.movement) lines.push(`진도: 음악 ${row.music || '-'} · 동선 ${row.movement || '-'}`)
   if (row.status) lines.push(`현황: ${row.status}`)
