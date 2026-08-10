@@ -1590,7 +1590,9 @@ function useSharedProductionPlayback({ production, session, playlist }) {
   const audioRef = useRef(null)
   const [playback, setPlayback] = useState(null)
   const [error, setError] = useState('')
+  const [sharedAvailable, setSharedAvailable] = useState(true)
   const activeFile = playlist.find((file) => file.path === playback?.file_path) || null
+  const missingPlaybackTable = (value) => /production_playback|schema cache/i.test(value?.message || '')
 
   async function publish(patch) {
     const audio = audioRef.current
@@ -1607,8 +1609,15 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     }
     if (!payload.file_path) return
     setPlayback(payload)
+    if (!sharedAvailable) {
+      setError('개인 재생 모드 · 공유 플레이어 DB를 연결하면 팀원과 동시에 제어할 수 있어요.')
+      return
+    }
     const { error: saveError } = await supabase.from('production_playback').upsert(payload, { onConflict: 'production_id' })
-    if (saveError) setError(`공유 재생 연결 실패: ${saveError.message}`)
+    if (saveError && missingPlaybackTable(saveError)) {
+      setSharedAvailable(false)
+      setError('개인 재생 모드 · 공유 플레이어 DB가 아직 연결되지 않았어요.')
+    } else if (saveError) setError(`공유 재생 연결 실패: ${saveError.message}`)
   }
 
   const playFile = (file) => publish({ file_path: file.path, file_name: cleanStoredFileName(file.name), scene_no: file.sceneNo, is_playing: true, position_seconds: 0 })
@@ -1617,16 +1626,26 @@ function useSharedProductionPlayback({ production, session, playlist }) {
 
   useEffect(() => {
     let active = true
+    let channel = null
     supabase.from('production_playback').select('*').eq('production_id', production.id).maybeSingle().then(({ data, error: loadError }) => {
       if (!active) return
-      if (loadError) setError(`공유 플레이어 준비 실패: ${loadError.message}`)
+      if (loadError && missingPlaybackTable(loadError)) {
+        setSharedAvailable(false)
+        setError('개인 재생 모드 · 공유 플레이어 DB가 아직 연결되지 않았어요.')
+        return
+      }
+      if (loadError) {
+        setError(`공유 플레이어 준비 실패: ${loadError.message}`)
+        return
+      }
+      setSharedAvailable(true)
       if (data) setPlayback(data)
+      channel = supabase.channel(`production-playback:${production.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'production_playback', filter: `production_id=eq.${production.id}` }, (event) => {
+          if (event.new?.production_id === production.id) setPlayback(event.new)
+        }).subscribe()
     })
-    const channel = supabase.channel(`production-playback:${production.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'production_playback', filter: `production_id=eq.${production.id}` }, (event) => {
-        if (event.new?.production_id === production.id) setPlayback(event.new)
-      }).subscribe()
-    return () => { active = false; supabase.removeChannel(channel) }
+    return () => { active = false; if (channel) supabase.removeChannel(channel) }
   }, [production.id])
 
   useEffect(() => {
@@ -1654,14 +1673,14 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     return () => { ['play', 'pause', 'seekto'].forEach((action) => safe(action, null)) }
   }, [playback?.file_path, playback?.is_playing])
 
-  return { audioRef, playback, activeFile, error, playFile, toggle, seek }
+  return { audioRef, playback, activeFile, error, sharedAvailable, playFile, toggle, seek }
 }
 
 function SharedMusicPlayer({ controller, playlist, visible = true }) {
-  const { audioRef, playback, activeFile, error, playFile, toggle, seek } = controller
+  const { audioRef, playback, activeFile, error, sharedAvailable, playFile, toggle, seek } = controller
   return <section className={visible ? 'shared-music-player' : 'shared-music-player player-background-only'}>
     <audio ref={audioRef} preload="auto" playsInline />
-    <div className="shared-player-head"><span><Music /></span><div><small>공유 플레이리스트</small><strong>{playback?.file_name || '재생할 음악을 선택하세요'}</strong>{activeFile && <em>{activeFile.sceneNo}장면</em>}</div><i className={playback?.is_playing ? 'live' : ''}>{playback?.is_playing ? 'LIVE' : 'READY'}</i></div>
+    <div className="shared-player-head"><span><Music /></span><div><small>{sharedAvailable ? '공유 플레이리스트' : '개인 플레이리스트'}</small><strong>{playback?.file_name || '재생할 음악을 선택하세요'}</strong>{activeFile && <em>{activeFile.sceneNo}장면</em>}</div><i className={playback?.is_playing ? 'live' : ''}>{playback?.is_playing ? 'LIVE' : sharedAvailable ? 'READY' : 'LOCAL'}</i></div>
     {activeFile && <button className="shared-player-toggle" onClick={toggle}>{playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{playback?.is_playing ? '모두 일시정지' : '모두 재생'}</button>}
     {error && <p>{error}</p>}
     <div className="shared-playlist">{playlist.map((file) => <button className={file.path === playback?.file_path ? 'active' : ''} key={file.path} onClick={() => playFile(file)}><Play fill="currentColor" /><span><b>{cleanStoredFileName(file.name)}</b><small>{file.sceneNo}장면</small></span></button>)}</div>
