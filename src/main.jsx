@@ -33,6 +33,7 @@ import './gui-v7.css'
 import './master-flow-v8.css'
 import './fancy-v9.css'
 import './ux-v10.css'
+import './product-v11.css'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
