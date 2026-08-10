@@ -20,6 +20,18 @@ const pick = (properties: Record<string, any>, names: string[]) => {
   return ''
 }
 const numeric = (value: string) => Number(String(value || '').match(/\d{1,3}/)?.[0] || 0)
+const normalizeSourceId = (value: string) => {
+  const raw = String(value || '').trim()
+  if (!raw) return ''
+  try {
+    const url = new URL(raw)
+    const queryId = url.searchParams.get('data_source_id') || url.searchParams.get('database_id')
+    if (queryId) return queryId.trim()
+    return decodeURIComponent(url.pathname).match(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0] || raw
+  } catch {
+    return raw.replace(/^data_source_id\s*[:=]\s*/i, '').trim()
+  }
+}
 const mergeText = (left = '', right = '') => {
   const values = [left, right].flatMap((value) => String(value || '').split(/\s*[|/,]\s*/)).map((value) => value.trim()).filter(Boolean)
   return [...new Map(values.map((value) => [value.toLowerCase().replace(/\s/g, ''), value])).values()].join(' / ')
@@ -35,7 +47,7 @@ Deno.serve(async (request) => {
     const targets = { scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true, ...(requestedTargets || {}) }
     const { data: production, error: productionError } = await supabase.from('productions').select('id, notion_data_source_id').eq('id', productionId).single()
     if (productionError) throw productionError
-    const sourceId = String(dataSourceId || production.notion_data_source_id || '').trim()
+    const sourceId = normalizeSourceId(dataSourceId || production.notion_data_source_id || '')
     if (!sourceId) throw new Error('Notion Data Source ID가 필요합니다.')
 
     const pages: any[] = []

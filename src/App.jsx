@@ -469,6 +469,7 @@ export default function App() {
       title: values.title.trim(),
       venue: values.venue.trim(),
       performance_start_date: values.performance_start_date || null,
+      ...(Object.prototype.hasOwnProperty.call(values, 'notion_data_source_id') ? { notion_data_source_id: values.notion_data_source_id || null } : {}),
     }
     const { data, error } = await supabase.from('productions').update(payload).eq('id', selected.id).select().single()
     if (error) {
@@ -2411,14 +2412,29 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
   const [status, setStatus] = useState('')
   const [open, setOpen] = useState(false)
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
+  const normalizedSourceId = (value) => {
+    const raw = String(value || '').trim()
+    if (!raw) return ''
+    try {
+      const url = new URL(raw)
+      const queryId = url.searchParams.get('data_source_id') || url.searchParams.get('database_id')
+      if (queryId) return queryId.trim()
+      const pathId = decodeURIComponent(url.pathname).match(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0]
+      return pathId || raw
+    } catch {
+      return raw.replace(/^data_source_id\s*[:=]\s*/i, '').trim()
+    }
+  }
   async function sync(event) {
     event.preventDefault()
-    if (!dataSourceId.trim()) return
+    const sourceId = normalizedSourceId(dataSourceId)
+    if (!sourceId) return
     if (!Object.values(targets).some(Boolean)) return setStatus('가져올 항목을 하나 이상 선택해 주세요.')
     setSyncing(true); setStatus('Notion 데이터를 분석하는 중이에요…')
-    const saved = await updateProduction({ ...production, notion_data_source_id: dataSourceId.trim() })
+    setDataSourceId(sourceId)
+    const saved = await updateProduction({ ...production, notion_data_source_id: sourceId })
     if (!saved) { setSyncing(false); return setStatus('Notion 연결 정보를 저장하지 못했어요.') }
-    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: dataSourceId.trim(), targets } })
+    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: sourceId, targets } })
     if (error || data?.error) setStatus(`Notion 불러오기에 실패했어요. ${data?.error || error?.message || '연결 공유와 서버 설정을 확인해 주세요.'}`)
     else {
       const importedRows = Array.isArray(data?.rows) ? mergeDuplicateImportRows(data.rows) : []
@@ -2428,7 +2444,7 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
     setSyncing(false)
   }
   const labels = { scenes: '장면', cast: '배우·배역', props: '소품·대도구', costumes: '의상', cues: '큐', soundtracks: '사운드트랙' }
-  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion Data Source ID" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 ID는 현재 공연에만 저장됩니다. 다른 공연은 각자 다른 Notion 데이터베이스를 연결할 수 있어요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{status && <p className="notice">{status}</p>}</form>}</section>
+  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Notion 주소 또는 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion 데이터베이스 주소를 붙여넣어도 돼요" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 정보는 현재 공연에만 저장됩니다. 공연마다 서로 다른 Notion 데이터베이스를 연결해도 섞이지 않아요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{status && <p className="notice">{status}</p>}</form>}</section>
 }
 
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
