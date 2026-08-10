@@ -3,6 +3,27 @@
 
 create extension if not exists pgcrypto;
 
+-- This file is intentionally self-contained. Older projects did not have the
+-- production-scoped membership table yet, which previously made this migration
+-- stop before any cast policy could be created.
+create table if not exists public.production_members (
+  id uuid primary key default gen_random_uuid(),
+  production_id uuid not null references public.productions(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member' check (role in ('owner', 'editor', 'member')),
+  invited_by uuid references auth.users(id) on delete set null,
+  joined_at timestamptz not null default now(),
+  unique (production_id, user_id)
+);
+
+insert into public.production_members (production_id, user_id, role, invited_by)
+select p.id, wm.user_id,
+  case when p.created_by = wm.user_id then 'owner' else 'member' end,
+  p.created_by
+from public.productions p
+join public.workspace_members wm on wm.workspace_id = p.workspace_id
+on conflict (production_id, user_id) do nothing;
+
 create table if not exists public.production_pairs (
   id uuid primary key default gen_random_uuid(),
   production_id uuid not null references public.productions(id) on delete cascade,
@@ -83,6 +104,18 @@ create table if not exists public.pair_cast_assignments (
   updated_at timestamptz not null default now(),
   unique (pair_id, person_id, role_depth1_id, role_depth2_id)
 );
+
+-- PostgreSQL treats NULLs as distinct in a UNIQUE constraint. This expression
+-- index also prevents duplicate depth-1-only assignments while preserving the
+-- intended many-to-many model: one person can have many roles and pairs, and a
+-- role can have many people across pairs.
+create unique index if not exists pair_cast_assignment_identity_unique
+  on public.pair_cast_assignments (
+    pair_id,
+    person_id,
+    role_depth1_id,
+    coalesce(role_depth2_id, '00000000-0000-0000-0000-000000000000'::uuid)
+  );
 
 create table if not exists public.scene_cast_assignments (
   id uuid primary key default gen_random_uuid(),
@@ -219,3 +252,34 @@ join public.production_roles role1 on role1.id = a.role_depth1_id
 left join public.production_roles role2 on role2.id = a.role_depth2_id;
 
 grant select on public.production_cast_matrix to authenticated;
+
+-- Canonical hierarchy used by the app and reporting tools:
+-- production -> scene -> depth-1 role -> optional depth-2 role -> pair -> person.
+create or replace view public.production_scene_cast_hierarchy
+with (security_invoker = true) as
+select
+  a.production_id,
+  scene.id as scene_id,
+  scene.scene_no,
+  role1.id as role_depth1_id,
+  role1.name as role_depth1_name,
+  role2.id as role_depth2_id,
+  role2.name as role_depth2_name,
+  pair.id as pair_id,
+  pair.name as pair_name,
+  person.id as person_id,
+  person.user_id,
+  person.display_name,
+  a.id as assignment_id,
+  scene_cast.appearance_type,
+  scene_cast.entrance_note,
+  scene_cast.exit_note
+from public.scene_cast_assignments scene_cast
+join public.scenes scene on scene.id = scene_cast.scene_id
+join public.pair_cast_assignments a on a.id = scene_cast.pair_cast_assignment_id
+join public.production_pairs pair on pair.id = a.pair_id
+join public.production_people person on person.id = a.person_id
+join public.production_roles role1 on role1.id = a.role_depth1_id
+left join public.production_roles role2 on role2.id = a.role_depth2_id;
+
+grant select on public.production_scene_cast_hierarchy to authenticated;

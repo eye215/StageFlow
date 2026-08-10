@@ -6,7 +6,15 @@ const notionToken = () => String(Deno.env.get('NOTION_TOKEN') || '')
   .replace(/^NOTION_TOKEN\s*=\s*/i, '')
   .replace(/^['"]|['"]$/g, '')
   .replace(/[^\x21-\x7E]/g, '')
-const notionHeaders = () => ({ Authorization: `Bearer ${notionToken()}`, 'Notion-Version': '2026-03-11', 'Content-Type': 'application/json' })
+const notionHeaders = () => {
+  const token = notionToken()
+  if (!/^(?:ntn_|secret_)[A-Za-z0-9_-]+$/.test(token)) throw new Error('NOTION_TOKEN 형식이 올바르지 않아요. Secret 값에는 토큰만 다시 붙여넣어 주세요.')
+  const headers = new Headers()
+  headers.set('Authorization', `Bearer ${token}`)
+  headers.set('Notion-Version', '2026-03-11')
+  headers.set('Content-Type', 'application/json')
+  return headers
+}
 
 const text = (property: any) => {
   if (!property) return ''
@@ -80,9 +88,11 @@ const resolveDataSource = async (inputId: string) => {
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  let stage = '요청 확인'
   try {
     if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았거나 값 형식이 올바르지 않아요.')
-    const auth = request.headers.get('Authorization') || ''
+    const auth = String(request.headers.get('Authorization') || '').replace(/[^\x21-\x7E]/g, '')
+    stage = '공연 권한 확인'
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, { global: { headers: { Authorization: auth } } })
     const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
     if (!productionId) throw new Error('공연 ID가 필요합니다.')
@@ -92,6 +102,7 @@ Deno.serve(async (request) => {
     const requestedSourceId = normalizeSourceId(dataSourceId || production.notion_data_source_id || '')
     if (!requestedSourceId) throw new Error('Notion Data Source ID가 필요합니다.')
 
+    stage = 'Notion Data Source 연결'
     const resolved = await resolveDataSource(requestedSourceId)
     const sourceId = resolved.id
 
@@ -143,6 +154,7 @@ Deno.serve(async (request) => {
     }
 
     const normalizedRows = [...rows.values()].sort((a, b) => a.number - b.number)
+    stage = 'StageFlow 데이터 연결'
     if (targets.soundtracks && normalizedRows.length) {
       const { data: scenes } = await supabase.from('scenes').select('id, scene_no').eq('production_id', productionId)
       const sceneIds = new Map((scenes || []).map((scene: any) => [Number(scene.scene_no), scene.id]))
@@ -161,6 +173,8 @@ Deno.serve(async (request) => {
     // Expected connection/validation failures are returned as structured JSON.
     // The client treats `error` as a failed import while still being able to
     // show the actionable Notion message instead of the SDK's generic non-2xx text.
-    return new Response(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }), { headers: { ...cors, 'Content-Type': 'application/json' } })
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('sync-notion failed', { stage, message })
+    return new Response(JSON.stringify({ ok: false, error: `${stage}: ${message}` }), { headers: { ...cors, 'Content-Type': 'application/json' } })
   }
 })

@@ -59,6 +59,9 @@ create table if not exists public.cast_assignments (
   unique (pair_id, person_id, role_id)
 );
 
+comment on table public.cast_assignments is
+  '배역-페어-배우 연결 1건. 한 배우는 여러 배역/페어에, 한 배역은 여러 배우/페어에 배정될 수 있다.';
+
 create table if not exists public.scene_cast (
   id uuid primary key default gen_random_uuid(),
   production_id uuid not null references public.productions(id) on delete cascade,
@@ -69,6 +72,39 @@ create table if not exists public.scene_cast (
   exit_note text not null default '',
   unique (scene_id, cast_assignment_id, appearance_type)
 );
+
+-- Canonical read model:
+-- production -> scene -> role depth 1 -> role depth 2 -> pair -> actor.
+-- A depth-1-only role has role_depth2_id/name = null. If cast_assignments.role_id
+-- points to a depth-2 role, its parent is exposed as depth 1 automatically.
+create or replace view public.cast_hierarchy
+with (security_invoker = true) as
+select
+  assignment.production_id,
+  scene_cast.scene_id,
+  scene.scene_no,
+  case when role.depth = 1 then role.id else parent.id end as role_depth1_id,
+  case when role.depth = 1 then role.name else parent.name end as role_depth1_name,
+  case when role.depth = 2 then role.id end as role_depth2_id,
+  case when role.depth = 2 then role.name end as role_depth2_name,
+  pair.id as pair_id,
+  pair.name as pair_name,
+  person.id as person_id,
+  person.user_id,
+  person.name as actor_name,
+  assignment.id as cast_assignment_id,
+  scene_cast.appearance_type,
+  scene_cast.entrance_note,
+  scene_cast.exit_note
+from public.cast_assignments assignment
+join public.pairs pair on pair.id = assignment.pair_id
+join public.people person on person.id = assignment.person_id
+join public.roles role on role.id = assignment.role_id
+left join public.roles parent on parent.id = role.parent_role_id
+left join public.scene_cast scene_cast on scene_cast.cast_assignment_id = assignment.id
+left join public.scenes scene on scene.id = scene_cast.scene_id;
+
+grant select on public.cast_hierarchy to authenticated;
 
 create table if not exists public.items (
   id uuid primary key default gen_random_uuid(),
