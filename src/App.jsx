@@ -662,20 +662,22 @@ export default function App() {
     setImportingPdf(false)
   }
 
-  function analyzeImport() {
-    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(importText)
-      ? parseScriptByMarkers(importText)
-      : parseProductionSheet(importText)
+  function analyzeImport(sourceText = importText) {
+    setImportText(sourceText)
+    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText)
+      ? parseScriptByMarkers(sourceText)
+      : parseProductionSheet(sourceText)
     setImportRows(parsed)
     setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : '장면 번호나 SONG.NN 표기를 찾지 못했어요.')
   }
 
-  async function analyzeImportWithAI() {
-    if (!importText.trim()) return
+  async function analyzeImportWithAI(sourceText = importText) {
+    if (!sourceText.trim()) return
+    setImportText(sourceText)
     setAiAnalyzing(true)
     setNotice('AI가 대본의 장면·인물·넘버·소품을 분석하고 있어요…')
     const { data, error } = await supabase.functions.invoke('analyze-production', {
-      body: { text: importText.slice(0, 120000), productionTitle: selected.title },
+      body: { text: sourceText.slice(0, 120000), productionTitle: selected.title },
     }).select().single()
     if (error) {
       let detail = error.message
@@ -686,11 +688,11 @@ export default function App() {
         // The response body may already be consumed; use the SDK message instead.
       }
       if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
-        applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.')
+        applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.', sourceText)
       } else if (/OPENAI_API_KEY/i.test(detail)) {
-        applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.')
+        applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.', sourceText)
       } else {
-        applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`)
+        applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`, sourceText)
       }
     } else {
       const parsed = normalizeAiScenes(data?.scenes)
@@ -700,10 +702,10 @@ export default function App() {
     setAiAnalyzing(false)
   }
 
-  function applyRuleFallback(message) {
-    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(importText)
-      ? parseScriptByMarkers(importText)
-      : parseProductionSheet(importText)
+  function applyRuleFallback(message, sourceText = importText) {
+    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText)
+      ? parseScriptByMarkers(sourceText)
+      : parseProductionSheet(sourceText)
     setImportRows(parsed)
     setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} 장면 번호나 SONG.NN 표기를 찾지 못했습니다.`)
   }
@@ -2449,11 +2451,20 @@ function ImportPanel({ workspace, production, scenes, castMembers, text, setText
     <div className="import-hero"><div className="import-icon"><WandSparkles /></div><div><p className="eyebrow">SMART ORGANIZER</p><h2>자료 자동정리</h2><p>대본 PDF나 공연표를 넣으면 장면·배역·앙상블·소품·In/Out을 넘버별로 묶어줍니다.</p></div></div>
     <label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 불러오기'}</strong><span>텍스트가 포함된 PDF를 선택하세요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>
     <div className="import-divider"><span>또는 표 내용 붙여넣기</span></div>
-    <textarea className="import-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder={'1. 가려진 진실\t앤더슨\t살인자 / 매춘부\t...\n2. 진정해 조심해\t앤더슨 / 먼로\t경찰 / 기자\t...'} />
-    <div className="import-action-grid"><button className="secondary analyze-button" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyze}><WandSparkles size={18} /> 빠른 표 정리</button><button className="primary analyze-button ai-analyze" disabled={loading || aiAnalyzing || !text.trim()} onClick={analyzeWithAI}><Sparkles size={18} /> {aiAnalyzing ? 'AI 분석 중…' : 'AI로 대본 분석'}</button></div>
+    <FastImportTextEditor text={text} setText={setText} analyze={analyze} analyzeWithAI={analyzeWithAI} loading={loading} aiAnalyzing={aiAnalyzing} />
     {!!rows.length && <><section className="import-apply-options"><div><span>저장 방식</span><button className={mode === 'add' ? 'active' : ''} onClick={() => setMode('add')}>새 항목만 추가</button><button className={mode === 'update' ? 'active' : ''} onClick={() => setMode('update')}>기존 항목 업데이트</button></div><fieldset><legend>적용할 정보</legend>{[['scenes','장면'],['cast','배역·등장인물'],['props','소품·대도구'],['costumes','의상'],['cues','큐']].map(([key,label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => toggleTarget(key)} /><span>{label}</span></label>)}</fieldset><p>기존 데이터는 삭제하지 않으며, 업데이트 모드도 새 정보만 합칩니다.</p></section><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 행을 장면으로 인식했어요</h3></div><button className="primary compact" disabled={loading || !Object.values(targets).some(Boolean)} onClick={applyImport}><CheckCircle2 size={18} /> 선택대로 적용</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}{row.costumes?.length > 0 && <span>의상 {row.costumes.length}개</span>}{row.cues?.length > 0 && <span>큐 {row.cues.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
     <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
+}
+function FastImportTextEditor({ text, setText, analyze, analyzeWithAI, loading, aiAnalyzing }) {
+  const [draft, setDraft] = useState(text)
+  const focused = useRef(false)
+  useEffect(() => { if (!focused.current) setDraft(text) }, [text])
+  const commit = () => { focused.current = false; setText(draft) }
+  return <>
+    <textarea className="import-textarea" value={draft} onFocus={() => { focused.current = true }} onBlur={commit} onChange={(event) => setDraft(event.target.value)} placeholder={'1. 가려진 진실\t앤더슨\t살인자 / 매춘부\t...\n2. 진정해 조심해\t앤더슨 / 먼로\t경찰 / 기자\t...'} />
+    <div className="import-action-grid"><button className="secondary analyze-button" disabled={loading || aiAnalyzing || !draft.trim()} onClick={() => analyze(draft)}><WandSparkles size={18} /> 빠른 표 정리</button><button className="primary analyze-button ai-analyze" disabled={loading || aiAnalyzing || !draft.trim()} onClick={() => analyzeWithAI(draft)}><Sparkles size={18} /> {aiAnalyzing ? 'AI 분석 중…' : 'AI로 대본 분석'}</button></div>
+  </>
 }
 function ImportAudit({ audit, mergeDuplicates }) {
   return <section className={audit.warnings.length ? 'import-audit has-warnings' : 'import-audit'}><div className="import-audit-head"><div><span>IMPORT CHECK</span><h3>인식 결과 점검</h3></div><strong>{audit.warnings.length ? `${audit.warnings.length}개 확인` : '문제 없음'}</strong></div><div className="import-audit-stats"><span><b>{audit.scenes}</b><small>장면</small></span><span><b>{audit.people}</b><small>인물·배역</small></span><span><b>{audit.props}</b><small>소품·대도구</small></span><span><b>{audit.cues}</b><small>큐</small></span></div>{audit.warnings.length > 0 && <div className="import-audit-warnings">{audit.warnings.map((warning) => <p key={warning}><Bell />{warning}</p>)}</div>}{audit.duplicateCount > 0 && <button className="merge-import-duplicates" onClick={mergeDuplicates}><Combine size={17} /><span><b>같은 장면 번호 자동 병합</b><small>{audit.duplicateCount}개 중복 행의 배역·소품·의상·큐를 하나로 합칩니다</small></span><ChevronRight size={17} /></button>}</section>
