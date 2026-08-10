@@ -999,9 +999,10 @@ export default function App() {
     if (error) { setCastMembers([]); setCastPairs([]); return }
     try {
       const parsed = JSON.parse(await data.text())
-      const members = Array.isArray(parsed.members) ? parsed.members.map(normalizeCastAssignment) : []
+      const members = Array.isArray(parsed.members) ? parsed.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment) : []
       setCastMembers(members)
-      setCastPairs(Array.isArray(parsed.pairs) ? parsed.pairs : [...new Set(members.map((member) => member.pairGroup?.trim()).filter(Boolean))])
+      const savedPairs = Array.isArray(parsed.pairs) ? parsed.pairs.flatMap(splitPairEntries) : []
+      setCastPairs([...new Set([...savedPairs, ...members.map((member) => member.pairGroup?.trim()).filter(Boolean)])])
     } catch {
       setCastMembers([])
       setCastPairs([])
@@ -1009,8 +1010,8 @@ export default function App() {
   }
 
   async function persistCastData(members, pairs = castPairs) {
-    const normalizedMembers = members.map(normalizeCastAssignment)
-    const normalizedPairs = [...new Set([...(pairs || []), ...normalizedMembers.map((member) => member.pairGroup)].map((pair) => String(pair || '').trim()).filter(Boolean))]
+    const normalizedMembers = members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment)
+    const normalizedPairs = [...new Set([...(pairs || []).flatMap(splitPairEntries), ...normalizedMembers.map((member) => member.pairGroup)].map((pair) => String(pair || '').trim()).filter(Boolean))]
     const body = new Blob([JSON.stringify({ version: 6, model: 'role-pair-actor-assignments', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
     const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
     if (error) {
@@ -1650,6 +1651,31 @@ function normalizeCastAssignment(member = {}) {
     notes: String(member.notes || '').trim(),
     sceneNumbers: [...new Set((member.sceneNumbers || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
   }
+}
+
+function splitPairEntries(value = '') {
+  return String(value || '').split(/\s*[|/,+]\s*/).map((item) => item.trim()).filter(Boolean)
+}
+
+function splitActorEntries(value = '') {
+  return String(value || '').split(/\s*[|/,+&]\s*/).map((item) => item.trim()).filter(Boolean)
+}
+
+function expandLegacyCastAssignment(member = {}) {
+  const actors = splitActorEntries(member.name || member.actorName || '')
+  const pairs = splitPairEntries(member.pairGroup || member.pairName || '')
+  if (actors.length <= 1 && pairs.length <= 1) return [member]
+  const baseId = String(member.id || member.assignmentId || crypto.randomUUID())
+  if (actors.length === pairs.length) {
+    return actors.map((name, index) => ({ ...member, id: index === 0 ? baseId : `${baseId}:split:${index}`, assignmentId: index === 0 ? baseId : `${baseId}:split:${index}`, name, actorName: name, pairGroup: pairs[index], pairName: pairs[index], legacySource: { name: member.name || '', pairGroup: member.pairGroup || '' } }))
+  }
+  if (actors.length > 1 && pairs.length === 1) {
+    return actors.map((name, index) => ({ ...member, id: index === 0 ? baseId : `${baseId}:split:${index}`, assignmentId: index === 0 ? baseId : `${baseId}:split:${index}`, name, actorName: name, pairGroup: pairs[0] || '', pairName: pairs[0] || '', legacySource: { name: member.name || '', pairGroup: member.pairGroup || '' } }))
+  }
+  if (actors.length === 1 && pairs.length > 1) {
+    return pairs.map((pairGroup, index) => ({ ...member, id: index === 0 ? baseId : `${baseId}:split:${index}`, assignmentId: index === 0 ? baseId : `${baseId}:split:${index}`, name: actors[0], actorName: actors[0], pairGroup, pairName: pairGroup, legacySource: { name: member.name || '', pairGroup: member.pairGroup || '' } }))
+  }
+  return [member]
 }
 
 function mergeCastFromScenes(existing, scenes) {
