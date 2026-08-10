@@ -2330,25 +2330,25 @@ function DeletionApprovalBanner({ workspace, production, session, open }) {
 function ProductionSetupProgress({ state, open }) {
   const steps = [
     { key: 'script', label: '대본·장면', tab: 'import', done: state.script },
-    { key: 'actors', label: '배우 등록', tab: 'cast', done: state.actors, locked: !state.script },
-    { key: 'casting', label: '캐스팅', tab: 'cast', done: state.casting, locked: !state.actors },
-    { key: 'operations', label: '운영정보', tab: 'scenes', done: state.operations, locked: !state.casting },
-    { key: 'invite', label: '배우 초대', tab: 'team', done: false, locked: !state.script || !state.actors },
+    { key: 'actors', label: '배우 등록', tab: 'cast', done: state.actors, locked: !state.script, reason: '대본 등록 후 사용' },
+    { key: 'casting', label: '캐스팅', tab: 'cast', done: state.casting, locked: !state.actors, reason: '배우 등록 후 사용' },
+    { key: 'operations', label: '운영정보', tab: 'scenes', done: state.operations, locked: !state.casting, reason: '캐스팅 완료 후 사용' },
+    { key: 'invite', label: '배우 초대', tab: 'team', done: false, locked: !state.script || !state.actors, reason: '배우 등록 후 사용' },
   ]
   const next = steps.find((step) => !step.done && !step.locked)
-  return <section className="production-setup-progress"><div><span>공연 설정</span><h2>{next ? `${next.label} 단계` : '기본 설정 완료'}</h2><p>{next ? '완료된 단계 다음에 필요한 작업만 보여드려요.' : '런과 공연 운영 기능을 사용할 수 있어요.'}</p></div><ol>{steps.map((step) => <li className={step.done ? 'done' : step.locked ? 'locked' : 'current'} key={step.key}><button disabled={step.locked} onClick={() => open(step.tab)}><span>{step.done ? <CheckCircle2 /> : step.locked ? '·' : <ChevronRight />}</span><b>{step.label}</b></button></li>)}</ol>{next && <button className="primary setup-next" onClick={() => open(next.tab)}>{next.label} 계속하기 <ChevronRight /></button>}</section>
+  return <section className="production-setup-progress"><div><span>공연 설정</span><h2>{next ? `${next.label} 단계` : '기본 설정 완료'}</h2><p>{next ? '완료된 단계 다음에 필요한 작업만 보여드려요.' : '런과 공연 운영 기능을 사용할 수 있어요.'}</p></div><ol>{steps.map((step) => <li className={step.done ? 'done' : step.locked ? 'locked' : 'current'} key={step.key}><button disabled={step.locked} title={step.locked ? step.reason : undefined} onClick={() => open(step.tab)}><span>{step.done ? <CheckCircle2 /> : step.locked ? '·' : <ChevronRight />}</span><b>{step.label}</b>{step.locked && <small>{step.reason}</small>}</button></li>)}</ol>{next && <button className="primary setup-next" onClick={() => open(next.tab)}>{next.label} 계속하기 <ChevronRight /></button>}</section>
 }
 
 function ProductionMoreSheet({ active, setup, close, choose }) {
   const items = [
-    { id: 'props', label: '내 소품', description: '장면별로 챙길 소품', icon: <Package /> },
-    { id: 'costumes', label: '내 의상', description: '배역별 의상과 퀵체인지', icon: <Shirt /> },
-    { id: 'cues', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
-    { id: 'materials', label: '연습 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
-    { id: 'backup', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
-    { id: 'import', label: '자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
-    { id: 'team', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },
-    { id: 'settings', label: '공연 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
+    { id: 'import', group: '공연 설정', label: '대본·자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
+    { id: 'settings', group: '공연 설정', label: '기본 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
+    { id: 'props', group: '공연 구성', label: '소품', description: '장면별로 챙길 소품', icon: <Package /> },
+    { id: 'costumes', group: '공연 구성', label: '의상', description: '배역별 의상과 퀵체인지', icon: <Shirt /> },
+    { id: 'cues', group: '공연 운영', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
+    { id: 'materials', group: '연결·자료', label: '공연 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
+    { id: 'team', group: '연결·자료', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },
+    { id: 'backup', group: '연결·자료', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
   ]
   const visibleItems = items.filter((item) => {
     if (['settings', 'import'].includes(item.id)) return true
@@ -2356,10 +2356,11 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
     if (item.id === 'team') return setup.script && setup.actors
     return setup.casting
   })
-  return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close} aria-label="공연 도구 닫기"><X size={18} /></button></div><div className="more-tool-grid">{visibleItems.map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section></div>
+  const groups = [...new Set(visibleItems.map((item) => item.group))]
+  return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close} aria-label="공연 도구 닫기"><X size={18} /></button></div><div className="more-tool-groups">{groups.map((group) => <section key={group}><h3>{group}</h3><div className="more-tool-grid">{visibleItems.filter((item) => item.group === group).map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section>)}</div></section></div>
 }
 
-function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid" onSubmit={submit}><input required placeholder="공연명" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /><input placeholder="공연 장소" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /><button className="primary" disabled={busy}>공연 만들기</button></form> }
+function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
 function ProductionCreateModal({ form, setForm, submit, busy, close }) {
   return <div className="production-create-backdrop" onClick={close}><section className="production-create-modal" role="dialog" aria-modal="true" aria-label="새 공연 만들기" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="production-create-head"><div><span>NEW PRODUCTION</span><h2>새 공연 만들기</h2><p>공연 정보를 입력한 뒤 자료를 자동정리할 수 있어요.</p></div><button className="icon-button" onClick={close} aria-label="닫기"><X /></button></div><ProductionForm form={form} setForm={setForm} submit={submit} busy={busy} /></section></div>
 }
