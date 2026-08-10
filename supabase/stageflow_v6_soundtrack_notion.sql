@@ -34,6 +34,14 @@ alter table public.productions add column if not exists notion_last_synced_at ti
 -- Existing summary data remains readable. New and re-imported soundtracks use scene_id only.
 update public.soundtracks set scene_detail_id = null where scene_detail_id is not null;
 
+alter table public.scene_details enable row level security;
+drop policy if exists scene_details_production_access on public.scene_details;
+create policy scene_details_production_access on public.scene_details
+for all to authenticated
+using (public.stageflow_can_access_production(production_id))
+with check (public.stageflow_can_access_production(production_id));
+grant select, insert, update, delete on public.scene_details to authenticated;
+
 alter table public.soundtracks enable row level security;
 drop policy if exists soundtracks_production_access on public.soundtracks;
 create policy soundtracks_production_access on public.soundtracks
