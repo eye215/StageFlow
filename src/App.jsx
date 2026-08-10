@@ -2066,9 +2066,8 @@ function ProductionView(props) {
       {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
-      {tab === 'notion' && <NotionSyncPanel production={production} updateProduction={updateProduction} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
@@ -2366,12 +2365,11 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
     { id: 'cues', group: '공연 운영', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
     { id: 'materials', group: '연결·자료', label: '공연 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
     { id: 'team', group: '연결·자료', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },
-    { id: 'notion', group: '연결·자료', label: 'Notion 연결', description: '씬 번호 기준 사운드트랙 동기화', icon: <ExternalLink /> },
     { id: 'backup', group: '연결·자료', label: '데이터 백업', description: '공연 정보를 파일로 보관', icon: <Download /> },
   ]
   const visibleItems = items.filter((item) => {
     if (['settings', 'import'].includes(item.id)) return true
-    if (['materials', 'backup', 'notion'].includes(item.id)) return setup.script
+    if (['materials', 'backup'].includes(item.id)) return setup.script
     if (item.id === 'team') return setup.script && setup.actors
     return setup.casting
   })
@@ -2379,22 +2377,30 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
   return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close} aria-label="공연 도구 닫기"><X size={18} /></button></div><div className="more-tool-groups">{groups.map((group) => <section key={group}><h3>{group}</h3><div className="more-tool-grid">{visibleItems.filter((item) => item.group === group).map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section>)}</div></section></div>
 }
 
-function NotionSyncPanel({ production, updateProduction }) {
+function NotionImportPanel({ production, updateProduction, setRows, disabled }) {
   const [dataSourceId, setDataSourceId] = useState(production.notion_data_source_id || '')
   const [syncing, setSyncing] = useState(false)
   const [status, setStatus] = useState('')
+  const [open, setOpen] = useState(false)
+  const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
   async function sync(event) {
     event.preventDefault()
     if (!dataSourceId.trim()) return
-    setSyncing(true); setStatus('Notion 데이터를 불러오는 중이에요…')
+    if (!Object.values(targets).some(Boolean)) return setStatus('가져올 항목을 하나 이상 선택해 주세요.')
+    setSyncing(true); setStatus('Notion 데이터를 분석하는 중이에요…')
     const saved = await updateProduction({ ...production, notion_data_source_id: dataSourceId.trim() })
     if (!saved) { setSyncing(false); return setStatus('Notion 연결 정보를 저장하지 못했어요.') }
-    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: dataSourceId.trim() } })
-    if (error) setStatus('Notion 동기화에 실패했어요. 연결 공유와 서버 설정을 확인해 주세요.')
-    else setStatus(`${data?.imported || 0}개 사운드트랙을 씬 번호에 연결했어요.${data?.skipped ? ` ${data.skipped}개는 씬 번호를 확인해 주세요.` : ''}`)
+    const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: dataSourceId.trim(), targets } })
+    if (error || data?.error) setStatus(`Notion 불러오기에 실패했어요. ${data?.error || error?.message || '연결 공유와 서버 설정을 확인해 주세요.'}`)
+    else {
+      const importedRows = Array.isArray(data?.rows) ? mergeDuplicateImportRows(data.rows) : []
+      setRows(importedRows)
+      setStatus(`${importedRows.length}개 장면의 정보를 미리보기에 불러왔어요.${data?.skipped ? ` 씬 번호가 없는 ${data.skipped}개 행은 제외했어요.` : ''} 아래에서 신규 추가 또는 기존 병합을 선택해 주세요.`)
+    }
     setSyncing(false)
   }
-  return <section className="notion-sync-panel"><div className="import-hero"><div className="import-icon"><ExternalLink /></div><div><p className="eyebrow">NOTION DATA SOURCE</p><h2>Notion 사운드트랙 연결</h2><p>Notion의 씬 번호를 StageFlow 장면과 맞춰 사운드트랙을 직접 연결합니다. 세부장면은 없어도 됩니다.</p></div></div><form className="panel form-grid labeled-form" onSubmit={sync}><label><span>Notion Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion에서 Copy data source ID" /></label><div className="notion-schema-guide"><b>필요한 열</b><span><code>씬 번호</code> 숫자 · <code>사운드트랙</code> 제목 · <code>사운드트랙 코드</code> 선택</span></div><button className="primary" disabled={syncing}>{syncing ? '동기화 중…' : 'Notion에서 가져오기'}</button></form>{status && <p className="notice">{status}</p>}<p className="notion-security-note">Notion 연결 토큰은 앱에 저장하지 않고 Supabase 서버에서만 사용합니다.</p></section>
+  const labels = { scenes: '장면', cast: '배우·배역', props: '소품·대도구', costumes: '의상', cues: '큐', soundtracks: '사운드트랙' }
+  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion Data Source ID" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 ID는 현재 공연에만 저장됩니다. 다른 공연은 각자 다른 Notion 데이터베이스를 연결할 수 있어요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{status && <p className="notice">{status}</p>}</form>}</section>
 }
 
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
@@ -2459,7 +2465,7 @@ function SceneCard({ scene, update, remove }) {
   </article>
   return <article className={expanded ? 'scene-card scene-card-collapsible open' : 'scene-card scene-card-collapsible'}><button className="scene-card-main" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><div className="scene-index">{scene.scene_no}</div><div className="scene-copy"><span>ACT {scene.act_no}</span><h3>{scene.title}</h3><p>{summaryPreview}</p></div><ChevronRight /></button>{expanded && <div className="scene-card-detail"><div className="scene-detail-copy">{summaryLines.length ? summaryLines.map((line, index) => <p key={`${line}-${index}`}>{line}</p>) : <p>등록된 상세 정보가 없어요.</p>}</div><div className="scene-card-actions"><button onClick={() => setEditing(true)}><Pencil size={15} /> 수정</button><button className="danger" onClick={remove}><Trash2 size={16} /> 삭제</button></div></div>}</article>
 }
-function ImportPanel({ workspace, production, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
+function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
   const [sources, setSources] = useState([])
@@ -2512,6 +2518,7 @@ function ImportPanel({ workspace, production, scenes, castMembers, text, setText
   ]
   return <section className="import-panel">
     <nav className="import-progress" aria-label="자료 자동정리 진행 단계">{[['1','자료 입력'],['2','내용 확인'],['3','선택 적용']].map(([number, label], index) => <span className={importStep >= index ? 'active' : ''} key={number}><b>{number}</b><small>{label}</small></span>)}</nav>
+    <NotionImportPanel production={production} updateProduction={updateProduction} setRows={setRows} disabled={loading} />
     {pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}<p>추출한 표는 탭으로 구분되어 원문에 들어가며, 빠른 표정리가 행·열 헤더를 기준으로 장면·배역·소품을 연결합니다.</p></section>}
     <label className="spreadsheet-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 전체 분석'}</b><small>모든 시트의 행·열을 한 번에 읽습니다</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>
     {(sources.length > 0 || rows.length > 0) && <button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 자동정리 되돌리기</b><small>적용 직전 장면·배우·소품 상태를 복원합니다</small></span><ChevronRight /></button>}
