@@ -3747,21 +3747,30 @@ function parseProductionSheet(source) {
   return [...rows.values()].filter((row) => row.title).sort((a, b) => a.number - b.number)
 }
 
+function parseSceneNumberMarker(value) {
+  const match = String(value || '').trim().match(/^SCENE\s*#\s*(\d+)\s*(?:-\s*(\d+))?\s*(.*)$/i)
+  if (!match) return null
+  return {
+    sceneNo: Number(match[1]),
+    detailNo: match[2] ? Number(match[2]) : null,
+    title: String(match[3] || '').replace(/^[-.:\s]+/, '').trim(),
+  }
+}
+
 function parseScriptSceneHierarchy(source) {
-  if (!/SCENE\s*#?\s*\d+/i.test(source)) return []
+  if (!String(source || '').split(/\r?\n/).some((line) => parseSceneNumberMarker(line))) return []
   const rows = new Map()
   let current = null
   const cleanTitle = (value, fallback) => String(value || '').replace(/^[-–—.:\s]+/, '').trim() || fallback
   source.replace(/\r/g, '').split('\n').forEach((rawLine) => {
     const line = rawLine.trim()
     if (!line) return
-    const sceneMatch = line.match(/^SCENE\s*#?\s*(\d+)(?:\s*[-.]\s*(\d+))?\s*(.*)$/i)
+    const sceneMatch = parseSceneNumberMarker(line)
     if (sceneMatch) {
-      const sceneNo = Number(sceneMatch[1])
-      const detailNo = sceneMatch[2] ? Number(sceneMatch[2]) : null
+      const { sceneNo, detailNo } = sceneMatch
       current = rows.get(sceneNo) || { number: sceneNo, title: `SCENE ${sceneNo}`, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [], costumes: [], cues: [], details: [], soundtracks: [], characters: [] }
-      if (detailNo) current.details.push({ code: `${sceneNo}-${detailNo}`, title: cleanTitle(sceneMatch[3], `SCENE ${sceneNo}-${detailNo}`) })
-      else current.title = cleanTitle(sceneMatch[3], `SCENE ${sceneNo}`)
+      if (detailNo) current.details.push({ code: `${sceneNo}-${detailNo}`, title: cleanTitle(sceneMatch.title, `SCENE ${sceneNo}-${detailNo}`) })
+      else current.title = cleanTitle(sceneMatch.title, `SCENE ${sceneNo}`)
       rows.set(sceneNo, current)
       return
     }
