@@ -624,7 +624,7 @@ export default function App() {
       setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, ocrPages, preview: tableRows.slice(0, 8) })
       const ocrResult = ocrPages ? ` · OCR ${ocrPages}쪽` : ''
       const archiveResult = archiveError ? ' · 원본 저장은 실패했어요' : ''
-      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 장면 번호·SONG.NN·표 헤더를 찾지 못했어요.${archiveResult}`)
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 SCENE #번호 또는 장면 표 헤더를 찾지 못했어요.${archiveResult}`)
     } catch (error) {
       setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
@@ -664,11 +664,9 @@ export default function App() {
 
   function analyzeImport(sourceText = importText) {
     setImportText(sourceText)
-    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText)
-      ? parseScriptByMarkers(sourceText)
-      : parseProductionSheet(sourceText)
+    const parsed = parseProductionSheet(sourceText)
     setImportRows(parsed)
-    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : '장면 번호나 SONG.NN 표기를 찾지 못했어요.')
+    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : 'SCENE #번호 또는 장면 표 헤더를 찾지 못했어요. SONG.NN은 장면을 만들지 않고 기존 장면의 사운드트랙으로만 연결됩니다.')
   }
 
   async function analyzeImportWithAI(sourceText = importText) {
@@ -703,11 +701,9 @@ export default function App() {
   }
 
   function applyRuleFallback(message, sourceText = importText) {
-    const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText)
-      ? parseScriptByMarkers(sourceText)
-      : parseProductionSheet(sourceText)
+    const parsed = parseProductionSheet(sourceText)
     setImportRows(parsed)
-    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} 장면 번호나 SONG.NN 표기를 찾지 못했습니다.`)
+    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} SCENE #번호 또는 장면 표 헤더를 찾지 못했습니다.`)
   }
 
   async function saveImportedScenes(options = {}) {
@@ -2643,7 +2639,7 @@ function SourceReanalyze({ sources, reanalyze, loading }) {
 }
 
 function analyzeSourceText(sourceText, setRows) {
-  const parsed = /(?:^|\n)\s*SONG[.\s_-]*\d+/i.test(sourceText) ? parseScriptByMarkers(sourceText) : parseProductionSheet(sourceText)
+  const parsed = parseProductionSheet(sourceText)
   setRows(parsed)
 }
 
@@ -3716,10 +3712,10 @@ function safeStorageFileName(value) {
 }
 
 function parseProductionSheet(source) {
-  const structuredRows = parseStructuredProductionTable(source)
-  if (structuredRows.length) return structuredRows
   const scriptRows = parseScriptSceneHierarchy(source)
   if (scriptRows.length) return scriptRows
+  const structuredRows = parseStructuredProductionTable(source)
+  if (structuredRows.length) return structuredRows
   const rows = new Map()
   let current = null
   let propsMode = false
@@ -3729,14 +3725,14 @@ function parseProductionSheet(source) {
     if (!line.trim()) continue
     if (/구분\s*소품명|소품명\s*In\s*Out/i.test(line.replace(/\t/g, ' '))) propsMode = true
     if (/투입\s*인원|진도\s*현황/.test(line.replace(/\t/g, ' '))) propsMode = false
-    const match = line.trimStart().match(/^(?:(\d{1,3})\.|SONG[.\s_-]*(\d{1,3}))\s*([^\t]+?)(?:\t+| {2,}|$)(.*)$/i)
+    const match = line.trimStart().match(/^(\d{1,3})\.\s*([^\t]+?)(?:\t+| {2,}|$)(.*)$/i)
     if (match) {
-      const number = Number(match[1] || match[2])
-      const title = match[3].trim()
+      const number = Number(match[1])
+      const title = match[2].trim()
       current = rows.get(number) || { number, title, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [] }
       current.title = title || current.title
       rows.set(number, current)
-      const cells = splitCells(match[4])
+      const cells = splitCells(match[3])
       applyCells(current, cells, propsMode)
       continue
     }
