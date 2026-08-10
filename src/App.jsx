@@ -941,9 +941,18 @@ export default function App() {
 
   async function addCastPair(name) {
     const value = String(name || '').trim()
-    if (!value || castPairs.some((pair) => normalizeMatch(pair) === normalizeMatch(value))) return false
-    const saved = await persistCastData(castMembers, [...castPairs, value])
+    if (!value) return false
+    if (castPairs.some((pair) => normalizeMatch(pair) === normalizeMatch(value))) {
+      setNotice(`이미 등록된 페어예요: ${value}`)
+      return false
+    }
+    const nextPairs = [...castPairs, value]
+    setBusy(true)
+    setCastPairs(nextPairs)
+    const saved = await persistCastData(castMembers, nextPairs)
     if (saved) setNotice(`${value}를 공연 페어로 추가했어요.`)
+    else setCastPairs(castPairs)
+    setBusy(false)
     return saved
   }
 
@@ -2663,15 +2672,27 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, scene
 function PairCastingManager({ pairs, members, addPair, renamePair, removePair, busy }) {
   const [open, setOpen] = useState(true)
   const [draft, setDraft] = useState('')
+  const [status, setStatus] = useState('')
   const characters = [...new Set(members.map((member) => member.roleName?.trim()).filter(Boolean))]
   async function submit(event) {
     event.preventDefault()
-    if (await addPair?.(draft)) setDraft('')
+    const value = draft.trim()
+    if (!value) return
+    if (pairs.some((pair) => normalizeMatch(pair) === normalizeMatch(value))) {
+      setStatus('이미 등록된 페어명이에요.')
+      return
+    }
+    setStatus('페어 저장 중…')
+    if (await addPair?.(value)) {
+      setDraft('')
+      setStatus(`${value} 등록 완료`)
+    } else setStatus('저장하지 못했어요. 잠시 후 다시 시도해 주세요.')
   }
   return <section className="pair-casting-manager">
     <button className="pair-manager-head" onClick={() => setOpen((value) => !value)}><span><Combine /><b>페어·캐스팅</b><small>Actor × Character × Pair</small></span><strong>{pairs.length}페어</strong><ChevronRight /></button>
     {open && <div className="pair-manager-body">
-      <form onSubmit={submit}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="새 페어명 (예: A페어)" /><button className="primary compact" disabled={busy || !draft.trim()}><Plus /> 페어</button></form>
+      <form onSubmit={submit}><input value={draft} onChange={(event) => { setDraft(event.target.value); setStatus('') }} placeholder="새 페어명 (예: A페어)" /><button type="submit" className="primary compact" disabled={busy || !draft.trim()}><Plus /> {busy ? '저장 중' : '페어 등록'}</button></form>
+      {status && <p className="pair-save-status" role="status">{status}</p>}
       <div className="pair-list">{pairs.map((pair) => {
         const assignments = members.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair))
         const assignedRoles = new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean))

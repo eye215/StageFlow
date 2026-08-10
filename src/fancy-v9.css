@@ -46,6 +46,7 @@ input,select,textarea{border-color:var(--f-line)!important;border-radius:14px!im
 
 /* Sheets and empty states */
 .profile-sheet,.production-more-sheet,.production-create-modal{border-color:var(--f-line)!important;border-radius:28px 28px 0 0!important;background:linear-gradient(180deg,#1b1f3d,#11142b)!important;box-shadow:0 -28px 70px rgba(2,4,18,.55)!important}.profile-workspace,.default-production-list button,.more-tool-grid>button{border-color:var(--f-line)!important;border-radius:17px!important;background:rgba(12,15,33,.58)!important}.default-production-list button.active{border-color:rgba(155,135,255,.46)!important;background:linear-gradient(135deg,var(--f-purple-soft),var(--f-pink-soft))!important}.production-radio i{background:var(--f-purple)!important}.team-invite-button{border-color:rgba(98,230,193,.25)!important;border-radius:17px!important;background:var(--f-mint-soft)!important}.sheet-handle{background:#5d6288!important}.empty{border-color:rgba(155,135,255,.16)!important;border-radius:22px!important;background:rgba(25,29,56,.58)!important}.empty>svg{color:var(--f-purple)!important}
+.pair-save-status{margin:2px 2px 0!important;padding:9px 12px;border:1px solid rgba(98,230,193,.2);border-radius:12px;background:var(--f-mint-soft);color:var(--f-mint)!important;font-size:12px;font-weight:800}
 
 @media(max-width:600px){
   .content{padding-left:14px!important;padding-right:14px!important}.section-heading h2,.actor-home-title h2{letter-spacing:-.04em!important}
