@@ -35,24 +35,31 @@ const propertyText = (property: any) => {
   if (property.type === 'unique_id') return `${property.unique_id?.prefix || ''}${property.unique_id?.number ?? ''}`
   if (property.type === 'formula') {
     const formula = property.formula || {}
-    return formula.string ?? formula.number ?? formula.boolean ?? formula.date?.start ?? ''
+    const value = formula.string ?? formula.number ?? formula.boolean ?? formula.date?.start
+    return value == null ? '' : String(value)
   }
   if (property.type === 'rollup') {
     const rollup = property.rollup || {}
     if (rollup.type === 'array') return (rollup.array || []).map(propertyText).filter(Boolean).join(' / ')
-    return rollup.number ?? rollup.date?.start ?? ''
+    const value = rollup.number ?? rollup.date?.start
+    return value == null ? '' : String(value)
   }
   if (property.type === 'relation') return (property.relation || []).map((item: any) => item.id).join(' / ')
   const values = property.title || property.rich_text || property.people || []
   return values.map((value: any) => value.plain_text || value.name || '').join('').trim()
 }
 
+const normalizePropertyName = (value: string) => String(value || '')
+  .normalize('NFKC')
+  .toLowerCase()
+  .replace(/[^0-9a-z가-힣]/g, '')
+
 const pick = (properties: Record<string, any>, names: string[]) => {
-  const normalized = new Map(Object.entries(properties).map(([key, value]) => [key.toLowerCase().replace(/[\s_\-./]/g, ''), value]))
+  const normalized = new Map(Object.entries(properties).map(([key, value]) => [normalizePropertyName(key), value]))
   for (const name of names) {
-    const property = properties[name] || normalized.get(name.toLowerCase().replace(/[\s_\-./]/g, ''))
+    const property = properties[name] || normalized.get(normalizePropertyName(name))
     const value = propertyText(property)
-    if (value) return value
+    if (String(value).trim() !== '') return String(value)
   }
   return ''
 }
@@ -130,6 +137,7 @@ const resolveDataSource = async (inputId: string) => {
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  if (request.method !== 'POST') return new Response(JSON.stringify({ ok: false, error: 'POST 요청만 지원합니다.' }), { status: 405, headers: { ...cors, 'Content-Type': 'application/json' } })
   let stage = '요청 확인'
   try {
     if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았어요.')
@@ -141,6 +149,8 @@ Deno.serve(async (request) => {
       Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: auth } } },
     )
+    const { data: userData, error: userError } = await supabase.auth.getUser()
+    if (userError || !userData.user) return new Response(JSON.stringify({ ok: false, error: '로그인 세션이 만료되었습니다.' }), { status: 401, headers: { ...cors, 'Content-Type': 'application/json' } })
     let body: any
     try { body = await request.json() } catch { throw new Error('요청 본문이 올바른 JSON이 아닙니다.') }
     const { productionId, dataSourceId, targets: requestedTargets } = body || {}

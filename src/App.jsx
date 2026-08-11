@@ -587,6 +587,7 @@ export default function App() {
   }
 
   async function updateProduction(values) {
+    const productionId = selected.id
     const title = String(values?.title || '').trim()
     if (!title) {
       setNotice('공연명을 입력해 주세요.')
@@ -598,12 +599,12 @@ export default function App() {
       performance_start_date: values?.performance_start_date || null,
       ...(Object.prototype.hasOwnProperty.call(values, 'notion_data_source_id') ? { notion_data_source_id: values.notion_data_source_id || null } : {}),
     }
-    const { data, error } = await supabase.from('productions').update(payload).eq('id', selected.id).select().single()
+    const { data, error } = await supabase.from('productions').update(payload).eq('id', productionId).select().single()
     if (error) {
       setNotice(`공연 정보 수정 실패: ${error.message}`)
       return false
     }
-    setSelected(data)
+    if (selectedIdRef.current === productionId) setSelected(data)
     await loadProductions(workspace.id)
     setNotice('공연 기본정보를 수정했어요.')
     return true
@@ -862,7 +863,7 @@ export default function App() {
   async function saveImportedScenes(options = {}) {
     if (!importRows.length) return
     const mode = options.mode || 'add'
-    const targets = options.targets || { scenes: true, cast: true, props: true, costumes: true, cues: true }
+    const targets = options.targets || { scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true }
     const selectedNumbers = Array.isArray(options.selectedNumbers) ? new Set(options.selectedNumbers.map(Number)) : null
     const selectedImportRows = mergeDuplicateImportRows(selectedNumbers ? importRows.filter((row) => selectedNumbers.has(Number(row.number))) : importRows)
       .filter((row) => Number.isFinite(Number(row.number)) && Number(row.number) >= 0 && String(row.title || '').trim())
@@ -875,7 +876,9 @@ export default function App() {
       const { error: undoError } = await supabase.storage.from('stageflow-files').upload(undoPath, new Blob([JSON.stringify(undoSnapshot, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
       if (undoError) throw new Error(`자동 백업 실패: ${undoError.message}`)
       const existingNumbers = new Set(scenes.map((scene) => Number(scene.scene_no)))
-      const rows = selectedImportRows.filter((row) => !existingNumbers.has(Number(row.number))).map((row, index) => ({
+      const applicableImportRows = targets.scenes ? selectedImportRows : selectedImportRows.filter((row) => existingNumbers.has(Number(row.number)))
+      if (!applicableImportRows.length) throw new Error('장면 추가를 끈 상태에서는 기존 장면 번호와 일치하는 자료만 연결할 수 있어요.')
+      const rows = applicableImportRows.filter((row) => targets.scenes && !existingNumbers.has(Number(row.number))).map((row, index) => ({
         production_id: productionId,
         act_no: Math.max(1, Number(row.actNo) || 1),
         scene_no: Number(row.number),
@@ -885,21 +888,30 @@ export default function App() {
       }))
       let updated = 0
       if (mode === 'update') {
-        for (const row of selectedImportRows.filter((item) => existingNumbers.has(Number(item.number)))) {
+        const updates = applicableImportRows.filter((item) => existingNumbers.has(Number(item.number))).flatMap((row) => {
           const scene = scenes.find((item) => Number(item.scene_no) === Number(row.number))
-          if (!scene) continue
+          if (!scene) return []
           const incoming = formatSceneSummarySelected(row, targets)
           const summary = mergeSummaryLines(scene.summary, incoming)
-          const { error } = await supabase.from('scenes').update({ title: targets.scenes ? String(row.title).trim() : scene.title, summary }).eq('id', scene.id)
-          if (error) throw new Error(`${row.number}. ${row.title} 업데이트 실패: ${error.message}`)
-          updated += 1
-        }
+          return [{
+            id: scene.id,
+            production_id: productionId,
+            act_no: scene.act_no,
+            scene_no: scene.scene_no,
+            sort_order: scene.sort_order,
+            title: targets.scenes ? String(row.title).trim() : scene.title,
+            summary,
+          }]
+        })
+        const { error: updateError } = updates.length ? await supabase.from('scenes').upsert(updates, { onConflict: 'id' }) : { error: null }
+        if (updateError) throw new Error(`기존 장면 ${updates.length}개 업데이트 실패: ${updateError.message}`)
+        updated = updates.length
       }
       const { error } = rows.length ? await supabase.from('scenes').insert(rows) : { error: null }
       if (error) throw new Error(`장면 저장 실패: ${error.message}`)
-      const importedSceneRows = selectedImportRows.map((row) => ({ scene_no: row.number, title: row.title, summary: formatSceneSummarySelected(row, targets) }))
+      const importedSceneRows = applicableImportRows.map((row) => ({ scene_no: row.number, title: row.title, summary: formatSceneSummarySelected(row, targets) }))
       const nextCast = targets.cast ? mergeCastFromScenes(castMembers, importedSceneRows) : castMembers
-      const importedProps = selectedImportRows.flatMap((row) => (row.props || []).map((item) => ({
+      const importedProps = applicableImportRows.flatMap((row) => (row.props || []).map((item) => ({
         id: crypto.randomUUID(),
         kind: item.kind === '대도구' ? '대도구' : '소품',
         name: String(item.name || '').trim(),
@@ -909,13 +921,17 @@ export default function App() {
         note: String(item.note || '').trim(),
         ready: false,
       }))).filter((item) => item.name && !propItems.some((value) => normalizeMatch(value.name) === normalizeMatch(item.name) && Number(value.sceneNo) === item.sceneNo))
-      if (targets.cast && !(await persistCastData(nextCast))) throw new Error('배우·배역 연결 정보를 저장하지 못했어요.')
-      if (targets.props && importedProps.length && !(await persistPropData([...propItems, ...importedProps]))) throw new Error('소품·대도구 정보를 저장하지 못했어요.')
+      const archiveName = safeStorageFileName('표-자동정리.txt')
+      const [castSaved, propsSaved, { error: archiveError }, soundtrackResult] = await Promise.all([
+        targets.cast ? persistCastData(nextCast) : Promise.resolve(true),
+        targets.props && importedProps.length ? persistPropData([...propItems, ...importedProps]) : Promise.resolve(true),
+        supabase.storage.from('stageflow-files').upload(`${workspace.id}/${productionId}/imports/${archiveName}`, createUtf8TextBlob(importText), { upsert: false, contentType: 'text/plain;charset=utf-8' }),
+        targets.soundtracks ? persistImportedSoundtracks(applicableImportRows, productionId) : Promise.resolve({ ok: true, count: 0 }),
+      ])
+      if (!castSaved) throw new Error('배우·배역 연결 정보를 저장하지 못했어요.')
+      if (!propsSaved) throw new Error('소품·대도구 정보를 저장하지 못했어요.')
       const warnings = []
-      const archiveName = `${Date.now()}--${btoa(unescape(encodeURIComponent('표-자동정리'))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')}.txt`
-      const { error: archiveError } = await supabase.storage.from('stageflow-files').upload(`${workspace.id}/${productionId}/imports/${archiveName}`, createUtf8TextBlob(importText), { upsert: false, contentType: 'text/plain;charset=utf-8' })
       if (archiveError) warnings.push('원문 보관 실패')
-      const soundtrackResult = await persistImportedSoundtracks(selectedImportRows, productionId)
       if (!soundtrackResult.ok) warnings.push(soundtrackResult.message)
       await loadScenes(productionId)
       if (selectedIdRef.current === productionId) {
@@ -1160,16 +1176,19 @@ export default function App() {
   }
 
   async function persistCastData(members, pairs = castPairs) {
+    const productionId = selected.id
     const normalizedMembers = ensureActorRosterRecords(members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment))
     const normalizedPairs = [...new Set([...(pairs || []).flatMap(splitPairEntries), ...normalizedMembers.map((member) => member.pairGroup)].map((pair) => String(pair || '').trim()).filter(Boolean))]
     const body = new Blob([JSON.stringify({ version: 8, model: 'role-pair-actor-roster-song-choreography', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
-    const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(productionId), body, { upsert: true, contentType: 'application/json' })
     if (error) {
       setNotice(`배우 정보 저장 실패: ${error.message}`)
       return false
     }
-    setCastMembers(normalizedMembers)
-    setCastPairs(normalizedPairs)
+    if (selectedIdRef.current === productionId) {
+      setCastMembers(normalizedMembers)
+      setCastPairs(normalizedPairs)
+    }
     return true
   }
 
@@ -1502,13 +1521,14 @@ export default function App() {
   }
 
   async function persistPropData(items) {
+    const productionId = selected.id
     const body = new Blob([JSON.stringify({ items, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
-    const { error } = await supabase.storage.from('stageflow-files').upload(propDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
+    const { error } = await supabase.storage.from('stageflow-files').upload(propDataPath(productionId), body, { upsert: true, contentType: 'application/json' })
     if (error) {
       setNotice(`소품 정보 저장 실패: ${error.message}`)
       return false
     }
-    setPropItems(items)
+    if (selectedIdRef.current === productionId) setPropItems(items)
     return true
   }
 
@@ -1653,8 +1673,9 @@ export default function App() {
 
   if (selected) return (
     <ProductionView
+      key={selected.id}
       workspace={workspace} production={selected} updateProduction={updateProduction} scenes={scenes} tab={productionTab}
-      setTab={setProductionTab} goBack={() => setSelected(null)} daysLeft={daysLeft}
+      setTab={setProductionTab} goBack={() => { selectedIdRef.current = ''; setSelected(null) }} daysLeft={daysLeft}
       progress={progress} showIndex={showIndex} setShowIndex={setShowIndex}
       form={sceneForm} setForm={setSceneForm} createScene={createScene}
       updateScene={updateScene} deleteScene={deleteScene} showForm={showSceneForm} setShowForm={setShowSceneForm}
@@ -2110,6 +2131,19 @@ function useSharedProductionPlayback({ production, session, playlist }) {
   const activeFile = useMemo(() => playlist.find((file) => file.path === playback?.file_path) || null, [playlist, playback?.file_path])
   const missingPlaybackTable = useCallback((value) => isMissingBackendObject(value, 'production_playback'), [])
 
+  const applyRemotePlayback = useCallback((next) => {
+    if (!next || next.production_id !== production.id) return false
+    const current = playbackRef.current
+    const nextSequence = Number(next.command_seq || 0)
+    const currentSequence = Number(current?.command_seq || 0)
+    const nextUpdatedAt = new Date(next.updated_at || 0).getTime()
+    const currentUpdatedAt = new Date(current?.updated_at || 0).getTime()
+    if (current && (nextSequence < currentSequence || (nextSequence === currentSequence && nextUpdatedAt < currentUpdatedAt))) return false
+    playbackRef.current = next
+    setPlayback(next)
+    return true
+  }, [production.id])
+
   useEffect(() => { playbackRef.current = playback }, [playback])
 
   const publish = useCallback(async (patch) => {
@@ -2122,7 +2156,7 @@ function useSharedProductionPlayback({ production, session, playlist }) {
       scene_no: patch.scene_no ?? currentPlayback?.scene_no ?? null,
       is_playing: patch.is_playing ?? currentPlayback?.is_playing ?? false,
       position_seconds: patch.position_seconds ?? Math.max(0, audio?.currentTime || 0),
-      command_seq: Date.now(),
+      command_seq: Math.max(Date.now(), Number(currentPlayback?.command_seq || 0) + 1),
       updated_by: session.user.id,
       updated_at: new Date().toISOString(),
     }
@@ -2157,6 +2191,7 @@ function useSharedProductionPlayback({ production, session, playlist }) {
   useEffect(() => {
     let active = true
     let channel = null
+    let pollTimer = null
     const audio = audioRef.current
     if (audio) { audio.pause(); audio.removeAttribute('src'); audio.load() }
     setPlayback(null)
@@ -2177,31 +2212,58 @@ function useSharedProductionPlayback({ production, session, playlist }) {
         return
       }
       setSharedAvailable(true)
-      if (data) { playbackRef.current = data; setPlayback(data) }
+      if (data) applyRemotePlayback(data)
+      const refresh = async () => {
+        const { data: latest, error: refreshError } = await supabase.from('production_playback').select('*').eq('production_id', production.id).maybeSingle()
+        if (!active) return
+        if (refreshError && missingPlaybackTable(refreshError)) {
+          setSharedAvailable(false)
+          if (pollTimer) window.clearInterval(pollTimer)
+          pollTimer = null
+          return
+        }
+        if (!refreshError && latest) applyRemotePlayback(latest)
+      }
+      pollTimer = window.setInterval(refresh, 5000)
       channel = supabase.channel(`production-playback:${production.id}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'production_playback', filter: `production_id=eq.${production.id}` }, (event) => {
-          if (event.new?.production_id === production.id) { playbackRef.current = event.new; setPlayback(event.new) }
-        }).subscribe()
+          applyRemotePlayback(event.new)
+        }).subscribe((status) => {
+          if (!active) return
+          if (status === 'SUBSCRIBED') setError((value) => value.startsWith('실시간 연결을 복구') ? '' : value)
+          else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError('실시간 연결을 복구하는 중이에요. 재생 상태는 자동 확인 중입니다.')
+        })
     })
-    return () => { active = false; if (channel) supabase.removeChannel(channel) }
-  }, [missingPlaybackTable, production.id])
+    return () => {
+      active = false
+      if (pollTimer) window.clearInterval(pollTimer)
+      if (channel) supabase.removeChannel(channel)
+    }
+  }, [applyRemotePlayback, missingPlaybackTable, production.id])
 
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return undefined
     const updatePosition = () => setPosition(Number.isFinite(audio.currentTime) ? audio.currentTime : 0)
     const updateDuration = () => setDuration(Number.isFinite(audio.duration) ? audio.duration : 0)
+    const finishPlayback = () => {
+      updatePosition()
+      if (playbackRef.current?.is_playing) void publish({ is_playing: false, position_seconds: Number.isFinite(audio.duration) ? audio.duration : audio.currentTime || 0 })
+    }
+    const reportMediaError = () => setError('음악 파일을 불러오지 못했어요. 네트워크를 확인한 뒤 음악 목록을 다시 열어주세요.')
     audio.addEventListener('timeupdate', updatePosition)
     audio.addEventListener('loadedmetadata', updateDuration)
     audio.addEventListener('durationchange', updateDuration)
-    audio.addEventListener('ended', updatePosition)
+    audio.addEventListener('ended', finishPlayback)
+    audio.addEventListener('error', reportMediaError)
     return () => {
       audio.removeEventListener('timeupdate', updatePosition)
       audio.removeEventListener('loadedmetadata', updateDuration)
       audio.removeEventListener('durationchange', updateDuration)
-      audio.removeEventListener('ended', updatePosition)
+      audio.removeEventListener('ended', finishPlayback)
+      audio.removeEventListener('error', reportMediaError)
     }
-  }, [production.id])
+  }, [production.id, publish])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -2327,6 +2389,7 @@ function ProductionView(props) {
   const previousShowState = useRef(null)
   const lastShowCursorAtRef = useRef(0)
   const runAdvanceRef = useRef(false)
+  const readinessGenerationRef = useRef(0)
   const sharedPlaylist = useMemo(() => Object.entries(musicByScene).flatMap(([sceneNo, files]) => (files || []).map((file) => ({ ...file, sceneNo: Number(sceneNo) }))), [musicByScene])
   const productionSongs = useMemo(() => buildProductionSongs(runScenes, musicByScene), [runScenes, musicByScene])
   const sharedPlayback = useSharedProductionPlayback({ production, session, playlist: sharedPlaylist })
@@ -2366,10 +2429,12 @@ function ProductionView(props) {
   useEffect(() => {
     let active = true
     async function syncReadiness() {
+      const generation = readinessGenerationRef.current
       const { data } = await supabase.storage.from('stageflow-files').download(readinessPath)
-      if (!active || !data) return
+      if (!active || !data || generation !== readinessGenerationRef.current) return
       try {
         const cloudReady = JSON.parse(await data.text())
+        if (generation !== readinessGenerationRef.current) return
         if (cloudReady && typeof cloudReady === 'object') {
           setPersonalReady((localReady) => {
             const merged = { ...localReady, ...cloudReady }
@@ -2458,7 +2523,11 @@ function ProductionView(props) {
   async function startFullRun() {
     if (!runScenes.length || !selectedRunPair || !showController) return
     const now = new Date().toISOString()
+    readinessGenerationRef.current += 1
     setShowIndex(0); setRunElapsed(0)
+    setCompletedCues({})
+    setShowHold(false)
+    setShowHoldMessage('')
     setPersonalReady({})
     window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, '{}')
     const { error } = await supabase.storage.from('stageflow-files').upload(readinessPath, new Blob(['{}'], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
@@ -2490,7 +2559,8 @@ function ProductionView(props) {
     if (data) { try { const parsed = JSON.parse(await data.text()); if (Array.isArray(parsed.runs)) existing = parsed.runs } catch { /* 현재 기록 사용 */ } }
     const nextRuns = [record, ...existing.filter((item) => item.id !== record.id)].slice(0, 50)
     const { error } = await supabase.storage.from('stageflow-files').upload(runLogPath, new Blob([JSON.stringify({ runs: nextRuns, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
-    if (!error) setRunHistory(nextRuns)
+    if (error) setFeedbackStatus(`런 기록 저장 실패: ${error.message}`)
+    else setRunHistory(nextRuns)
   }, [runHistory, runLogPath])
   const goNextWithTiming = useCallback(async () => {
     if (!current || runAdvanceRef.current) return
@@ -3055,7 +3125,7 @@ function parseSceneSummarySections(summary = '') {
     if (/^Scene Detail\s*[:：]?$/i.test(line)) { section = 'details'; return }
     if (/^Soundtrack\s*[:：]?$/i.test(line)) { section = 'soundtracks'; return }
     if (section === 'details' && /^-\s*SCENE\s*#/i.test(line)) { result.details.push(line.replace(/^-\s*/, '')); return }
-    if (section === 'soundtracks' && /^-\s*Song\./i.test(line)) { result.soundtracks.push(line.replace(/^-\s*/, '')); return }
+    if (section === 'soundtracks' && /^[-•]\s*\S/.test(line)) { result.soundtracks.push(line.replace(/^[-•]\s*/, '')); return }
     if (/^소품\s*\/\s*대도구\s*[:：]?$/.test(line)) { section = 'props'; return }
     const prop = line.match(/^-?\s*\[(소품|대도구)\]\s*(.+?)(?:\s*·\s*In\s*(.*?))?(?:\s*·\s*Out\s*(.*?))?(?:\s*·\s*(.*))?$/i)
     if (prop) { result.props.push({ kind: prop[1], name: prop[2].trim(), inBy: prop[3]?.trim() || '', outBy: prop[4]?.trim() || '', note: prop[5]?.trim() || '' }); return }
@@ -3097,7 +3167,7 @@ function SceneCard({ scene, update, remove }) {
 function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
   const [sourceMode, setSourceMode] = useState('pdf')
-  const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true })
+  const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
   const [sources, setSources] = useState([])
   const [excludedRows, setExcludedRows] = useState([])
   const loadSources = useCallback(async () => {
@@ -3161,7 +3231,7 @@ function ImportPanel({ workspace, production, updateProduction, scenes, castMemb
     {!!rows.length && <ImportCastPreview rows={rows} castMembers={castMembers} />}
     {!!rows.length && <ImportPlan rows={rows} excluded={excludedRows} existing={existingImportNumbers} mode={mode} />}
     {!!rows.length && <ImportSelection rows={rows} excluded={excludedRows} existing={existingImportNumbers} toggle={toggleImportRow} update={updateImportRow} selectAll={() => setExcludedRows([])} clearAll={() => setExcludedRows(rows.map((row) => Number(row.number)))} />}
-    {!!rows.length && <><section className="import-apply-options"><div><span>저장 방식</span><button className={mode === 'add' ? 'active' : ''} onClick={() => setMode('add')}>새 항목만 추가</button><button className={mode === 'update' ? 'active' : ''} onClick={() => setMode('update')}>기존 항목 업데이트</button></div><fieldset><legend>적용할 정보</legend>{[['scenes','장면'],['cast','배역·등장인물'],['props','소품·대도구'],['costumes','의상'],['cues','큐']].map(([key,label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => toggleTarget(key)} /><span>{label}</span></label>)}</fieldset><p>기존 데이터는 삭제하지 않으며, 업데이트 모드도 새 정보만 합칩니다.</p></section><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 행을 장면으로 인식했어요</h3></div><button className="primary compact" disabled={loading || !Object.values(targets).some(Boolean)} onClick={applyImport}><CheckCircle2 size={18} /> 선택대로 적용</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}{row.costumes?.length > 0 && <span>의상 {row.costumes.length}개</span>}{row.cues?.length > 0 && <span>큐 {row.cues.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
+    {!!rows.length && <><section className="import-apply-options"><div><span>저장 방식</span><button className={mode === 'add' ? 'active' : ''} onClick={() => setMode('add')}>새 항목만 추가</button><button className={mode === 'update' ? 'active' : ''} onClick={() => setMode('update')}>기존 항목 업데이트</button></div><fieldset><legend>적용할 정보</legend>{[['scenes','장면'],['cast','배역·등장인물'],['props','소품·대도구'],['costumes','의상'],['cues','큐'],['soundtracks','사운드트랙']].map(([key,label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => toggleTarget(key)} /><span>{label}</span></label>)}</fieldset><p>기존 데이터는 삭제하지 않으며, 업데이트 모드도 새 정보만 합칩니다.</p></section><div className="import-result-head"><div><p className="eyebrow">PREVIEW</p><h3>{rows.length}개 행을 장면으로 인식했어요</h3></div><button className="primary compact" disabled={loading || !Object.values(targets).some(Boolean)} onClick={applyImport}><CheckCircle2 size={18} /> 선택대로 적용</button></div><div className="import-results">{rows.map((row) => <article className="import-card" key={row.number}><div className="import-number">{row.number}</div><div className="import-card-copy"><h3>{row.title}</h3><div className="import-tags">{row.main && <span>주연 {row.main}</span>}{row.ensemble && <span>앙상블 {row.ensemble}</span>}{row.props.length > 0 && <span>소품 {row.props.length}개</span>}{row.costumes?.length > 0 && <span>의상 {row.costumes.length}개</span>}{row.cues?.length > 0 && <span>큐 {row.cues.length}개</span>}{row.soundtracks?.length > 0 && <span>음악 {row.soundtracks.length}개</span>}</div>{row.status && <p>{row.status}</p>}{row.props.length > 0 && <ul>{row.props.slice(0, 3).map((prop, index) => <li key={`${prop.name}-${index}`}><b>{prop.kind || '소품'}</b> {prop.name}{prop.inBy && ` · In ${prop.inBy}`}{prop.outBy && ` · Out ${prop.outBy}`}</li>)}</ul>}</div></article>)}</div></>}
     <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
 }
@@ -4889,7 +4959,7 @@ function formatSceneSummarySelected(row, targets) {
     ensemble: targets.scenes || targets.cast ? row.ensemble : '',
     backstage: targets.scenes || targets.cast ? row.backstage : '',
     music: targets.scenes ? row.music : '', movement: targets.scenes ? row.movement : '', status: targets.scenes ? row.status : '',
-    details: targets.scenes ? (row.details || []) : [], soundtracks: targets.scenes ? (row.soundtracks || []) : [], characters: targets.scenes || targets.cast ? (row.characters || []) : [],
+    details: targets.scenes ? (row.details || []) : [], soundtracks: targets.soundtracks ? (row.soundtracks || []) : [], characters: targets.scenes || targets.cast ? (row.characters || []) : [],
     props: targets.props ? (row.props || []) : [], costumes: targets.costumes ? (row.costumes || []) : [], cues: targets.cues ? (row.cues || []) : [],
   })
 }

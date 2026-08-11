@@ -11,13 +11,14 @@ create table if not exists public.production_members (
   unique (production_id, user_id)
 );
 
+create index if not exists production_members_user_idx
+  on public.production_members(user_id, production_id);
+
 insert into public.production_members (production_id, user_id, role, invited_by)
-select p.id, wm.user_id,
-  case when p.created_by = wm.user_id then 'owner' else 'member' end,
-  p.created_by
+select p.id, p.created_by, 'owner', p.created_by
 from public.productions p
-join public.workspace_members wm on wm.workspace_id = p.workspace_id
-on conflict (production_id, user_id) do nothing;
+where p.created_by is not null
+on conflict (production_id, user_id) do update set role = 'owner';
 
 create or replace function public.stageflow_can_access_production(target_production_id uuid)
 returns boolean
@@ -33,7 +34,58 @@ as $$
   );
 $$;
 
+create or replace function public.stageflow_is_production_owner(target_production_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1 from public.production_members pm
+    where pm.production_id = target_production_id
+      and pm.user_id = auth.uid()
+      and pm.role = 'owner'
+  );
+$$;
+
+revoke all on function public.stageflow_can_access_production(uuid) from public;
+revoke all on function public.stageflow_is_production_owner(uuid) from public;
 grant execute on function public.stageflow_can_access_production(uuid) to authenticated;
+grant execute on function public.stageflow_is_production_owner(uuid) to authenticated;
+
+create or replace function public.stageflow_add_production_owner()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.production_members (production_id, user_id, role, invited_by)
+  values (new.id, new.created_by, 'owner', new.created_by)
+  on conflict (production_id, user_id) do update set role = 'owner';
+  return new;
+end;
+$$;
+
+drop trigger if exists stageflow_production_owner_after_insert on public.productions;
+create trigger stageflow_production_owner_after_insert
+after insert on public.productions
+for each row execute function public.stageflow_add_production_owner();
+
+revoke all on function public.stageflow_add_production_owner() from public;
+
+alter table public.production_members enable row level security;
+drop policy if exists production_members_read on public.production_members;
+create policy production_members_read on public.production_members
+for select to authenticated
+using (public.stageflow_can_access_production(production_id));
+drop policy if exists production_members_owner_manage on public.production_members;
+create policy production_members_owner_manage on public.production_members
+for all to authenticated
+using (public.stageflow_is_production_owner(production_id))
+with check (public.stageflow_is_production_owner(production_id));
+grant select on public.production_members to authenticated;
 
 create table if not exists public.production_playback (
   production_id uuid primary key references public.productions(id) on delete cascade,
