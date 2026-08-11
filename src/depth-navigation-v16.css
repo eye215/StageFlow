@@ -1,0 +1,50 @@
+.production-shell-v2:has(.entity-editor-page) .production-primary-nav,
+.production-content:has(.entity-editor-page) > .production-bar,
+.production-content:has(.entity-editor-page) > .deletion-approval-banner{display:none!important}
+.production-content:has(.entity-editor-page){padding-bottom:max(28px,env(safe-area-inset-bottom))!important}
+
+.entity-editor-page{display:grid;gap:18px;max-width:760px;margin:0 auto;padding:4px 0 24px;animation:depth-page-in .2s ease-out}
+.entity-editor-page>.entity-editor-back{display:flex;width:max-content;min-height:42px;align-items:center;gap:7px;padding:0 13px;border:1px solid rgba(143,130,255,.2);border-radius:13px;background:rgba(143,130,255,.08);color:#d9d5ff;font-size:12px;font-weight:850;touch-action:manipulation}
+.entity-editor-page>header{display:grid;gap:5px;padding:2px 2px 4px}
+.entity-editor-page>header .eyebrow{margin:0;color:#9e92ff;font-size:10px;font-weight:900;letter-spacing:.16em}
+.entity-editor-page>header h2{margin:0;color:#f8f7ff;font-size:clamp(24px,7vw,34px);line-height:1.1;letter-spacing:-.04em}
+.entity-editor-page>header>p:not(.eyebrow){margin:2px 0 0;color:#9691a7;font-size:12px;line-height:1.55}
+.entity-editor-form{display:grid!important;gap:14px!important;margin:0!important;padding:18px!important;border:1px solid rgba(143,130,255,.18)!important;border-radius:22px!important;background:linear-gradient(145deg,rgba(24,27,53,.98),rgba(11,15,31,.98))!important;box-shadow:0 20px 48px rgba(0,0,0,.18)!important}
+.entity-editor-form label{display:grid;gap:7px;color:#aaa5bc;font-size:11px;font-weight:800}
+.entity-editor-form input,.entity-editor-form select,.entity-editor-form textarea{width:100%;min-width:0;min-height:48px;border:1px solid rgba(143,130,255,.16);border-radius:13px;background:#0b1020;color:#f5f3ff;font-size:16px}
+.entity-editor-form textarea{min-height:132px;resize:vertical}
+.entity-editor-form>.primary{min-height:50px;border-radius:14px}
+
+.depth-entry-card,.depth-summary-card{display:flex;width:100%;align-items:center;gap:13px;padding:15px;border:1px solid rgba(143,130,255,.18);border-radius:18px;background:linear-gradient(135deg,rgba(35,37,77,.78),rgba(16,22,42,.96));color:#f4f2ff;text-align:left}
+.depth-entry-card>svg,.depth-summary-card>svg{width:21px;height:21px;flex:0 0 21px;color:#a899ff}
+.depth-entry-card>span,.depth-summary-card>span{display:grid;min-width:0;flex:1;gap:3px}
+.depth-entry-card b,.depth-summary-card b{font-size:13px}
+.depth-entry-card small,.depth-summary-card small{overflow:hidden;color:#8f8a9f;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.depth-entry-card>svg:last-child{width:17px;color:#77728b}
+
+.scene-detail-page{display:grid;gap:12px}
+.scene-detail-page>.scene-cast-sections:empty{display:none}
+.scene-detail-page .scene-hub-actions{position:sticky;z-index:3;bottom:max(8px,env(safe-area-inset-bottom));padding:8px;border:1px solid rgba(143,130,255,.16);border-radius:16px;background:rgba(7,10,21,.9);backdrop-filter:blur(18px)}
+.depth-relation-section{display:grid;gap:12px;padding:16px;border:1px solid rgba(143,130,255,.14);border-radius:20px;background:rgba(12,17,35,.9)}
+.depth-relation-section>div:first-child{display:grid;gap:3px}
+.depth-relation-section>div:first-child>b{color:#f5f3ff;font-size:14px}
+.depth-relation-section>div:first-child>small{color:#8f8a9f;font-size:10px}
+.depth-choice-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px!important}
+.depth-choice-grid>button{display:flex;min-width:0;min-height:58px;align-items:center;gap:9px;padding:10px;border:1px solid rgba(143,130,255,.12);border-radius:13px;background:#0a1020;color:#aaa5bc;text-align:left}
+.depth-choice-grid>button>svg{width:17px;flex:0 0 17px}
+.depth-choice-grid>button>span{display:grid;min-width:0;gap:2px}
+.depth-choice-grid>button b{font-size:10px}
+.depth-choice-grid>button small{overflow:hidden;font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.depth-choice-grid>button.selected{border-color:#8f82ff;background:rgba(111,91,255,.18);color:#e7e3ff}
+
+@keyframes depth-page-in{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+
+@media(max-width:560px){
+  .entity-editor-page{gap:15px;padding-top:0}
+  .entity-editor-form{padding:14px!important;border-radius:18px!important}
+  .entity-editor-form .two-col{grid-template-columns:1fr!important}
+  .depth-choice-grid{grid-template-columns:1fr}
+  .scene-detail-page .scene-hub-actions{grid-template-columns:1fr 1fr}
+}
+
+@media(prefers-reduced-motion:reduce){.entity-editor-page{animation:none}}
