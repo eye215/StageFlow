@@ -72,6 +72,8 @@ $$;
 
 grant execute on function public.stageflow_can_access_production(uuid) to authenticated;
 grant execute on function public.stageflow_is_production_owner(uuid) to authenticated;
+revoke all on function public.stageflow_can_access_production(uuid) from public;
+revoke all on function public.stageflow_is_production_owner(uuid) from public;
 
 -- 공연 생성자는 자동으로 그 공연의 owner가 됩니다.
 create or replace function public.stageflow_add_production_owner()
@@ -92,6 +94,8 @@ drop trigger if exists stageflow_production_owner_after_insert on public.product
 create trigger stageflow_production_owner_after_insert
 after insert on public.productions
 for each row execute function public.stageflow_add_production_owner();
+
+revoke all on function public.stageflow_add_production_owner() from public;
 
 alter table public.production_members enable row level security;
 
@@ -150,6 +154,24 @@ using (public.stageflow_can_access_production(production_id))
 with check (public.stageflow_can_access_production(production_id));
 
 -- 초대 생성: 초대한 사람이 해당 공연 멤버이며 workspace/production 조합이 맞아야 합니다.
+-- 이전 설치에서 초대 테이블이 없거나 production_id가 없었던 경우도 이 파일 하나로 복구합니다.
+create table if not exists public.workspace_invites (
+  id uuid primary key default gen_random_uuid(),
+  token uuid not null unique default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  production_id uuid references public.productions(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  expires_at timestamptz not null default (now() + interval '14 days'),
+  uses integer not null default 0,
+  max_uses integer not null default 100,
+  created_at timestamptz not null default now()
+);
+
+alter table public.workspace_invites
+  add column if not exists production_id uuid references public.productions(id) on delete cascade;
+
+alter table public.workspace_invites enable row level security;
+
 create or replace function public.create_workspace_invite(target_workspace_id uuid, target_production_id uuid)
 returns text
 language plpgsql
@@ -208,6 +230,8 @@ $$;
 
 grant execute on function public.create_workspace_invite(uuid, uuid) to authenticated;
 grant execute on function public.join_workspace_by_invite(text) to authenticated;
+revoke all on function public.create_workspace_invite(uuid, uuid) from public;
+revoke all on function public.join_workspace_by_invite(text) from public;
 
 -- Storage도 경로의 두 번째 값(production_id)을 검사합니다.
 -- 경로 규칙: {workspace_id}/{production_id}/...
@@ -242,6 +266,11 @@ for select to authenticated
 using (
   bucket_id = 'stageflow-files'
   and public.stageflow_can_access_production(public.stageflow_storage_production_id(name))
+  and (
+    split_part(name, '/', 3) <> 'feedback'
+    or split_part(name, '/', 4) = auth.uid()::text
+    or owner_id = auth.uid()::text
+  )
 );
 
 create policy stageflow_files_production_insert on storage.objects
@@ -256,10 +285,12 @@ for update to authenticated
 using (
   bucket_id = 'stageflow-files'
   and public.stageflow_can_access_production(public.stageflow_storage_production_id(name))
+  and (split_part(name, '/', 3) <> 'feedback' or owner_id = auth.uid()::text)
 )
 with check (
   bucket_id = 'stageflow-files'
   and public.stageflow_can_access_production(public.stageflow_storage_production_id(name))
+  and (split_part(name, '/', 3) <> 'feedback' or owner_id = auth.uid()::text)
 );
 
 create policy stageflow_files_production_delete on storage.objects
@@ -267,4 +298,5 @@ for delete to authenticated
 using (
   bucket_id = 'stageflow-files'
   and public.stageflow_can_access_production(public.stageflow_storage_production_id(name))
+  and (split_part(name, '/', 3) <> 'feedback' or owner_id = auth.uid()::text)
 );

@@ -5,6 +5,7 @@
 - `production_scoped_access.sql`: 공연별 멤버십·초대·RLS
 - `stageflow_v4_clean_schema.sql`: 배우·배역·페어·장면 연결·자료·런·피드백의 최종 구조
 - `shared_playback.sql`: 공연 참여자 공동 음악 재생·정지·곡 변경 실시간 상태
+- `secure_feedback_storage.sql`: 기존 Storage 피드백을 수신자·작성자에게만 공개
 - `increase_storage_limit.sql`: 공연 음원·자료 파일당 업로드 한도를 100MB로 설정
 - `audit_current_schema.sql`: 현재 DB 확인용 읽기 전용 쿼리
 
@@ -24,4 +25,15 @@
 4. 검증 후 legacy 쓰기 중단
 5. 최종 백업 뒤 legacy 구조 제거
 
-새 Supabase 프로젝트라면 `production_scoped_access.sql` 다음 `stageflow_v4_clean_schema.sql` 순서로 실행한다.
+새 Supabase 프로젝트라면 아래 순서로 실행한다.
+
+1. `production_scoped_access.sql`
+2. `stageflow_v4_clean_schema.sql`
+3. `stageflow_v5_master_actor_flow.sql`
+4. `stageflow_v6_soundtrack_notion.sql`
+5. `stageflow_v7_performance_relations.sql`
+6. `shared_playback.sql`
+7. `secure_feedback_storage.sql`
+8. `increase_storage_limit.sql`
+
+기존 라이브 DB가 Storage 기반 피드백을 사용 중이면 `secure_feedback_storage.sql`도 한 번 실행한다.

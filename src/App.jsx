@@ -211,6 +211,8 @@ export default function App() {
   const [showRoleClaim, setShowRoleClaim] = useState(() => Boolean(new URLSearchParams(window.location.search).get('invite')))
   const selectedIdRef = useRef('')
   const homeLoadIdRef = useRef('')
+  const musicOrderSaveRef = useRef(Promise.resolve())
+  const musicOrderGenerationRef = useRef(0)
 
   useEffect(() => {
     let active = true
@@ -328,12 +330,23 @@ export default function App() {
         }
         else if (joinedProduction) {
           const joinedResultId = String(joinedProduction)
-          let { data: joinedRow } = await supabase.from('productions').select('id, workspace_id').eq('id', joinedResultId).maybeSingle()
+          const joinedLookup = await supabase.from('productions').select('id, workspace_id').eq('id', joinedResultId).maybeSingle()
+          if (joinedLookup.error && !/0 rows|not found/i.test(joinedLookup.error.message || '')) {
+            throw new Error(`초대 공연 확인 실패: ${joinedLookup.error.message}`)
+          }
+          let joinedRow = joinedLookup.data || null
           // 구버전 RPC는 production_id 대신 workspace_id를 반환했습니다. 링크에 포함된
-          // 공연 ID가 실제 접근 가능한 공연인지 확인한 뒤에만 호환 경로로 사용합니다.
+          // 공연 ID가 실제 접근 가능하고 반환된 workspace에 속할 때만 호환 경로로 사용합니다.
           if (!joinedRow && requestedProductionId) {
             const fallback = await supabase.from('productions').select('id, workspace_id').eq('id', requestedProductionId).maybeSingle()
-            joinedRow = fallback.data || null
+            if (fallback.error && !/0 rows|not found/i.test(fallback.error.message || '')) {
+              throw new Error(`초대 링크 공연 확인 실패: ${fallback.error.message}`)
+            }
+            joinedRow = fallback.data?.workspace_id === joinedResultId ? fallback.data : null
+          }
+          if (joinedRow && requestedProductionId && joinedRow.id !== requestedProductionId) {
+            joinedRow = null
+            setNotice('초대 토큰과 공연 정보가 일치하지 않아요. 해당 공연에서 새 초대 링크를 만들어주세요.')
           }
           joinedProductionId = joinedRow?.id || ''
           joinedWorkspaceId = joinedRow?.workspace_id || ''
@@ -351,6 +364,10 @@ export default function App() {
             if (!Array.isArray(rememberedInvites)) rememberedInvites = []
             window.localStorage.setItem(inviteGrantKey, JSON.stringify([...new Set([...rememberedInvites, joinedProductionId])]))
           }
+        } else {
+          setInviteProductionId('')
+          setShowRoleClaim(false)
+          setNotice('초대 링크에서 공연 정보를 찾지 못했어요. 새 초대 링크를 받아주세요.')
         }
       }
       let workspaceQuery = supabase
@@ -460,6 +477,14 @@ export default function App() {
       membershipError = fallback.error
     }
     const membershipUnavailable = membershipError && isMissingBackendObject(membershipError, 'production_members')
+    if (membershipUnavailable) {
+      setProductions([])
+      setSelected(null)
+      setDefaultProductionId('')
+      window.localStorage.removeItem('stageflow:default-production')
+      setNotice('공연별 접근 DB가 아직 연결되지 않았어요. production_scoped_access.sql을 먼저 적용해주세요.')
+      return
+    }
     if (membershipError && !membershipUnavailable) {
       setProductions([])
       setSelected(null)
@@ -475,16 +500,14 @@ export default function App() {
       .select('*')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
-    if (!membershipUnavailable) {
-      if (!allowedIds.length) {
-        setProductions([])
-        setSelected(null)
-        setDefaultProductionId('')
-        window.localStorage.removeItem('stageflow:default-production')
-        return
-      }
-      productionQuery = productionQuery.in('id', allowedIds)
+    if (!allowedIds.length) {
+      setProductions([])
+      setSelected(null)
+      setDefaultProductionId('')
+      window.localStorage.removeItem('stageflow:default-production')
+      return
     }
+    productionQuery = productionQuery.in('id', allowedIds)
     const { data, error } = await productionQuery
     if (error) setNotice(`공연을 불러오지 못했어요: ${error.message}`)
     else {
@@ -689,11 +712,23 @@ export default function App() {
     if (!window.confirm(`${folders.map((folder) => folderLabels[folder]).join(', ')} 파일을 초기화할까요? 장면·배역·소품 정보는 유지돼요.`)) return false
     setBusy(true)
     try {
+      if (folders.includes('music')) {
+        musicOrderGenerationRef.current += 1
+        await musicOrderSaveRef.current.catch(() => {})
+      }
       const groups = await Promise.all(folders.map((folder) => listStorageFilesRecursive(`${workspace.id}/${productionId}/${folder}`)))
-      const paths = groups.flat()
+      const uploadedPaths = groups.flat()
+      const controlPaths = folders.includes('music') ? [`${workspace.id}/${productionId}/data/music-order.json`] : []
+      const paths = [...new Set([...uploadedPaths, ...controlPaths])]
       if (paths.length) await removeStoragePaths(paths)
-      if (folders.includes('music')) { setPendingMusic([]); setMusicByScene({}) }
-      setNotice(paths.length ? `업로드 자료 ${paths.length}개를 초기화했어요.` : '초기화할 업로드 자료가 없어요.')
+      let cleanupWarning = ''
+      if (folders.includes('music')) {
+        const { error: playbackError } = await supabase.from('production_playback').delete().eq('production_id', productionId)
+        if (playbackError && !isMissingBackendObject(playbackError, 'production_playback')) cleanupWarning = ` 공유 재생 상태는 정리하지 못했어요: ${playbackError.message}`
+        setPendingMusic([])
+        setMusicByScene({})
+      }
+      setNotice(uploadedPaths.length ? `업로드 자료 ${uploadedPaths.length}개를 초기화했어요.${cleanupWarning}` : `초기화할 업로드 자료가 없어요.${cleanupWarning}`)
       return true
     } catch (error) {
       setNotice(`자료 초기화 실패: ${error.message}`)
@@ -748,7 +783,7 @@ export default function App() {
     const title = String(sceneForm.title || '').trim()
     const sceneNo = Number(sceneForm.scene_no)
     if (!title) return setNotice('장면 제목을 입력해 주세요.')
-    if (!Number.isFinite(sceneNo) || sceneNo < 0) return setNotice('장면 번호를 0 이상의 숫자로 입력해 주세요.')
+    if (!Number.isInteger(sceneNo) || sceneNo < 0) return setNotice('장면 번호를 0 이상의 정수로 입력해 주세요.')
     if (scenes.some((scene) => Number(scene.scene_no) === sceneNo)) return setNotice(`${sceneNo}번 장면이 이미 있어요. 기존 장면을 수정하거나 다른 번호를 입력해 주세요.`)
     setBusy(true)
     try {
@@ -783,7 +818,7 @@ export default function App() {
     const title = String(values?.title || '').trim()
     const sceneNo = Number(values?.scene_no)
     if (!title) { setNotice('장면 제목을 입력해 주세요.'); return false }
-    if (!Number.isFinite(sceneNo) || sceneNo < 0) { setNotice('장면 번호를 0 이상의 숫자로 입력해 주세요.'); return false }
+    if (!Number.isInteger(sceneNo) || sceneNo < 0) { setNotice('장면 번호를 0 이상의 정수로 입력해 주세요.'); return false }
     if (scenes.some((scene) => scene.id !== id && Number(scene.scene_no) === sceneNo)) { setNotice(`${sceneNo}번 장면이 이미 있어요.`); return false }
     const payload = {
       title,
@@ -827,6 +862,7 @@ export default function App() {
         // 표·이미지 안 글자도 놓치지 않도록 모든 페이지를 저해상도로
         // OCR하고, 내장 텍스트보다 결과가 부실하면 원문 텍스트를 유지합니다.
         ocrPageNumbers.push(pageNo)
+        page.cleanup?.()
       }
       let ocrPages = 0
       if (ocrPageNumbers.length) {
@@ -862,20 +898,25 @@ export default function App() {
             const canvas = document.createElement('canvas')
             canvas.width = Math.ceil(viewport.width)
             canvas.height = Math.ceil(viewport.height)
-            const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true })
-            await page.render({ canvasContext: context, viewport }).promise
-            const result = await worker.recognize(canvas)
-            const recognized = String(result.data?.text || '').trim()
-            const originalText = pageTexts[pageNo - 1]
-            if (recognized.replace(/\s/g, '').length >= 8) {
-              const recognizedLength = recognized.replace(/\s/g, '').length
-              const originalLength = originalText.replace(/\s/g, '').length
-              pageTexts[pageNo - 1] = originalLength > recognizedLength * 1.15 ? originalText : recognized
-              ocrPages += 1
-              textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
-            } else pageTexts[pageNo - 1] = originalText
-            canvas.width = 0
-            canvas.height = 0
+            try {
+              const context = canvas.getContext('2d', { alpha: false, willReadFrequently: true })
+              if (!context) throw new Error('이 기기에서 PDF OCR용 화면을 만들 수 없어요.')
+              await page.render({ canvasContext: context, viewport }).promise
+              const result = await worker.recognize(canvas)
+              const recognized = String(result.data?.text || '').trim()
+              const originalText = pageTexts[pageNo - 1]
+              if (recognized.replace(/\s/g, '').length >= 8) {
+                const recognizedLength = recognized.replace(/\s/g, '').length
+                const originalLength = originalText.replace(/\s/g, '').length
+                pageTexts[pageNo - 1] = originalLength > recognizedLength * 1.15 ? originalText : recognized
+                ocrPages += 1
+                textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
+              } else pageTexts[pageNo - 1] = originalText
+            } finally {
+              canvas.width = 0
+              canvas.height = 0
+              page.cleanup?.()
+            }
           }
         } finally {
           await worker.terminate()
@@ -893,7 +934,7 @@ export default function App() {
       setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, ocrPages, preview: tableRows.slice(0, 8) })
       const ocrResult = ocrPages ? ` · OCR ${ocrPages}쪽` : ''
       const archiveResult = archiveError ? ' · 원본 저장은 실패했어요' : ''
-      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 SCENE #번호 또는 장면 표 헤더를 찾지 못했어요.${archiveResult}`)
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했어요.${archiveResult}`)
     } catch (error) {
       setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
@@ -936,7 +977,7 @@ export default function App() {
     setImportText(sourceText)
     const parsed = parseProductionSheet(sourceText)
     setImportRows(parsed)
-    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : 'SCENE #번호 또는 장면 표 헤더를 찾지 못했어요. SONG.NN은 장면을 만들지 않고 기존 장면의 사운드트랙으로만 연결됩니다.')
+    setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : 'SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했어요.')
   }
 
   async function analyzeImportWithAI(sourceText = importText) {
@@ -972,7 +1013,7 @@ export default function App() {
   function applyRuleFallback(message, sourceText = importText) {
     const parsed = parseProductionSheet(sourceText)
     setImportRows(parsed)
-    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} SCENE #번호 또는 장면 표 헤더를 찾지 못했습니다.`)
+    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했습니다.`)
   }
 
   async function saveImportedScenes(options = {}) {
@@ -1129,20 +1170,31 @@ export default function App() {
     const failures = []
     const productionId = selected.id
     try {
-      for (const item of matched) {
-        const safeName = safeStorageFileName(item.file.name)
-        const path = `${workspace.id}/${productionId}/music/${item.sceneNo}/${safeName}`
-        const { error } = await supabase.storage.from('stageflow-files').upload(path, item.file, { contentType: item.file.type || 'audio/mpeg' })
-        if (!error) {
+      const uploadOne = async (item) => {
+        try {
+          const safeName = safeStorageFileName(item.file.name)
+          const path = `${workspace.id}/${productionId}/music/${item.sceneNo}/${safeName}`
+          const { error } = await supabase.storage.from('stageflow-files').upload(path, item.file, { contentType: item.file.type || 'audio/mpeg' })
+          if (error) throw error
           uploaded += 1
           uploadedItems.push(item)
-        } else failures.push(`${item.file.name} (${formatBytes(item.file.size)}): ${error.message}`)
+        } catch (error) {
+          failures.push(`${item.file.name} (${formatBytes(item.file.size)}): ${error.message}`)
+        }
+      }
+      // 모바일 메모리와 속도의 균형을 위해 최대 두 파일만 동시에 전송합니다.
+      for (let index = 0; index < matched.length; index += 2) {
+        await Promise.all(matched.slice(index, index + 2).map(uploadOne))
       }
       setPendingMusic((items) => items.filter((item) => !uploadedItems.includes(item)))
-      if (uploadedItems.length) await linkUploadedMusicCues(uploadedItems)
+      let cueWarning = ''
+      if (uploadedItems.length) {
+        try { await linkUploadedMusicCues(uploadedItems) }
+        catch (error) { cueWarning = ` 음악은 저장됐지만 큐 자동 연결 일부가 실패했어요: ${error.message}` }
+      }
       await loadMusic(productionId, scenes)
-      if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장하고 음향 큐까지 연결했어요.`)
-      else if (failures.length) setNotice(`${uploaded}개 저장 · ${failures.length}개 실패. 실패한 파일은 목록에 남겨뒀어요: ${failures.join(' / ')}`)
+      if (uploaded === matched.length) setNotice(`${uploaded}개 음악파일을 넘버별로 저장했어요.${cueWarning || ' 음향 큐도 연결했어요.'}`)
+      else if (failures.length) setNotice(`${uploaded}개 저장 · ${failures.length}개 실패. 실패한 파일은 목록에 남겨뒀어요: ${failures.join(' / ')}${cueWarning}`)
     } catch (error) {
       setNotice(`음악 업로드 처리 실패: ${error.message || '네트워크 연결을 확인해주세요.'}`)
     } finally {
@@ -1179,20 +1231,28 @@ export default function App() {
   async function autoLinkProductionCues() {
     if (!scenes.length) return setNotice('큐를 연결할 장면이 없어요.')
     setBusy(true)
-    let added = 0
-    for (const scene of scenes) {
-      const generated = buildAutoCuesForScene(scene, musicByScene[scene.scene_no] || [], castMembers)
-      const before = parseSceneCues(scene.summary).length
-      const summary = appendUniqueCueLines(scene.summary, generated)
-      const after = parseSceneCues(summary).length
-      if (summary !== String(scene.summary || '')) {
-        const { error } = await supabase.from('scenes').update({ summary }).eq('id', scene.id)
-        if (!error) added += Math.max(0, after - before)
+    try {
+      let added = 0
+      const failures = []
+      for (const scene of scenes) {
+        const generated = buildAutoCuesForScene(scene, musicByScene[scene.scene_no] || [], castMembers)
+        const before = parseSceneCues(scene.summary).length
+        const summary = appendUniqueCueLines(scene.summary, generated)
+        const after = parseSceneCues(summary).length
+        if (summary !== String(scene.summary || '')) {
+          const { error } = await supabase.from('scenes').update({ summary }).eq('id', scene.id)
+          if (error) failures.push(`${scene.scene_no}. ${scene.title}: ${error.message}`)
+          else added += Math.max(0, after - before)
+        }
       }
+      await loadScenes(selected.id)
+      if (failures.length) setNotice(`${added}개 큐를 연결했지만 ${failures.length}개 장면은 저장하지 못했어요: ${failures.slice(0, 2).join(' / ')}`)
+      else setNotice(added ? `${added}개 큐를 대본·음악·배역에서 찾아 장면에 자동 연결했어요.` : '새로 연결할 큐가 없어요. 기존 연결을 유지했어요.')
+    } catch (error) {
+      setNotice(`큐 자동 연결 실패: ${error.message || '네트워크 연결을 확인해주세요.'}`)
+    } finally {
+      setBusy(false)
     }
-    await loadScenes(selected.id)
-    setBusy(false)
-    setNotice(added ? `${added}개 큐를 대본·음악·배역에서 찾아 장면에 자동 연결했어요.` : '새로 연결할 큐가 없어요. 기존 연결을 유지했어요.')
   }
 
   async function loadMusic(productionId, sceneList = scenes) {
@@ -1217,7 +1277,7 @@ export default function App() {
       const files = listed.filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
       let signedRows = []
       try {
-        if (files.length) signedRows = await createSignedStorageUrls(files.map((file) => file.path), 43200)
+        if (files.length) signedRows = await createSignedStorageUrls(files.map((file) => file.path), 604800)
       } catch (error) {
         failures.push(`${scene.scene_no}장면 URL: ${error.message}`)
       }
@@ -1236,6 +1296,21 @@ export default function App() {
     if (failures.length) setNotice(`일부 음악을 불러오지 못했어요: ${failures.slice(0, 3).join(' / ')}`)
   }
 
+  function queueMusicOrderSave(productionId, musicState) {
+    const generation = musicOrderGenerationRef.current
+    const order = Object.fromEntries(Object.entries(musicState).map(([number, items]) => [String(number), items.map((item) => item.path)]))
+    const path = `${workspace.id}/${productionId}/data/music-order.json`
+    const save = async () => {
+      if (generation !== musicOrderGenerationRef.current) return false
+      const { error } = await supabase.storage.from('stageflow-files').upload(path, new Blob([JSON.stringify(order)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
+      if (error) throw error
+      return true
+    }
+    const queued = musicOrderSaveRef.current.then(save, save)
+    musicOrderSaveRef.current = queued.catch(() => {})
+    return queued
+  }
+
   async function reorderMusic(sceneNo, fromPath, toPath) {
     if (!fromPath || !toPath || fromPath === toPath) return
     const previous = musicByScene
@@ -1247,11 +1322,11 @@ export default function App() {
     files.splice(to, 0, moved)
     const next = { ...previous, [sceneNo]: files }
     setMusicByScene(next)
-    const order = Object.fromEntries(Object.entries(next).map(([number, items]) => [String(number), items.map((item) => item.path)]))
-    const path = `${workspace.id}/${selected.id}/data/music-order.json`
-    const { error } = await supabase.storage.from('stageflow-files').upload(path, new Blob([JSON.stringify(order)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
-    if (error) {
-      if (selectedIdRef.current === selected.id) setMusicByScene(previous)
+    const productionId = selected.id
+    try {
+      await queueMusicOrderSave(productionId, next)
+    } catch (error) {
+      if (selectedIdRef.current === productionId) await loadMusic(productionId, scenes)
       setNotice(`음악 순서 저장 실패: ${error.message}`)
     }
   }
@@ -1263,8 +1338,14 @@ export default function App() {
       const { error } = await supabase.storage.from('stageflow-files').remove([file.path])
       if (error) setNotice(`음악 삭제 실패: ${error.message}`)
       else {
-        await loadMusic(selected.id, scenes)
-        setNotice('음악파일을 삭제했어요.')
+        const productionId = selected.id
+        const next = Object.fromEntries(Object.entries(musicByScene).map(([sceneNo, files]) => [sceneNo, files.filter((item) => item.path !== file.path)]))
+        try { await queueMusicOrderSave(productionId, next) } catch { /* 목록 재조회로 정리합니다. */ }
+        const { error: playbackError } = await supabase.from('production_playback').delete().eq('production_id', productionId).eq('file_path', file.path)
+        await loadMusic(productionId, scenes)
+        setNotice(playbackError && !isMissingBackendObject(playbackError, 'production_playback')
+          ? `음악은 삭제했지만 공유 재생 상태 정리에 실패했어요: ${playbackError.message}`
+          : '음악파일을 삭제했어요.')
       }
     } finally {
       setUploadingMusic(false)
@@ -2241,6 +2322,13 @@ function RoleClaimSheet({ members, choose, busy }) {
   return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배우 이름을 선택하세요</h2><p className="muted">한 배우에게 여러 배역이 묶여 있으면 모두 한 번에 선택돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{actorGroups.map((group) => <button key={group.key} disabled={busy} onClick={() => choose(group.members[0].id)}><UserRound /><span><b>{group.actor}</b><small>{group.members.map((member) => member.roleName || '배역 미정').join(' · ')} · {group.members.length}배역</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !actorGroups.length && <p className="notice">선택 가능한 배우가 없어요.</p>}</section></div>
 }
 
+function projectedPlaybackPosition(value, now = Date.now()) {
+  const base = Math.max(0, Number(value?.position_seconds || 0))
+  if (!value?.is_playing) return base
+  const updatedAt = new Date(value.updated_at || 0).getTime()
+  return Number.isFinite(updatedAt) ? base + Math.max(0, (now - updatedAt) / 1000) : base
+}
+
 function useSharedProductionPlayback({ production, session, playlist }) {
   const audioRef = useRef(null)
   const playbackRef = useRef(null)
@@ -2270,13 +2358,16 @@ function useSharedProductionPlayback({ production, session, playlist }) {
   const publish = useCallback(async (patch) => {
     const audio = audioRef.current
     const currentPlayback = playbackRef.current
+    const localPosition = audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
+      ? Math.max(0, audio.currentTime)
+      : projectedPlaybackPosition(currentPlayback)
     const payload = {
       production_id: production.id,
       file_path: patch.file_path ?? currentPlayback?.file_path ?? '',
       file_name: patch.file_name ?? currentPlayback?.file_name ?? '',
       scene_no: patch.scene_no ?? currentPlayback?.scene_no ?? null,
       is_playing: patch.is_playing ?? currentPlayback?.is_playing ?? false,
-      position_seconds: patch.position_seconds ?? Math.max(0, audio?.currentTime || 0),
+      position_seconds: patch.position_seconds ?? localPosition,
       command_seq: Math.max(Date.now(), Number(currentPlayback?.command_seq || 0) + 1),
       updated_by: session.user.id,
       updated_at: new Date().toISOString(),
@@ -2292,15 +2383,27 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     if (saveError && missingPlaybackTable(saveError)) {
       setSharedAvailable(false)
       setError('개인 재생 모드 · 공유 플레이어 DB가 아직 연결되지 않았어요.')
-    } else if (saveError) setError(`공유 재생 연결 실패: ${saveError.message}`)
-    else setError('')
-    return !saveError
+      return true
+    }
+    if (saveError) {
+      playbackRef.current = currentPlayback
+      setPlayback(currentPlayback)
+      setError(`공유 재생 연결 실패: ${saveError.message}`)
+      return false
+    }
+    setError('')
+    return true
   }, [missingPlaybackTable, production.id, session.user.id, sharedAvailable])
 
   const playFile = useCallback((file) => file?.path && publish({ file_path: file.path, file_name: cleanStoredFileName(file.name), scene_no: file.sceneNo, is_playing: true, position_seconds: 0 }), [publish])
   const toggle = useCallback(() => {
     const currentPlayback = playbackRef.current
-    return currentPlayback?.file_path && publish({ is_playing: !currentPlayback.is_playing, position_seconds: audioRef.current?.currentTime || currentPlayback.position_seconds || 0 })
+    if (!currentPlayback?.file_path) return false
+    const audio = audioRef.current
+    const currentPosition = audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
+      ? audio.currentTime
+      : projectedPlaybackPosition(currentPlayback)
+    return publish({ is_playing: !currentPlayback.is_playing, position_seconds: currentPosition })
   }, [publish])
   const seek = useCallback((seconds) => {
     const next = Math.max(0, Math.min(Number(seconds) || 0, duration || Number.MAX_SAFE_INTEGER))
@@ -2400,9 +2503,7 @@ function useSharedProductionPlayback({ production, session, playlist }) {
       setPosition(0)
       setDuration(0)
     }
-    const updatedAt = new Date(playback.updated_at).getTime()
-    const elapsed = playback.is_playing && Number.isFinite(updatedAt) ? Math.max(0, (Date.now() - updatedAt) / 1000) : 0
-    const desired = Math.max(0, Number(playback.position_seconds || 0) + elapsed)
+    const desired = projectedPlaybackPosition(playback)
     const align = () => {
       if (!Number.isFinite(desired)) return
       const target = Math.min(desired, Number.isFinite(audio.duration) ? audio.duration : desired)
@@ -2507,6 +2608,8 @@ function ProductionView(props) {
   const [feedbackRunId, setFeedbackRunId] = useState('')
   const [feedbackDrafts, setFeedbackDrafts] = useState({})
   const [feedbackStatus, setFeedbackStatus] = useState('')
+  const [myFeedback, setMyFeedback] = useState([])
+  const [feedbackInboxStatus, setFeedbackInboxStatus] = useState('')
   const previousShowState = useRef(null)
   const lastShowCursorAtRef = useRef(0)
   const runAdvanceRef = useRef(false)
@@ -2541,6 +2644,29 @@ function ProductionView(props) {
   const runPairMembers = selectedRunPair ? castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair)) : castingAssignments
   const runPairRoster = buildCastRoleHierarchy(runPairMembers)
   const runFeedbackActors = groupCastMembersByActor(runPairMembers)
+  const feedbackRecipients = runFeedbackActors.filter((member) => member.userId)
+  const loadMyFeedback = useCallback(async () => {
+    const base = `${workspace.id}/${production.id}/feedback/${session.user.id}`
+    setFeedbackInboxStatus('불러오는 중…')
+    try {
+      const entries = await listAllStorageEntries(base, { sortBy: { column: 'created_at', order: 'desc' } })
+      const files = entries.filter((item) => item.id && /\.json$/i.test(item.name)).slice(0, 50)
+      const parsed = await Promise.all(files.map(async (item) => {
+        const { data, error } = await supabase.storage.from('stageflow-files').download(`${base}/${item.name}`)
+        if (error || !data) return null
+        try { return JSON.parse(await data.text()) } catch { return null }
+      }))
+      setMyFeedback(parsed.filter(Boolean).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))))
+      setFeedbackInboxStatus('')
+    } catch (error) {
+      setMyFeedback([])
+      setFeedbackInboxStatus(`내 피드백을 불러오지 못했어요: ${error.message}`)
+    }
+  }, [production.id, session.user.id, workspace.id])
+  useEffect(() => {
+    setShowIndex((index) => runScenes.length ? Math.max(0, Math.min(runScenes.length - 1, index)) : 0)
+  }, [runScenes.length, setShowIndex])
+  useEffect(() => { void loadMyFeedback() }, [loadMyFeedback])
   useEffect(() => {
     if (briefingMemberId && selectedRunPair && !castingAssignments.some((member) => member.id === briefingMemberId && normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair))) {
       setBriefingMemberId('')
@@ -2643,6 +2769,7 @@ function ProductionView(props) {
   }, [runSession])
   async function startFullRun() {
     if (!runScenes.length || !selectedRunPair || !showController) return
+    setFeedbackStatus('')
     const now = new Date().toISOString()
     readinessGenerationRef.current += 1
     setShowIndex(0); setRunElapsed(0)
@@ -2660,12 +2787,12 @@ function ProductionView(props) {
   }
   async function submitRunFeedback(event) {
     event.preventDefault()
-    const entries = runFeedbackActors.filter((member) => feedbackDrafts[canonicalActor(member.name)]?.trim())
+    const entries = feedbackRecipients.filter((member) => feedbackDrafts[canonicalActor(member.name)]?.trim())
     if (!entries.length) return setFeedbackStatus('작성한 피드백이 없어요.')
     const senderId = session.user.id
     const createdAt = new Date().toISOString()
     const uploads = entries.map((member) => {
-      const recipientId = member.userId || member.id
+      const recipientId = member.userId
       const path = `${workspace.id}/${production.id}/feedback/${recipientId}/${feedbackRunId}-${senderId}.json`
       const payload = { id: crypto.randomUUID(), runId: feedbackRunId, productionId: production.id, recipientId, castMemberId: member.id, actorName: member.name, roleName: member.roleName || '', subRoleName: member.subRoleName || '', pairName: selectedRunPair || '', message: feedbackDrafts[canonicalActor(member.name)].trim(), senderId, createdAt }
       return supabase.storage.from('stageflow-files').upload(path, new Blob([JSON.stringify(payload)], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
@@ -2824,7 +2951,7 @@ function ProductionView(props) {
       {editingProduction ? <form className="production-edit-bar" onSubmit={saveProduction}><input required value={productionDraft.title} onChange={(event) => setProductionDraft({ ...productionDraft, title: event.target.value })} placeholder="공연명" /><input value={productionDraft.venue} onChange={(event) => setProductionDraft({ ...productionDraft, venue: event.target.value })} placeholder="공연 장소" /><input type="date" value={productionDraft.performance_start_date} onChange={(event) => setProductionDraft({ ...productionDraft, performance_start_date: event.target.value })} /><div><button type="button" onClick={() => setEditingProduction(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form> : <section className="production-bar"><div><span>{production.performance_start_date || '공연일 미정'}</span><h1>{production.title}</h1><p><MapPin size={14} /> {production.venue || '공연 장소 미정'}</p></div><div className="production-bar-actions">{daysLeft !== null && <strong>{daysLeft >= 0 ? `D-${daysLeft}` : '종료'}</strong>}<button className="icon-button" onClick={() => setEditingProduction(true)} aria-label="공연 정보 수정"><Pencil size={16} /></button></div></section>}
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button>{!setupState.script && <button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}><FileText /><span>대본 등록</span></button>}{setupState.script && <button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button>}{setupState.script && <button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button>}{canRun && <button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>준비/공연</span></button>}{setupState.script && <button className={!['overview', 'scenes', 'cast', 'show'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button>}</nav>
       <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
-      {tab === 'overview' && <><ProductionSetupProgress state={setupState} open={setTab} />{setupState.script ? <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} /> : <section className="setup-first-action"><FileText /><div><h2>대본을 등록해 주세요</h2><p>PDF·엑셀·텍스트를 올리면 장면과 등장인물을 먼저 정리합니다.</p></div><button className="primary" onClick={() => setTab('import')}>대본 등록 시작 <ChevronRight /></button></section>}</>}
+      {tab === 'overview' && <><ProductionSetupProgress state={setupState} open={setTab} />{setupState.script ? <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} /> : <section className="setup-first-action"><FileText /><div><h2>대본을 등록해 주세요</h2><p>PDF·엑셀·텍스트를 올리면 장면과 등장인물을 먼저 정리합니다.</p></div><button className="primary" onClick={() => setTab('import')}>대본 등록 시작 <ChevronRight /></button></section>}<MyFeedbackInbox items={myFeedback} status={feedbackInboxStatus} refresh={loadMyFeedback} /></>}
       {tab === 'scenes' && (showForm
         ? <EntityEditorPage eyebrow="SCENE" title="장면 등록" description="장면 번호는 0부터 입력할 수 있으며, 세부 장면은 장면 설명에 연결해 관리합니다." back={() => setShowForm(false)}><SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} /></EntityEditorPage>
         : <>
@@ -2846,10 +2973,11 @@ function ProductionView(props) {
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <section className="actor-run-intro"><UserRound /><div><b>배우 런 연습</b><small>내 배역을 고르고 장면별 등장·의상·소품·음악을 확인하세요.</small></div></section>}
-      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고르면 그 페어에 배정된 배역과 배우만 전체 장면에 적용돼요.</p></div><div className="run-pair-options"><button className={!selectedRunPair ? 'selected' : ''} onClick={() => setSelectedRunPair('')}><CheckCircle2 /><span><b>전체 보기</b><small>모든 캐스팅 표시</small></span></button>{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 전체 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
+      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고르면 그 페어에 배정된 배역과 배우만 전체 장면에 적용돼요.</p></div><div className="run-pair-options">{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{!selectedRunPair && availableRunPairs.length > 0 && <p className="run-pair-required"><AlertTriangle /> 런을 시작할 페어를 선택해주세요.</p>}{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 전체 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
       {tab === 'show' && <RunControl session={runSession} elapsed={runElapsed} history={runHistory} current={current} firstScene={firstRunScene} firstProps={firstRunProps} firstCostumes={firstRunCostumes} pairName={selectedRunPair} start={startFullRun} finish={goNextWithTiming} enabled={showController && Boolean(selectedRunPair)} isLast={!next} />}
+      {tab === 'show' && !feedbackRunId && feedbackStatus && <p className="notice">{feedbackStatus}</p>}
       {tab === 'show' && !runSession && !!runHistory.length && <RunHistory runs={runHistory} />}
-      {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>한 배우가 여러 배역을 맡아도 입력칸은 하나이며, 해당 배우에게만 전달돼요.</p></div><div className="run-feedback-list">{runFeedbackActors.map((member) => { const actorKey = canonicalActor(member.name); return <label key={actorKey}><span><UserRound /><b>{member.name}</b><small>{member.roleName || '배역 미정'}{selectedRunPair ? ` · ${selectedRunPair}` : ''}</small></span><textarea value={feedbackDrafts[actorKey] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [actorKey]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label> })}</div>{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary"><Upload size={16} /> 개인 피드백 전달</button></div></form>}
+      {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>한 배우가 여러 배역을 맡아도 입력칸은 하나이며, 계정에서 배우를 선택한 사람에게만 전달돼요.</p></div><div className="run-feedback-list">{feedbackRecipients.map((member) => { const actorKey = canonicalActor(member.name); return <label key={actorKey}><span><UserRound /><b>{member.name}</b><small>{member.roleName || '배역 미정'}{selectedRunPair ? ` · ${selectedRunPair}` : ''}</small></span><textarea value={feedbackDrafts[actorKey] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [actorKey]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label> })}</div>{feedbackRecipients.length < runFeedbackActors.length && <p className="notice">배우 선택을 완료하지 않은 {runFeedbackActors.length - feedbackRecipients.length}명은 개인 수신 계정이 없어 제외했어요.</p>}{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary" disabled={!feedbackRecipients.length}><Upload size={16} /> 개인 피드백 전달</button></div></form>}
       {tab === 'show' && !!showEvents.length && <ShowEventLog events={showEvents} />}
       <SharedMusicPlayer controller={sharedPlayback} playlist={sharedPlaylist} visible={false} />
       {tab === 'show' && runSession && current && <article className="run-current-scene"><span>ACT {current.act_no} · SCENE {current.scene_no}</span><h2>{current.title}</h2><small>{selectedRunPair} · {showIndex + 1}/{runScenes.length}</small></article>}
@@ -3233,7 +3361,7 @@ function ProductionForm({ form, setForm, submit, busy }) { return <form classNam
 function ProductionCreateModal({ form, setForm, submit, busy, close }) {
   return <div className="production-create-backdrop" onClick={close}><section className="production-create-modal" role="dialog" aria-modal="true" aria-label="새 공연 만들기" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="production-create-head"><div><span>NEW PRODUCTION</span><h2>새 공연 만들기</h2><p>공연 정보를 입력한 뒤 자료를 자동정리할 수 있어요.</p></div><button className="icon-button" onClick={close} aria-label="닫기"><X /></button></div><ProductionForm form={form} setForm={setForm} submit={submit} busy={busy} /></section></div>
 }
-function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid entity-editor-form" onSubmit={submit}><label><span>장면 제목</span><input required placeholder="예: 가려진 진실" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><div className="two-col"><label><span>ACT</span><input type="number" min="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /></label><label><span>장면 번호</span><input type="number" min="0" step="0.1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></label></div><label><span>장면 설명</span><textarea placeholder="등장 배역, 소품, 큐 등 장면 정보를 입력하세요." value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></label><button className="primary" disabled={busy}>장면 저장</button></form> }
+function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid entity-editor-form" onSubmit={submit}><label><span>장면 제목</span><input required placeholder="예: 가려진 진실" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><div className="two-col"><label><span>ACT</span><input type="number" min="1" step="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /></label><label><span>장면 번호</span><input type="number" min="0" step="1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></label></div><label><span>장면 설명</span><textarea placeholder="등장 배역, 소품, 큐 등 장면 정보를 입력하세요." value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></label><button className="primary" disabled={busy}>장면 저장</button></form> }
 function ProductionCard({ item, index, open, remove }) { return <article className="production-card" onClick={open}><div className={`poster poster-${index % 3}`}><Theater size={38} /></div><div className="production-info"><div className="card-top"><span className="status">준비 중</span><button className="icon-button danger" onClick={(e) => { e.stopPropagation(); remove() }} aria-label="공연 삭제"><Trash2 size={17} /></button></div><h3>{item.title}</h3><p>{item.venue || '장소 미정'}</p><small>{item.performance_start_date || '공연일 미정'}</small></div></article> }
 function parseSceneSummarySections(summary = '') {
   const result = { main: [], ensemble: [], backstage: [], details: [], soundtracks: [], props: [], status: [], other: [] }
@@ -3270,7 +3398,7 @@ function SceneCard({ scene, update, remove }) {
     if (!draft.title.trim()) return
     if (await update(scene.id, draft)) setEditing(false)
   }
-  if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="0.1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
+  if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" step="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   const sections = parseSceneSummarySections(scene.summary)
   const castCount = sections.main.length + sections.ensemble.length
   const hasLinkedDetails = castCount > 0 || sections.props.length > 0
@@ -3812,15 +3940,23 @@ function groupCastMembersByActor(members, options = {}) {
   return [...groups.values()].map((roles) => {
     const preferred = roles.find((member) => member.id === options.preferredId)
     const ready = options.sceneNo == null ? null : roles.find((member) => options.ready?.[`${member.id}-${options.sceneNo}`])
-    const representative = preferred || ready || roles[0]
+    const claimed = roles.find((member) => member.userId)
+    const representative = preferred || ready || claimed || roles[0]
     return {
       ...representative,
+      userId: claimed?.userId || representative.userId || '',
+      email: claimed?.email || representative.email || '',
       roleName: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · '),
       sceneNumbers: [...new Set(roles.flatMap((member) => member.sceneNumbers || []))].sort((a, b) => Number(a) - Number(b)),
       choreographyExcludedSongKeys: [...new Set(roles.flatMap((member) => member.choreographyExcludedSongKeys || []))],
       groupedMemberIds: roles.map((member) => member.id),
     }
   })
+}
+
+function MyFeedbackInbox({ items, status, refresh }) {
+  if (!items.length && !status) return null
+  return <section className="feedback-inbox"><div className="feedback-inbox-head"><div><span>MY FEEDBACK</span><h2>내 런 피드백</h2><p>내가 선택한 배우에게 전달된 내용만 보여요.</p></div><button onClick={() => void refresh()} aria-label="피드백 새로고침"><RotateCcw /></button></div>{status && <p className="notice">{status}</p>}<div>{items.map((item) => <article key={item.id || `${item.runId}-${item.createdAt}`}><div><b>{item.actorName || '내 피드백'}</b><span>{item.roleName || '배역 미정'}{item.pairName ? ` · ${item.pairName}` : ''}</span></div><p>{item.message}</p><small>{item.createdAt ? new Date(item.createdAt).toLocaleString('ko-KR') : ''}</small></article>)}</div></section>
 }
 
 function groupCastMembersByRole(members = []) {
@@ -4229,12 +4365,20 @@ function MaterialsPanel({ workspace, production }) {
     setLoading(true)
     let uploaded = 0
     const failures = []
+    const targetCategory = category
     try {
-      for (const file of selected) {
-        const path = `${base}/${category}/${safeStorageFileName(file.name)}`
-        const { error } = await supabase.storage.from('stageflow-files').upload(path, file, { contentType: file.type || 'application/octet-stream' })
-        if (!error) uploaded += 1
-        else failures.push(`${file.name}: ${error.message}`)
+      const uploadOne = async (file) => {
+        try {
+          const path = `${base}/${targetCategory}/${safeStorageFileName(file.name)}`
+          const { error } = await supabase.storage.from('stageflow-files').upload(path, file, { contentType: file.type || 'application/octet-stream' })
+          if (error) throw error
+          uploaded += 1
+        } catch (error) {
+          failures.push(`${file.name}: ${error.message}`)
+        }
+      }
+      for (let index = 0; index < selected.length; index += 3) {
+        await Promise.all(selected.slice(index, index + 3).map(uploadOne))
       }
       await loadMaterials()
       setStatus(failures.length ? `${uploaded}개 업로드 · ${failures.length}개 실패: ${failures.join(', ')}` : `${uploaded}개 자료를 업로드했어요.`)
@@ -4659,7 +4803,7 @@ function matchMusicToScene(filename, scenes) {
 }
 
 function cleanStoredFileName(value) {
-  const encoded = value.match(/^\d{13}--([A-Za-z0-9_-]+)(\.[A-Za-z0-9]+)?$/)
+  const encoded = value.match(/^\d{13}(?:-[A-Fa-f0-9]{8})?--([A-Za-z0-9_-]+)(\.[A-Za-z0-9]+)?$/)
   if (encoded) {
     try {
       const base64 = encoded[1].replace(/-/g, '+').replace(/_/g, '/')
@@ -4748,14 +4892,16 @@ function _parseScriptByMarkers(source) {
 }
 
 function safeStorageFileName(value) {
-  const extensionMatch = value.match(/\.([A-Za-z0-9]{1,8})$/)
+  const input = String(value || '').normalize('NFKC')
+  const extensionMatch = input.match(/\.([A-Za-z0-9]{1,8})$/)
   const extension = extensionMatch ? `.${extensionMatch[1].toLowerCase()}` : ''
-  const title = extension ? value.slice(0, -extension.length) : value
+  const rawTitle = extension ? input.slice(0, -extension.length) : input
+  const title = [...rawTitle].slice(0, 120).join('').trim() || 'track'
   const bytes = new TextEncoder().encode(title)
   let binary = ''
   bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
   const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
-  return `${Date.now()}--${encoded || 'track'}${extension}`
+  return `${Date.now()}-${crypto.randomUUID().slice(0, 8)}--${encoded || 'track'}${extension}`
 }
 
 function parseProductionSheet(source) {
@@ -4763,6 +4909,8 @@ function parseProductionSheet(source) {
   if (scriptRows.length) return scriptRows
   const structuredRows = parseStructuredProductionTable(source)
   if (structuredRows.length) return structuredRows
+  const songRows = _parseScriptByMarkers(source)
+  if (songRows.length) return songRows
   const rows = new Map()
   let current = null
   let propsMode = false
@@ -4812,7 +4960,7 @@ function parseScriptSceneHierarchy(source) {
     if (sceneMatch) {
       const { sceneNo, detailNo } = sceneMatch
       current = rows.get(sceneNo) || { number: sceneNo, title: `SCENE ${sceneNo}`, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '', props: [], costumes: [], cues: [], details: [], soundtracks: [], characters: [] }
-      if (detailNo) current.details.push({ code: `${sceneNo}-${detailNo}`, title: cleanTitle(sceneMatch.title, `SCENE ${sceneNo}-${detailNo}`) })
+      if (detailNo !== null) current.details.push({ code: `${sceneNo}-${detailNo}`, title: cleanTitle(sceneMatch.title, `SCENE ${sceneNo}-${detailNo}`) })
       else current.title = cleanTitle(sceneMatch.title, `SCENE ${sceneNo}`)
       rows.set(sceneNo, current)
       return
