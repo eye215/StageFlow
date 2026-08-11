@@ -27,15 +27,31 @@ const propertyText = (property: any) => {
   if (!property) return ''
   if (property.type === 'number') return property.number == null ? '' : String(property.number)
   if (property.type === 'select') return property.select?.name || ''
+  if (property.type === 'status') return property.status?.name || ''
   if (property.type === 'multi_select') return (property.multi_select || []).map((item: any) => item.name).join(' / ')
   if (property.type === 'checkbox') return property.checkbox ? 'O' : 'X'
+  if (property.type === 'date') return [property.date?.start, property.date?.end].filter(Boolean).join(' ~ ')
+  if (property.type === 'url' || property.type === 'email' || property.type === 'phone_number') return property[property.type] || ''
+  if (property.type === 'unique_id') return `${property.unique_id?.prefix || ''}${property.unique_id?.number ?? ''}`
+  if (property.type === 'formula') {
+    const formula = property.formula || {}
+    return formula.string ?? formula.number ?? formula.boolean ?? formula.date?.start ?? ''
+  }
+  if (property.type === 'rollup') {
+    const rollup = property.rollup || {}
+    if (rollup.type === 'array') return (rollup.array || []).map(propertyText).filter(Boolean).join(' / ')
+    return rollup.number ?? rollup.date?.start ?? ''
+  }
+  if (property.type === 'relation') return (property.relation || []).map((item: any) => item.id).join(' / ')
   const values = property.title || property.rich_text || property.people || []
   return values.map((value: any) => value.plain_text || value.name || '').join('').trim()
 }
 
 const pick = (properties: Record<string, any>, names: string[]) => {
+  const normalized = new Map(Object.entries(properties).map(([key, value]) => [key.toLowerCase().replace(/[\s_\-./]/g, ''), value]))
   for (const name of names) {
-    const value = propertyText(properties[name])
+    const property = properties[name] || normalized.get(name.toLowerCase().replace(/[\s_\-./]/g, ''))
+    const value = propertyText(property)
     if (value) return value
   }
   return ''
@@ -118,16 +134,20 @@ Deno.serve(async (request) => {
   try {
     if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았어요.')
     const auth = String(request.headers.get('Authorization') || '').replace(/[^\x21-\x7E]/g, '')
+    if (!auth) return new Response(JSON.stringify({ ok: false, error: '로그인이 필요합니다.' }), { status: 401, headers: { ...cors, 'Content-Type': 'application/json' } })
     stage = '공연 권한 확인'
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: auth } } },
     )
-    const { productionId, dataSourceId, targets: requestedTargets } = await request.json()
-    if (!productionId) throw new Error('공연 ID가 필요합니다.')
+    let body: any
+    try { body = await request.json() } catch { throw new Error('요청 본문이 올바른 JSON이 아닙니다.') }
+    const { productionId, dataSourceId, targets: requestedTargets } = body || {}
+    if (!productionId || typeof productionId !== 'string') throw new Error('공연 ID가 필요합니다.')
     const targetKeys = ['scenes', 'cast', 'props', 'costumes', 'cues', 'soundtracks'] as const
     const targets = Object.fromEntries(targetKeys.map((key) => [key, requestedTargets?.[key] !== false])) as Record<(typeof targetKeys)[number], boolean>
+    if (!Object.values(targets).some(Boolean)) throw new Error('가져올 항목을 하나 이상 선택해 주세요.')
     const { error: productionError } = await supabase
       .from('productions')
       .select('id')
@@ -136,6 +156,7 @@ Deno.serve(async (request) => {
     if (productionError) throw new Error(errorMessage(productionError))
     const requestedSourceId = normalizeSourceId(dataSourceId || '')
     if (!requestedSourceId) throw new Error('Notion Data Source ID가 필요합니다.')
+    if (requestedSourceId.length > 300) throw new Error('Notion Data Source ID가 너무 깁니다.')
 
     stage = 'Notion Data Source 연결'
     const resolved = await resolveDataSource(requestedSourceId)

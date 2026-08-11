@@ -21,7 +21,9 @@ Deno.serve(async (request) => {
     const { data: userData, error: userError } = await supabase.auth.getUser()
     if (userError || !userData.user) return Response.json({ error: '로그인 세션이 만료되었습니다.' }, { status: 401, headers: corsHeaders })
 
-    const { text, productionTitle = '', productionId } = await request.json()
+    let body: Record<string, unknown>
+    try { body = await request.json() } catch { throw new Error('요청 본문이 올바른 JSON이 아닙니다.') }
+    const { text, productionTitle = '', productionId } = body
     if (!productionId || typeof productionId !== 'string') throw new Error('공연 ID가 필요합니다.')
     if (!text || typeof text !== 'string' || !text.trim()) throw new Error('분석할 대본 텍스트가 없습니다.')
     if (text.length > 120000) throw new Error('분석할 텍스트는 120,000자 이하만 지원합니다.')
