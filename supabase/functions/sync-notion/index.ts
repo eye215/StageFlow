@@ -177,8 +177,8 @@ Deno.serve(async (request) => {
   let stage = '요청 확인'
   try {
     if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았어요.')
-    const auth = String(request.headers.get('Authorization') || '').replace(/[^\x21-\x7E]/g, '')
-    if (!auth) return json({ ok: false, error: '로그인이 필요합니다.' }, 401)
+    const auth = String(request.headers.get('Authorization') || '').trim().replace(/[^\x20-\x7E]/g, '')
+    if (!/^Bearer\s+[\x21-\x7E]+$/i.test(auth)) return json({ ok: false, error: '로그인이 필요합니다.' }, 401)
     let body: any
     try { body = await request.json() } catch { throw new Error('요청 본문이 올바른 JSON이 아닙니다.') }
     const { productionId, dataSourceId, targets: requestedTargets } = body || {}
