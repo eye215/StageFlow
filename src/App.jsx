@@ -54,6 +54,10 @@ async function loadPdfRuntime() {
     ]).then(([pdfjs, worker]) => {
       pdfjs.GlobalWorkerOptions.workerSrc = worker.default
       return pdfjs
+    }).catch((error) => {
+      // 일시적인 CDN/서비스워커 캐시 오류 뒤에도 같은 세션에서 다시 시도할 수 있게 합니다.
+      pdfRuntimePromise = null
+      throw error
     })
   }
   return pdfRuntimePromise
@@ -94,6 +98,41 @@ function isMissingBackendObject(error, objectName = '') {
   const message = String(error?.message || error || '')
   const mentionsObject = !objectName || message.toLowerCase().includes(String(objectName).toLowerCase())
   return mentionsObject && /schema cache|does not exist|could not find|relation .* does not exist|PGRST205/i.test(message)
+}
+
+async function listAllStorageEntries(path, options = {}) {
+  const pageSize = 1000
+  const entries = []
+  for (let offset = 0; offset < 100000; offset += pageSize) {
+    const { data, error } = await supabase.storage.from('stageflow-files').list(path, {
+      limit: pageSize,
+      offset,
+      ...(options.sortBy ? { sortBy: options.sortBy } : {}),
+    })
+    if (error) throw error
+    const page = data || []
+    entries.push(...page)
+    if (page.length < pageSize) break
+  }
+  return entries
+}
+
+async function createSignedStorageUrls(paths, expiresIn = 3600) {
+  const signed = []
+  for (let index = 0; index < paths.length; index += 100) {
+    const batch = paths.slice(index, index + 100)
+    const { data, error } = await supabase.storage.from('stageflow-files').createSignedUrls(batch, expiresIn)
+    if (error) throw error
+    signed.push(...(data || []))
+  }
+  return signed
+}
+
+async function removeStoragePaths(paths) {
+  for (let index = 0; index < paths.length; index += 1000) {
+    const { error } = await supabase.storage.from('stageflow-files').remove(paths.slice(index, index + 1000))
+    if (error) throw error
+  }
 }
 
 function withoutRawLine(value = {}) {
@@ -275,24 +314,43 @@ export default function App() {
   async function loadWorkspace() {
     setLoading(true)
     try {
-      const inviteToken = new URLSearchParams(window.location.search).get('invite')
+      const inviteParams = new URLSearchParams(window.location.search)
+      const inviteToken = inviteParams.get('invite')
+      const requestedProductionId = inviteParams.get('production') || ''
       let joinedWorkspaceId = ''
       let joinedProductionId = ''
       if (inviteToken) {
         const { data: joinedProduction, error: joinError } = await supabase.rpc('join_workspace_by_invite', { invite_token: inviteToken })
-        if (joinError) setNotice(`팀 초대 확인 실패: ${joinError.message}`)
+        if (joinError) {
+          setInviteProductionId('')
+          setShowRoleClaim(false)
+          setNotice(`팀 초대 확인 실패: ${joinError.message}`)
+        }
         else if (joinedProduction) {
-          joinedProductionId = String(joinedProduction)
-          setInviteProductionId(joinedProductionId)
-          setDefaultProductionId(joinedProductionId)
-          window.localStorage.setItem('stageflow:default-production', joinedProductionId)
-          const inviteGrantKey = `stageflow:invited-productions:${session.user.id}`
-          let rememberedInvites = []
-          try { rememberedInvites = JSON.parse(window.localStorage.getItem(inviteGrantKey) || '[]') } catch { /* reset invalid local invite cache */ }
-          if (!Array.isArray(rememberedInvites)) rememberedInvites = []
-          window.localStorage.setItem(inviteGrantKey, JSON.stringify([...new Set([...rememberedInvites, joinedProductionId])]))
-          const { data: joinedRow } = await supabase.from('productions').select('workspace_id').eq('id', joinedProductionId).maybeSingle()
+          const joinedResultId = String(joinedProduction)
+          let { data: joinedRow } = await supabase.from('productions').select('id, workspace_id').eq('id', joinedResultId).maybeSingle()
+          // 구버전 RPC는 production_id 대신 workspace_id를 반환했습니다. 링크에 포함된
+          // 공연 ID가 실제 접근 가능한 공연인지 확인한 뒤에만 호환 경로로 사용합니다.
+          if (!joinedRow && requestedProductionId) {
+            const fallback = await supabase.from('productions').select('id, workspace_id').eq('id', requestedProductionId).maybeSingle()
+            joinedRow = fallback.data || null
+          }
+          joinedProductionId = joinedRow?.id || ''
           joinedWorkspaceId = joinedRow?.workspace_id || ''
+          if (!joinedProductionId) {
+            setInviteProductionId('')
+            setShowRoleClaim(false)
+            setNotice('초대된 공연을 확인하지 못했어요. 공연별 초대 DB 업데이트가 필요합니다.')
+          } else {
+            setInviteProductionId(joinedProductionId)
+            setDefaultProductionId(joinedProductionId)
+            window.localStorage.setItem('stageflow:default-production', joinedProductionId)
+            const inviteGrantKey = `stageflow:invited-productions:${session.user.id}`
+            let rememberedInvites = []
+            try { rememberedInvites = JSON.parse(window.localStorage.getItem(inviteGrantKey) || '[]') } catch { /* reset invalid local invite cache */ }
+            if (!Array.isArray(rememberedInvites)) rememberedInvites = []
+            window.localStorage.setItem(inviteGrantKey, JSON.stringify([...new Set([...rememberedInvites, joinedProductionId])]))
+          }
         }
       }
       let workspaceQuery = supabase
@@ -494,8 +552,12 @@ export default function App() {
     const [musicEntries, propResult, castResult] = await Promise.all([
       Promise.all(nextScenes.map(async (scene) => {
         const path = `${workspace.id}/${productionId}/music/${scene.scene_no}`
-        const { data: files } = await supabase.storage.from('stageflow-files').list(path, { limit: 100 })
-        return [String(scene.scene_no), (files || []).filter((file) => file.id).map((file) => ({ name: file.name, path: `${path}/${file.name}` }))]
+        try {
+          const files = await listAllStorageEntries(path, { sortBy: { column: 'name', order: 'asc' } })
+          return [String(scene.scene_no), files.filter((file) => file.id).map((file) => ({ name: file.name, path: `${path}/${file.name}` }))]
+        } catch {
+          return [String(scene.scene_no), []]
+        }
       })),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/props.json`),
       supabase.storage.from('stageflow-files').download(`${workspace.id}/${productionId}/data/cast.json`),
@@ -588,10 +650,7 @@ export default function App() {
       if (!isOwner) throw new Error('공연을 만든 계정만 최종 삭제할 수 있어요.')
       const prefix = `${workspace.id}/${id}`
       const paths = await listStorageFilesRecursive(prefix)
-      if (paths.length) {
-        const { error: storageError } = await supabase.storage.from('stageflow-files').remove(paths)
-        if (storageError) throw new Error(`공연 파일 삭제 실패: ${storageError.message}`)
-      }
+      if (paths.length) await removeStoragePaths(paths).catch((error) => { throw new Error(`공연 파일 삭제 실패: ${error.message}`) })
       const { data: deleted, error } = await supabase.from('productions').delete().eq('id', id).select('id')
       if (error) throw new Error(`삭제 실패: ${error.message}`)
       if (!deleted?.length) throw new Error('공연을 삭제하지 못했어요. 공연을 만든 계정인지 확인해 주세요.')
@@ -612,9 +671,8 @@ export default function App() {
   async function listStorageFilesRecursive(prefix) {
     const found = []
     async function walk(path) {
-      const { data, error } = await supabase.storage.from('stageflow-files').list(path, { limit: 1000 })
-      if (error) throw error
-      for (const item of data || []) {
+      const entries = await listAllStorageEntries(path, { sortBy: { column: 'name', order: 'asc' } })
+      for (const item of entries) {
         const itemPath = `${path}/${item.name}`
         if (item.id) found.push(itemPath)
         else await walk(itemPath)
@@ -633,10 +691,7 @@ export default function App() {
     try {
       const groups = await Promise.all(folders.map((folder) => listStorageFilesRecursive(`${workspace.id}/${productionId}/${folder}`)))
       const paths = groups.flat()
-      if (paths.length) {
-        const { error } = await supabase.storage.from('stageflow-files').remove(paths)
-        if (error) throw error
-      }
+      if (paths.length) await removeStoragePaths(paths)
       if (folders.includes('music')) { setPendingMusic([]); setMusicByScene({}) }
       setNotice(paths.length ? `업로드 자료 ${paths.length}개를 초기화했어요.` : '초기화할 업로드 자료가 없어요.')
       return true
@@ -1153,13 +1208,19 @@ export default function App() {
     }
     const failures = []
     const entries = await Promise.all(sceneList.map(async (scene) => {
-      const { data, error } = await supabase.storage.from('stageflow-files').list(`${base}/${scene.scene_no}`, { limit: 100, sortBy: { column: 'name', order: 'asc' } })
-      if (error) failures.push(`${scene.scene_no}장면: ${error.message}`)
-      const files = (data || []).filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
-      const { data: signedRows, error: urlError } = files.length
-        ? await supabase.storage.from('stageflow-files').createSignedUrls(files.map((file) => file.path), 43200)
-        : { data: [], error: null }
-      if (urlError) failures.push(`${scene.scene_no}장면 URL: ${urlError.message}`)
+      let listed = []
+      try {
+        listed = await listAllStorageEntries(`${base}/${scene.scene_no}`, { sortBy: { column: 'name', order: 'asc' } })
+      } catch (error) {
+        failures.push(`${scene.scene_no}장면: ${error.message}`)
+      }
+      const files = listed.filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${scene.scene_no}/${item.name}` }))
+      let signedRows = []
+      try {
+        if (files.length) signedRows = await createSignedStorageUrls(files.map((file) => file.path), 43200)
+      } catch (error) {
+        failures.push(`${scene.scene_no}장면 URL: ${error.message}`)
+      }
       const signedByPath = new Map((signedRows || []).map((row) => [row.path, row.signedUrl || '']))
       const signed = files.map((file) => ({ ...file, url: signedByPath.get(file.path) || '' }))
       const order = savedOrder[String(scene.scene_no)] || []
@@ -2591,7 +2652,10 @@ function ProductionView(props) {
     setPersonalReady({})
     window.localStorage.setItem(`stageflow-personal-ready-${production.id}`, '{}')
     const { error } = await supabase.storage.from('stageflow-files').upload(readinessPath, new Blob(['{}'], { type: 'application/json' }), { upsert: true, contentType: 'application/json' })
-    if (error) setFeedbackStatus(`준비 상태 초기화 실패: ${error.message}`)
+    if (error) {
+      setFeedbackStatus(`런을 시작하지 못했어요. 준비 상태 초기화 실패: ${error.message}`)
+      return
+    }
     setRunSession({ id: crypto.randomUUID(), type: 'run', pair: selectedRunPair, startedAt: now, sceneStartedAt: now, segments: [] })
   }
   async function submitRunFeedback(event) {
@@ -3232,10 +3296,15 @@ function ImportPanel({ workspace, production, updateProduction, scenes, castMemb
   const [excludedRows, setExcludedRows] = useState([])
   const loadSources = useCallback(async () => {
     const base = `${workspace.id}/${production.id}/imports`
-    const { data, error } = await supabase.storage.from('stageflow-files').list(base, { limit: 50, sortBy: { column: 'created_at', order: 'desc' } })
-    if (error) { setSources([]); return }
-    const next = await Promise.all((data || []).filter((item) => item.id).map(async (item) => { const { data: signed } = await supabase.storage.from('stageflow-files').createSignedUrl(`${base}/${item.name}`, 3600); return { ...item, url: signed?.signedUrl || '' } }))
-    setSources(next)
+    try {
+      const listed = await listAllStorageEntries(base, { sortBy: { column: 'created_at', order: 'desc' } })
+      const files = listed.filter((item) => item.id).map((item) => ({ ...item, path: `${base}/${item.name}` }))
+      const signedRows = files.length ? await createSignedStorageUrls(files.map((item) => item.path), 3600) : []
+      const signedByPath = new Map(signedRows.map((row) => [row.path, row.signedUrl || '']))
+      setSources(files.map((item) => ({ ...item, url: signedByPath.get(item.path) || '' })))
+    } catch {
+      setSources([])
+    }
   }, [workspace.id, production.id])
   async function reanalyzeSource(item) {
     if (!item.url) return
@@ -4134,14 +4203,12 @@ function MaterialsPanel({ workspace, production }) {
     setLoading(true)
     try {
       const results = await Promise.all(materialCategories.map(async (item) => {
-        const { data, error } = await supabase.storage.from('stageflow-files').list(`${base}/${item.id}`, { limit: 100, sortBy: { column: 'created_at', order: 'desc' } })
-        if (error) throw new Error(`${item.label}: ${error.message}`)
-        return (data || []).filter((file) => file.id).map((file) => ({ ...file, path: `${base}/${item.id}/${file.name}`, category: item.id, categoryLabel: item.label, url: '' }))
+        const listed = await listAllStorageEntries(`${base}/${item.id}`, { sortBy: { column: 'created_at', order: 'desc' } })
+        return listed.filter((file) => file.id).map((file) => ({ ...file, path: `${base}/${item.id}/${file.name}`, category: item.id, categoryLabel: item.label, url: '' }))
       }))
       const listed = results.flat()
       if (!listed.length) { setFiles([]); return }
-      const { data: signedRows, error: signError } = await supabase.storage.from('stageflow-files').createSignedUrls(listed.map((file) => file.path), 3600)
-      if (signError) throw signError
+      const signedRows = await createSignedStorageUrls(listed.map((file) => file.path), 3600)
       const signedByPath = new Map((signedRows || []).map((row) => [row.path, row.signedUrl || '']))
       setFiles(listed.map((file) => ({ ...file, url: signedByPath.get(file.path) || '' })))
     } catch (error) {

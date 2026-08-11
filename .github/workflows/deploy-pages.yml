@@ -31,6 +31,8 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Lint source
+        run: pnpm run lint
       - name: Build GitHub Pages
         run: pnpm run build:pages
       - name: Configure Pages
