@@ -226,6 +226,7 @@ export default function App() {
   const [importText, setImportText] = useState('')
   const [importRows, setImportRows] = useState([])
   const [pdfExtractionReport, setPdfExtractionReport] = useState(null)
+  const [referenceLinks, setReferenceLinks] = useState([])
   const [importingPdf, setImportingPdf] = useState(false)
   const [pendingMusic, setPendingMusic] = useState([])
   const [musicByScene, setMusicByScene] = useState({})
@@ -305,10 +306,12 @@ export default function App() {
     setImportText('')
     setImportRows([])
     setPdfExtractionReport(null)
+    setReferenceLinks([])
     if (!selected) return
     void loadScenes(selected.id)
     void loadCastData(selected.id)
     void loadPropData(selected.id)
+    void loadReferenceLinks(selected.id)
     setProductionTab('overview')
     setShowIndex(0)
     // 공연 ID 변경 시에만 전체 하위 데이터를 초기화합니다.
@@ -1612,6 +1615,67 @@ export default function App() {
     return `${workspace.id}/${productionId}/data/cast.json`
   }
 
+  function referenceLinksPath(productionId) {
+    return `${workspace.id}/${productionId}/data/reference-links.json`
+  }
+
+  async function loadReferenceLinks(productionId) {
+    const { data, error } = await supabase.storage.from('stageflow-files').download(referenceLinksPath(productionId))
+    if (selectedIdRef.current !== productionId) return
+    if (error || !data) return setReferenceLinks([])
+    try {
+      const parsed = JSON.parse(await data.text())
+      setReferenceLinks(Array.isArray(parsed?.links) ? parsed.links.filter((item) => item?.url) : [])
+    } catch {
+      setReferenceLinks([])
+    }
+  }
+
+  async function persistReferenceLinks(nextLinks, productionId = selected?.id) {
+    if (!productionId) return false
+    const payload = { version: 1, productionId, updatedAt: new Date().toISOString(), links: nextLinks }
+    const { error } = await supabase.storage.from('stageflow-files').upload(
+      referenceLinksPath(productionId),
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+      { upsert: true, contentType: 'application/json' },
+    )
+    if (error) {
+      setNotice(`자료 링크 저장 실패: ${error.message}`)
+      return false
+    }
+    if (selectedIdRef.current === productionId) setReferenceLinks(nextLinks)
+    return true
+  }
+
+  async function addReferenceLink(link) {
+    const productionId = selected?.id
+    const url = String(link?.url || '').trim()
+    if (!productionId || !url) return false
+    let parsed
+    try {
+      parsed = new URL(url)
+      if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('http/https 링크만 등록할 수 있어요.')
+    } catch (error) {
+      setNotice(error.message || '올바른 링크를 입력해주세요.')
+      return false
+    }
+    const next = [{
+      id: crypto.randomUUID(),
+      title: String(link.title || '').trim() || parsed.hostname.replace(/^www\./, ''),
+      url: parsed.toString(),
+      category: String(link.category || 'notion').trim() || 'notion',
+      createdAt: new Date().toISOString(),
+    }, ...referenceLinks]
+    return persistReferenceLinks(next, productionId)
+  }
+
+  async function removeReferenceLink(linkId) {
+    const productionId = selected?.id
+    if (!productionId) return false
+    const next = referenceLinks.filter((item) => item.id !== linkId)
+    return persistReferenceLinks(next, productionId)
+  }
+
   function castCleanupBackupPath(productionId) {
     return `${workspace.id}/${productionId}/data/cast-before-name-cleanup.json`
   }
@@ -2189,6 +2253,7 @@ export default function App() {
       showPropForm={showPropForm} setShowPropForm={setShowPropForm} propFilter={propFilter} setPropFilter={setPropFilter}
       addPropItem={addPropItem} updatePropItem={updatePropItem} removePropItem={removePropItem} togglePropReady={togglePropReady} importPropsFromScenes={importPropsFromScenes}
       restoreProductionBackup={restoreProductionBackup}
+      referenceLinks={referenceLinks} addReferenceLink={addReferenceLink} removeReferenceLink={removeReferenceLink}
       session={session} clearProductionUploads={clearProductionUploads} deleteProduction={deleteProduction}
       createTeamInvite={createTeamInvite}
       changeMyProductionRole={changeMyProductionRole}
@@ -2929,7 +2994,7 @@ function RunCueList({ cues, music, sceneNo, completed, toggle, controller }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, reorderScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, moveMusicFile, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, reorderScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, moveMusicFile, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, referenceLinks, addReferenceLink, removeReferenceLink, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const runScenes = useMemo(() => [...scenes].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.scene_no) - Number(b.scene_no)), [scenes])
   const current = runScenes[showIndex]
   const pdfExtractionReport = props.pdfExtractionReport
@@ -3320,11 +3385,11 @@ function ProductionView(props) {
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
-      {tab === 'materials' && <MaterialsPanel workspace={workspace} production={production} />}
+      {tab === 'materials' && <><ProductionReferenceLinks links={referenceLinks} addLink={addReferenceLink} removeLink={removeReferenceLink} /><MaterialsPanel workspace={workspace} production={production} /></>}
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} pdfExtractionReport={pdfExtractionReport} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} pdfExtractionReport={pdfExtractionReport} referenceLinks={referenceLinks} addReferenceLink={addReferenceLink} removeReferenceLink={removeReferenceLink} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} moveMusic={moveMusicFile} loading={uploadingMusic} />}
       {tab === 'dialogue' && <DialoguePractice key={`${production.id}-${dialogueInitialScene ?? 'all'}`} workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} session={session} draftText={importText} initialSceneNo={dialogueInitialScene} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
@@ -3853,7 +3918,7 @@ function SceneEditPage({ scene, update, back }) {
   }
   return <EntityEditorPage eyebrow={`SCENE ${scene.scene_no}`} title="장면 수정" description="장면 번호를 바꿔도 연결 데이터는 유지됩니다." back={back}><form className="panel form-grid entity-editor-form" onSubmit={save}><div className="two-col"><label><span>ACT</span><input type="number" min="1" step="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} /></label><label><span>장면 번호</span><input type="number" min="0" step="1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} /></label></div><label><span>장면 제목</span><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label><span>장면 설명</span><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label><button className="primary"><Save size={16} /> 변경 저장</button></form></EntityEditorPage>
 }
-function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, save, readPdf, readSpreadsheet, undo, loading, pdfExtractionReport }) {
+function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, save, readPdf, readSpreadsheet, undo, loading, pdfExtractionReport, referenceLinks = [], addReferenceLink, removeReferenceLink }) {
   const [mode, setMode] = useState('add')
   const [sourceMode, setSourceMode] = useState('pdf')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
@@ -3918,7 +3983,7 @@ function ImportPanel({ workspace, production, updateProduction, scenes, castMemb
       {sourceMode === 'pdf' && <><label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 읽는 중…' : '대본 PDF 선택'}</strong><span>내장 텍스트를 먼저 추출하고, 전체 페이지 저해상도 OCR로 누락을 보강해요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={async (event) => { const input = event.currentTarget; await readPdf(input.files?.[0]); input.value = '' }} /></label>{pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}</section>}</>}
       {sourceMode === 'sheet' && <label className="spreadsheet-upload source-stage-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 파일 선택'}</b><small>모든 시트의 행·열과 헤더를 한 번에 읽어요</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>}
       {sourceMode === 'paste' && <FastImportTextEditor text={text} setText={setText} analyze={analyze} loading={loading} />}
-      {sourceMode === 'notion' && <NotionImportPanel key={production.id} production={production} updateProduction={updateProduction} rows={rows} setRows={setRows} targets={targets} setTargets={setTargets} disabled={loading} />}
+      {sourceMode === 'notion' && <><NotionImportPanel key={production.id} production={production} updateProduction={updateProduction} rows={rows} setRows={setRows} targets={targets} setTargets={setTargets} disabled={loading} /><ProductionReferenceLinks links={referenceLinks} addLink={addReferenceLink} removeLink={removeReferenceLink} /></>}
     </section>
     {(sources.length > 0 || rows.length > 0) && <div className="import-history-actions"><button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 적용 되돌리기</b><small>직전 저장 상태로 복원</small></span></button>{!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}</div>}
     {!!rows.length && <ImportAudit audit={audit} mergeDuplicates={mergeDuplicateRows} />}
@@ -4787,6 +4852,62 @@ const materialCategories = [
   { id: 'images', label: '이미지' },
   { id: 'etc', label: '기타' },
 ]
+
+function ProductionReferenceLinks({ links = [], addLink, removeLink }) {
+  const [open, setOpen] = useState(false)
+  const [title, setTitle] = useState('')
+  const [url, setUrl] = useState('')
+  const [category, setCategory] = useState('notion')
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
+
+  async function submit(event) {
+    event.preventDefault()
+    if (!url.trim() || saving) return
+    setSaving(true)
+    setStatus('')
+    const saved = await addLink({ title, url, category })
+    if (saved) {
+      setTitle('')
+      setUrl('')
+      setOpen(false)
+      setStatus('링크를 저장했어요.')
+    } else {
+      setStatus('링크를 저장하지 못했어요. 주소를 확인해주세요.')
+    }
+    setSaving(false)
+  }
+
+  async function remove(link) {
+    if (!window.confirm(`${link.title || link.url} 링크를 삭제할까요?`)) return
+    setSaving(true)
+    await removeLink(link.id)
+    setSaving(false)
+  }
+
+  return <section className="reference-links-panel">
+    <div className="section-heading">
+      <div><p className="eyebrow">REFERENCE LINKS</p><h2>Notion · 외부 자료 링크</h2></div>
+      <button className="primary compact" type="button" onClick={() => setOpen((value) => !value)}><Plus size={16} /> 링크 추가</button>
+    </div>
+    <p className="reference-links-help">Notion API 연결 없이도 공연별 페이지·문서 링크를 저장하고 팀원과 바로 열 수 있어요.</p>
+    {open && <form className="reference-link-form" onSubmit={submit}>
+      <label><span>자료 이름</span><input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="예: 대본 Notion 페이지" /></label>
+      <label><span>링크 주소</span><input required type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://www.notion.so/..." /></label>
+      <label><span>분류</span><select value={category} onChange={(event) => setCategory(event.target.value)}><option value="notion">Notion</option><option value="script">대본</option><option value="score">악보</option><option value="rehearsal">연습 자료</option><option value="other">기타</option></select></label>
+      <div className="reference-link-actions"><button type="button" className="secondary" onClick={() => setOpen(false)}>취소</button><button className="primary" disabled={saving}>{saving ? '저장 중…' : '링크 저장'}</button></div>
+    </form>}
+    {status && <p className="notice">{status}</p>}
+    <div className="reference-links-list">
+      {links.length ? links.map((link) => <article key={link.id}>
+        <div className="reference-link-icon"><ExternalLink size={17} /></div>
+        <div><strong>{link.title || link.url}</strong><span>{link.category || '자료'} · {(() => { try { return new URL(link.url).hostname } catch { return link.url } })()}</span></div>
+        <a className="icon-button" href={link.url} target="_blank" rel="noreferrer" aria-label={`${link.title || link.url} 열기`}><ChevronRight size={17} /></a>
+        <button className="icon-button danger" type="button" disabled={saving} onClick={() => remove(link)} aria-label={`${link.title || link.url} 삭제`}><Trash2 size={16} /></button>
+      </article>) : <Empty icon={<ExternalLink />} title="등록된 링크가 없어요" description="Notion 페이지나 팀 자료 링크를 추가해보세요." />}
+    </div>
+  </section>
+}
 
 function MaterialsPanel({ workspace, production }) {
   const [category, setCategory] = useState('scripts')
