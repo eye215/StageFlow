@@ -203,7 +203,7 @@ export default function App() {
   const [castForm, setCastForm] = useState({ name: '', gender: '미지정', pairGroup: '', roleName: '', subRoleName: '', type: '주연', notes: '' })
   const [showCastForm, setShowCastForm] = useState(false)
   const [propItems, setPropItems] = useState([])
-  const [propForm, setPropForm] = useState({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
+  const [propForm, setPropForm] = useState({ name: '', kind: '소품', sceneNos: [], inBy: '', outBy: '', note: '' })
   const [showPropForm, setShowPropForm] = useState(false)
   const [propFilter, setPropFilter] = useState('미준비')
   const [inviteProductionId, setInviteProductionId] = useState(() => new URLSearchParams(window.location.search).get('production') || '')
@@ -1108,22 +1108,60 @@ export default function App() {
     if (sceneError) return { ok: false, message: `사운드트랙 장면 조회 실패: ${sceneError.message}` }
     if (!storedScenes?.length) return { ok: false, message: '사운드트랙을 연결할 장면 없음' }
     const sceneIds = new Map(storedScenes.map((scene) => [Number(scene.scene_no), scene.id]))
-    const records = soundtrackRows.map(({ row, track, index }) => ({
-      production_id: productionId,
-      scene_id: sceneIds.get(Number(row.number)),
-      scene_detail_id: null,
-      code: String(track.code || `SONG.${row.number}`).trim(),
-      title: String(track.title || row.title || `SONG ${row.number}`).trim(),
-      sort_order: index,
-    })).filter((record) => record.scene_id)
+    const songIdentity = (code, title) => `${normalizeMatch(code)}::${normalizeMatch(title)}`
+    const uniqueRecords = new Map()
+    soundtrackRows.forEach(({ row, track, index }) => {
+      const sceneId = sceneIds.get(Number(row.number))
+      if (!sceneId) return
+      const code = String(track.code || `SONG.${row.number}`).trim()
+      const title = String(track.title || row.title || `SONG ${row.number}`).trim()
+      const identity = songIdentity(code, title)
+      if (!uniqueRecords.has(identity)) uniqueRecords.set(identity, {
+        production_id: productionId,
+        scene_id: sceneId,
+        scene_detail_id: null,
+        code,
+        title,
+        sort_order: index,
+      })
+    })
+    const records = [...uniqueRecords.values()]
     if (!records.length) return { ok: false, message: '사운드트랙 장면 연결 없음' }
-    const { error } = await supabase.from('soundtracks').upsert(records, { onConflict: 'production_id,code,title' })
+    const { data: savedSongs, error } = await supabase
+      .from('soundtracks')
+      .upsert(records, { onConflict: 'production_id,code,title' })
+      .select('id, code, title')
     // Older projects may not have the relational migration yet. Summary text remains readable until it is applied.
     if (error) {
       if (!/soundtracks|schema cache|relation/i.test(error.message || '')) console.error('Soundtrack relation save failed', error)
       return { ok: false, message: /soundtracks|schema cache|relation/i.test(error.message || '') ? '사운드트랙 DB 미적용' : `사운드트랙 저장 실패: ${error.message}` }
     }
-    return { ok: true, count: records.length }
+    const songIds = new Map((savedSongs || []).map((song) => [songIdentity(song.code, song.title), song.id]))
+    const relations = soundtrackRows.map(({ row, track, index }) => {
+      const sceneId = sceneIds.get(Number(row.number))
+      const code = String(track.code || `SONG.${row.number}`).trim()
+      const title = String(track.title || row.title || `SONG ${row.number}`).trim()
+      const songId = songIds.get(songIdentity(code, title))
+      return sceneId && songId ? {
+        production_id: productionId,
+        scene_id: sceneId,
+        song_id: songId,
+        sort_order: index,
+      } : null
+    }).filter(Boolean)
+    if (relations.length) {
+      const { error: relationError } = await supabase.from('scene_songs').upsert(relations, { onConflict: 'scene_id,song_id' })
+      if (relationError) {
+        if (!/scene_songs|schema cache|relation/i.test(relationError.message || '')) console.error('Scene-song relation save failed', relationError)
+        return {
+          ok: false,
+          message: /scene_songs|schema cache|relation/i.test(relationError.message || '')
+            ? '장면↔음악 연결 DB 미적용'
+            : `장면↔음악 연결 저장 실패: ${relationError.message}`,
+        }
+      }
+    }
+    return { ok: true, count: relations.length }
   }
 
   async function undoLastImport() {
@@ -1737,18 +1775,25 @@ export default function App() {
   async function addPropItem(event) {
     event.preventDefault()
     if (!propForm.name.trim()) return
-    const rawSceneNo = String(propForm.sceneNo ?? '').trim()
-    const sceneNo = rawSceneNo === '' ? null : Number(rawSceneNo)
-    if (sceneNo !== null && !Number.isFinite(sceneNo)) {
-      setNotice('올바른 장면 번호를 선택해 주세요.')
-      return
-    }
+    const selectedSceneNos = [...new Set((propForm.sceneNos || []).map(Number))]
+      .filter((sceneNo) => Number.isFinite(sceneNo) && scenes.some((scene) => Number(scene.scene_no) === sceneNo))
+      .sort((a, b) => a - b)
     setBusy(true)
-    const item = { id: crypto.randomUUID(), ...propForm, name: propForm.name.trim(), sceneNo, ready: false }
-    if (await persistPropData([...propItems, item])) {
-      setPropForm({ name: '', kind: '소품', sceneNo: '', inBy: '', outBy: '', note: '' })
+    const targets = selectedSceneNos.length ? selectedSceneNos : [null]
+    const items = targets.map((sceneNo) => ({
+      id: crypto.randomUUID(),
+      name: propForm.name.trim(),
+      kind: propForm.kind === '대도구' ? '대도구' : '소품',
+      sceneNo,
+      inBy: String(propForm.inBy || '').trim(),
+      outBy: String(propForm.outBy || '').trim(),
+      note: String(propForm.note || '').trim(),
+      ready: false,
+    }))
+    if (await persistPropData([...propItems, ...items])) {
+      setPropForm({ name: '', kind: '소품', sceneNos: [], inBy: '', outBy: '', note: '' })
       setShowPropForm(false)
-      setNotice(`${item.name} 항목을 등록했어요.`)
+      setNotice(`${propForm.name.trim()} 항목을 ${selectedSceneNos.length ? `${selectedSceneNos.length}개 장면에` : '장면 미지정으로'} 등록했어요.`)
     }
     setBusy(false)
   }
@@ -2666,19 +2711,6 @@ function ProductionView(props) {
   const sharedPlaylist = useMemo(() => Object.entries(musicByScene).flatMap(([sceneNo, files]) => (files || []).map((file) => ({ ...file, sceneNo: Number(sceneNo) }))), [musicByScene])
   const productionSongs = useMemo(() => buildProductionSongs(runScenes, musicByScene), [runScenes, musicByScene])
   const sharedPlayback = useSharedProductionPlayback({ production, session, playlist: sharedPlaylist })
-  const playSharedFile = sharedPlayback.playFile
-  useEffect(() => {
-    if (tab !== 'show') return undefined
-    const redirectLegacyAudio = (event) => {
-      const audio = event.target
-      if (!(audio instanceof HTMLAudioElement) || !audio.closest('.show-music-list')) return
-      const file = sharedPlaylist.find((item) => item.url === audio.currentSrc || item.url === audio.src)
-      audio.pause()
-      if (file) playSharedFile(file)
-    }
-    document.addEventListener('play', redirectLegacyAudio, true)
-    return () => document.removeEventListener('play', redirectLegacyAudio, true)
-  }, [tab, sharedPlaylist, playSharedFile])
   useEffect(() => {
     if (['schedule', 'tasks', 'rehearsal'].includes(tab)) setTab('overview')
   }, [tab, setTab])
@@ -2884,18 +2916,20 @@ function ProductionView(props) {
       runAdvanceRef.current = false
     }
   }, [current, next, persistFullRun, runScenes.length, runSession, setShowIndex])
-  useEffect(() => {
-    if (tab !== 'show' || !runSession) return undefined
-    const interceptRunControls = (event) => {
-      const goButton = event.target.closest?.('.show-actions .go-button')
-      const previousButton = event.target.closest?.('.show-actions button:not(.go-button)')
-      if (!goButton && !previousButton) return
-      event.preventDefault(); event.stopPropagation(); event.stopImmediatePropagation()
-      if (goButton) goNextWithTiming()
-    }
-    document.addEventListener('click', interceptRunControls, true)
-    return () => document.removeEventListener('click', interceptRunControls, true)
-  }, [tab, runSession, goNextWithTiming])
+  const goPreviousDuringRun = useCallback(() => {
+    if (!runSession || showIndex <= 0 || runAdvanceRef.current) return
+    const now = new Date().toISOString()
+    const previousScene = runScenes[showIndex - 1]
+    setRunSession((currentSession) => {
+      if (!currentSession) return currentSession
+      const lastSegment = currentSession.segments.at(-1)
+      const segments = lastSegment && Number(lastSegment.sceneNo) === Number(previousScene?.scene_no)
+        ? currentSession.segments.slice(0, -1)
+        : currentSession.segments
+      return { ...currentSession, sceneStartedAt: now, segments }
+    })
+    setShowIndex((index) => Math.max(0, index - 1))
+  }, [runScenes, runSession, setShowIndex, showIndex])
   const appendShowEvent = useCallback(async (event) => {
     let existing = showEvents
     const { data } = await supabase.storage.from('stageflow-files').download(showLogPath)
@@ -2923,12 +2957,6 @@ function ProductionView(props) {
       }
     })
   }, [showIndex, showHold, showHoldMessage, showController, showCursorLoaded, showCursorPath, tab, runScenes, appendShowEvent])
-  useEffect(() => {
-    if (tab !== 'show') return undefined
-    const controls = [...document.querySelectorAll('.show-mode .show-actions button')]
-    controls.forEach((button, index) => { button.disabled = showHold || !showController || (index === 0 ? showIndex === 0 : showIndex >= runScenes.length - 1) })
-    return undefined
-  }, [tab, showController, showHold, showIndex, runScenes.length])
   const currentSceneAssignments = current ? runPairMembers.filter((member) => (member.sceneNumbers || []).includes(current.scene_no)) : []
   const currentCast = groupCastMembersByRole(currentSceneAssignments)
   const currentCharacters = current ? [...new Set(castMembers.filter((member) => !isActorRoster(member) && (member.sceneNumbers || []).includes(current.scene_no)).map((member) => member.roleName?.trim()).filter(Boolean))] : []
@@ -3030,7 +3058,7 @@ function ProductionView(props) {
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <section className="actor-run-intro"><UserRound /><div><b>배우 런 연습</b><small>내 배역을 고르고 장면별 등장·의상·소품·음악을 확인하세요.</small></div></section>}
       {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고른 뒤 이번 런에 참여할 배우를 한 번 더 확인하세요.</p></div><div className="run-pair-options">{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{!selectedRunPair && availableRunPairs.length > 0 && <p className="run-pair-required"><AlertTriangle /> 런을 시작할 페어를 선택해주세요.</p>}{selectedRunPair && <div className="run-participant-picker"><div><b>이번 런 참여 배우</b><small>{runFeedbackActors.length}/{runPairAllActors.length}명 선택</small></div><div>{runPairAllActors.map((member) => { const selected = runParticipantChoices[runParticipantKey(member.name)] !== false; return <button type="button" className={selected ? 'selected' : ''} aria-pressed={selected} key={canonicalActor(member.name)} onClick={() => toggleRunParticipant(member.name)}><CheckCircle2 /><span><b>{member.name}</b><small>{member.groupedMembers?.map((entry) => entry.roleName).filter(Boolean).join(' · ') || member.roleName || '배역 미정'}</small></span></button> })}</div></div>}{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 선택 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{selectedRunPair && !runFeedbackActors.length && <p className="run-pair-required"><AlertTriangle /> 참여 배우를 한 명 이상 선택해주세요.</p>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
-      {tab === 'show' && <RunControl session={runSession} elapsed={runElapsed} history={runHistory} current={current} firstScene={firstRunScene} firstProps={firstRunProps} firstCostumes={firstRunCostumes} pairName={selectedRunPair} start={startFullRun} finish={goNextWithTiming} enabled={showController && Boolean(selectedRunPair) && runFeedbackActors.length > 0} isLast={!next} />}
+      {tab === 'show' && <RunControl session={runSession} elapsed={runElapsed} history={runHistory} current={current} firstScene={firstRunScene} firstProps={firstRunProps} firstCostumes={firstRunCostumes} pairName={selectedRunPair} start={startFullRun} enabled={showController && Boolean(selectedRunPair) && runFeedbackActors.length > 0} />}
       {tab === 'show' && !feedbackRunId && feedbackStatus && <p className="notice">{feedbackStatus}</p>}
       {tab === 'show' && !runSession && !!runHistory.length && <RunHistory runs={runHistory} />}
       {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>한 배우가 여러 배역을 맡아도 입력칸은 하나이며, 계정에서 배우를 선택한 사람에게만 전달돼요.</p></div><div className="run-feedback-list">{feedbackRecipients.map((member) => { const actorKey = canonicalActor(member.name); return <label key={actorKey}><span><UserRound /><b>{member.name}</b><small>{member.roleName || '배역 미정'}{selectedRunPair ? ` · ${selectedRunPair}` : ''}</small></span><textarea value={feedbackDrafts[actorKey] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [actorKey]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label> })}</div>{feedbackRecipients.length < runFeedbackActors.length && <p className="notice">배우 선택을 완료하지 않은 {runFeedbackActors.length - feedbackRecipients.length}명은 개인 수신 계정이 없어 제외했어요.</p>}{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary" disabled={!feedbackRecipients.length}><Upload size={16} /> 개인 피드백 전달</button></div></form>}
@@ -3039,7 +3067,18 @@ function ProductionView(props) {
       {tab === 'show' && runSession && current && <article className="run-current-scene"><span>ACT {current.act_no} · SCENE {current.scene_no}</span><h2>{current.title}</h2><small>{selectedRunPair} · {showIndex + 1}/{runScenes.length}</small></article>}
       {tab === 'show' && runSession && current && <RunCueList cues={currentCues} music={currentMusic} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} controller={sharedPlayback} />}
       {tab === 'show' && current && selectedRunPair && <section className="run-pair-scene-summary"><div className="active-run-pair"><Combine /><span><small>RUN PAIR · SCENE {current.scene_no}</small><b>{selectedRunPair}</b></span><em>{currentSceneAssignments.length}개 캐스팅</em></div>{missingCharacters.length > 0 ? <div className="run-missing-cast"><AlertTriangle /><span><b>미배정 Character</b><small>{missingCharacters.join(' · ')}</small></span></div> : <div className="run-cast-complete"><CheckCircle2 /><span>이 장면의 Character가 모두 배정됐어요.</span></div>}{currentCostumeChanges.length > 0 && <div className="run-costume-changes"><Shirt /><div><b>의상 체인지</b>{currentCostumeChanges.map((change) => <span key={`${change.actor}-${change.sceneNo}`}><strong>{change.actor}</strong><small>{change.previousRole} 의상 · {change.previousCostume} → {change.role} 의상 · {change.costume}</small></span>)}</div></div>}</section>}
-      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}{choreographyStatusForMusic(member, currentMusic)}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
+      {tab === 'show' && runSession && <section className="show-mode run-scene-page">
+        {!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <>
+          <label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label>
+          <div className="show-operations run-essentials">
+            <article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}{choreographyStatusForMusic(member, currentMusic)}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article>
+            <article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article>
+            <article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article>
+          </div>
+          <article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article>
+          <div className="show-actions"><button disabled={showHold || !showController || !showIndex} onClick={goPreviousDuringRun}>이전</button><button className="go-button" disabled={showHold || !showController} onClick={() => void goNextWithTiming()}>{next ? 'GO' : '런 종료'} <Play fill="currentColor" /></button></div>
+        </>}
+      </section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} setup={setupState} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
@@ -3086,14 +3125,14 @@ function _PreparationHealth({ alerts, open }) {
   return <section className="preparation-health"><div className="preparation-health-head"><div><span>PRE-FLIGHT CHECK</span><h2>런 전 확인</h2></div><strong className={alerts.length ? 'warning' : 'ready'}>{alerts.length ? `${alerts.length}개 항목` : '준비 완료'}</strong></div>{alerts.length ? <div className="preparation-alert-list">{alerts.map((alert) => { const Icon = icons[alert.icon]; return <button key={alert.key} onClick={() => open(alert.tab)}><span className="alert-icon"><Icon /></span><div><b>{alert.title}</b><small>{alert.detail}</small></div><strong>{alert.count}</strong><ChevronRight /></button> })}</div> : <div className="preparation-clear"><CheckCircle2 /><div><b>필수 준비 항목을 모두 확인했어요</b><small>런 화면에서 최종 큐를 점검해 주세요.</small></div></div>}</section>
 }
 
-function RunControl({ session, elapsed, history, current, firstScene, firstProps = [], firstCostumes = [], pairName, start, finish, enabled, isLast }) {
+function RunControl({ session, elapsed, history, current, firstScene, firstProps = [], firstCostumes = [], pairName, start, enabled }) {
   const latest = history[0]
   return <section className={session ? 'full-run-control running' : 'full-run-control'}>
     <div className="run-control-head"><Timer /><span><b>{session ? `${session.pair} 런 진행 중` : '런 시작'}</b><small>{session ? `${current?.scene_no}. ${current?.title || ''} 측정 중` : '페어를 선택한 뒤 가장 앞 장면부터 시작합니다.'}</small></span>{session && <strong>{formatDuration(elapsed)}</strong>}</div>
     {!session ? <>
       {firstScene && <article className="run-first-prep"><span>FIRST · SCENE {firstScene.scene_no}</span><h3>{firstScene.title}</h3><div><p><Shirt /><b>의상</b><small>{firstCostumes.length ? firstCostumes.map((item) => `${item.role} 의상: ${item.name}`).join(' · ') : '등록 없음'}</small></p><p><Package /><b>소품</b><small>{firstProps.length ? firstProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : '등록 없음'}</small></p></div></article>}
       <button className="run-start" disabled={!enabled} onClick={start}><Play fill="currentColor" /> {pairName ? `${pairName} 런 시작` : '페어를 먼저 선택하세요'}</button>
-    </> : <><div className="run-live"><span>완료 장면 <b>{session.segments.length}</b></span><span>현재 장면 <b>{formatDuration(Math.max(0, Math.floor((Date.now() - new Date(session.sceneStartedAt).getTime()) / 1000)))}</b></span></div>{isLast && <button className="run-finish" onClick={finish}><Square fill="currentColor" /> 마지막 장면 기록 · 런 종료</button>}</>}
+    </> : <div className="run-live"><span>완료 장면 <b>{session.segments.length}</b></span><span>현재 장면 <b>{formatDuration(Math.max(0, Math.floor((Date.now() - new Date(session.sceneStartedAt).getTime()) / 1000)))}</b></span></div>}
     {latest && !session && <div className="last-run"><span>최근 런</span><b>{formatDuration(latest.totalDuration || 0)}</b><small>{latest.segments?.length || 0}개 장면 기록</small></div>}
   </section>
 }
@@ -3341,6 +3380,7 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
     { id: 'settings', group: '공연 설정', label: '기본 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
     { id: 'props', group: '공연 구성', label: '소품', description: '장면별로 챙길 소품', icon: <Package /> },
     { id: 'costumes', group: '공연 구성', label: '의상', description: '배역별 의상과 퀵체인지', icon: <Shirt /> },
+    { id: 'music', group: '공연 구성', label: '넘버·음악', description: '사운드트랙 자동 매칭과 순서', icon: <FileAudio /> },
     { id: 'cues', group: '공연 운영', label: '연기·등장 큐', description: '등장, 음악, 대사 시작점', icon: <ListChecks /> },
     { id: 'materials', group: '연결·자료', label: '공연 자료', description: '대본·악보·음악·영상', icon: <FileText /> },
     { id: 'team', group: '연결·자료', label: '배우 초대·배역', description: '동료 배우 초대와 배역 선택', icon: <Users /> },
@@ -4135,7 +4175,21 @@ function appendSummarySection(summary = '', heading, line) {
 }
 
 function PropsEditorForm({ form, setForm, scenes, submit, busy }) {
-  return <form className="panel form-grid prop-form entity-editor-form" onSubmit={submit}><div className="two-col"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><div className="two-col"><input placeholder="In 담당자" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /><input placeholder="Out 담당자" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></div><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary" disabled={busy}>항목 저장</button></form>
+  const selected = new Set((form.sceneNos || []).map(Number))
+  const toggleScene = (sceneNo) => setForm({
+    ...form,
+    sceneNos: selected.has(Number(sceneNo))
+      ? (form.sceneNos || []).filter((value) => Number(value) !== Number(sceneNo))
+      : [...(form.sceneNos || []), Number(sceneNo)],
+  })
+  return <form className="panel form-grid prop-form entity-editor-form" onSubmit={submit}>
+    <label className="cast-field"><span>구분</span><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select></label>
+    <label className="cast-field"><span>이름</span><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+    <fieldset className="prop-scene-multi"><legend>연결할 장면 <small>복수 선택 가능</small></legend><div>{scenes.map((scene) => { const active = selected.has(Number(scene.scene_no)); return <button type="button" className={active ? 'selected' : ''} aria-pressed={active} key={scene.id} onClick={() => toggleScene(scene.scene_no)}><CheckCircle2 /><span><b>SCENE {scene.scene_no}</b><small>{scene.title}</small></span></button> })}</div>{!selected.size && <p>선택하지 않으면 ‘장면 미지정’으로 저장됩니다.</p>}</fieldset>
+    <div className="two-col"><label className="cast-field"><span>IN 담당자</span><input placeholder="배우·배역" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /></label><label className="cast-field"><span>OUT 담당자</span><input placeholder="배우·배역" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></label></div>
+    <label className="cast-field"><span>비고</span><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /></label>
+    <button className="primary" disabled={busy}>항목 저장{selected.size > 1 ? ` · ${selected.size}개 장면` : ''}</button>
+  </form>
 }
 
 function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filter, setFilter, submit, update, remove, toggleReady, importFromScenes, busy }) {
@@ -4169,7 +4223,8 @@ function PropCard({ item, scenes, sceneTitle, update, remove, toggleReady, busy 
     if (await update(item.id, draft)) setEditing(false)
   }
   if (editing) return <article className="prop-card prop-card-edit"><form onSubmit={save}><div className="two-col"><select value={draft.kind} onChange={(event) => setDraft({ ...draft, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={draft.sceneNo} onChange={(event) => setDraft({ ...draft, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="소품 또는 대도구 이름" /><div className="two-col"><input value={draft.inBy} onChange={(event) => setDraft({ ...draft, inBy: event.target.value })} placeholder="IN 담당자" /><input value={draft.outBy} onChange={(event) => setDraft({ ...draft, outBy: event.target.value })} placeholder="OUT 담당자" /></div><textarea value={draft.note} onChange={(event) => setDraft({ ...draft, note: event.target.value })} placeholder="배치 위치, 이동 방법, 주의사항" /><div className="prop-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact" disabled={busy}><Save size={16} /> 저장</button></div></form></article>
-  return <article className={item.ready ? 'prop-card ready' : 'prop-card'}><button className="ready-toggle" onClick={() => toggleReady(item.id)} aria-label="준비 상태 변경"><CheckCircle2 /></button><div className="prop-copy"><div><span className={`prop-kind ${item.kind === '대도구' ? 'set-piece' : ''}`}>{item.kind}</span>{item.sceneNo && <span className="prop-scene">{item.sceneNo}. {sceneTitle(item.sceneNo)}</span>}</div><h3>{item.name}</h3><div className="prop-assignees"><span><b>IN</b>{item.inBy || '미정'}</span><span><b>OUT</b>{item.outBy || '미정'}</span></div>{item.note && <p>{item.note}</p>}</div><button className="icon-button" onClick={() => setEditing(true)} aria-label="소품 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="소품 삭제"><Trash2 size={17} /></button></article>
+  const hasScene = item.sceneNo !== null && item.sceneNo !== undefined && item.sceneNo !== ''
+  return <article className={item.ready ? 'prop-card ready' : 'prop-card'}><button className="ready-toggle" onClick={() => toggleReady(item.id)} aria-label="준비 상태 변경"><CheckCircle2 /></button><div className="prop-copy"><div><span className={`prop-kind ${item.kind === '대도구' ? 'set-piece' : ''}`}>{item.kind}</span>{hasScene && <span className="prop-scene">{item.sceneNo}. {sceneTitle(item.sceneNo)}</span>}</div><h3>{item.name}</h3><div className="prop-assignees"><span><b>IN</b>{item.inBy || '미정'}</span><span><b>OUT</b>{item.outBy || '미정'}</span></div>{item.note && <p>{item.note}</p>}</div><button className="icon-button" onClick={() => setEditing(true)} aria-label="소품 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(item.id)} aria-label="소품 삭제"><Trash2 size={17} /></button></article>
 }
 
 function CuePanel({ scenes = [], completed = {}, toggle = () => {}, updateScene, autoLink = () => {}, busy }) {
