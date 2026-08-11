@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, ExternalLink, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
-  GripVertical, MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
+  AlertTriangle, ArrowDown, ArrowUp, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, ExternalLink, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
+  MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
 import './auth.css'
@@ -836,6 +836,30 @@ export default function App() {
     return true
   }
 
+  async function reorderScene(sceneId, direction) {
+    const ordered = [...scenes].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.scene_no) - Number(b.scene_no))
+    const fromIndex = ordered.findIndex((scene) => scene.id === sceneId)
+    const toIndex = fromIndex + Number(direction)
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= ordered.length) return false
+    const [moved] = ordered.splice(fromIndex, 1)
+    ordered.splice(toIndex, 0, moved)
+    setBusy(true)
+    try {
+      const results = await Promise.all(ordered.map((scene, index) => supabase.from('scenes').update({ sort_order: index }).eq('id', scene.id)))
+      const failed = results.find(({ error }) => error)
+      if (failed?.error) throw failed.error
+      await loadScenes(selected.id)
+      setNotice(`${moved.scene_no}. ${moved.title} 장면 순서를 변경했어요.`)
+      return true
+    } catch (error) {
+      await loadScenes(selected.id)
+      setNotice(`장면 순서 변경 실패: ${error.message}`)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function readPdf(file, archive = true) {
     if (!file) return
     if (file.size > 50 * 1024 * 1024) return setNotice(`PDF는 50MB 이하만 분석할 수 있어요. 현재 파일: ${formatBytes(file.size)}`)
@@ -1360,12 +1384,57 @@ export default function App() {
     files.splice(to, 0, moved)
     const next = { ...previous, [sceneNo]: files }
     setMusicByScene(next)
+    setUploadingMusic(true)
     const productionId = selected.id
     try {
       await queueMusicOrderSave(productionId, next)
     } catch (error) {
       if (selectedIdRef.current === productionId) await loadMusic(productionId, scenes)
       setNotice(`음악 순서 저장 실패: ${error.message}`)
+    } finally {
+      setUploadingMusic(false)
+    }
+  }
+
+  async function moveMusicFile(file, sourceSceneNo, targetSceneNo) {
+    const sourceNumber = Number(sourceSceneNo)
+    const targetNumber = Number(targetSceneNo)
+    if (!file?.path || !Number.isFinite(targetNumber) || sourceNumber === targetNumber) return false
+    if (!scenes.some((scene) => Number(scene.scene_no) === targetNumber)) {
+      setNotice('이동할 장면을 다시 선택해주세요.')
+      return false
+    }
+    setUploadingMusic(true)
+    const productionId = selected.id
+    const storedName = String(file.path).split('/').at(-1)
+    const targetPath = `${workspace.id}/${productionId}/music/${targetNumber}/${storedName}`
+    try {
+      const { error } = await supabase.storage.from('stageflow-files').move(file.path, targetPath)
+      if (error) throw error
+      const next = {
+        ...musicByScene,
+        [sourceNumber]: (musicByScene[sourceNumber] || []).filter((item) => item.path !== file.path),
+        [targetNumber]: [...(musicByScene[targetNumber] || []), { ...file, path: targetPath }],
+      }
+      let orderWarning = ''
+      try { await queueMusicOrderSave(productionId, next) }
+      catch (orderError) { orderWarning = ` 순서 정보는 저장하지 못했어요: ${orderError.message}` }
+      const { error: playbackError } = await supabase
+        .from('production_playback')
+        .update({ file_path: targetPath, scene_no: targetNumber })
+        .eq('production_id', productionId)
+        .eq('file_path', file.path)
+      await loadMusic(productionId, scenes)
+      setNotice((playbackError && !isMissingBackendObject(playbackError, 'production_playback'))
+        ? `음악은 ${targetNumber}번 장면으로 옮겼지만 공유 재생 상태는 갱신하지 못했어요: ${playbackError.message}`
+        : `${cleanStoredFileName(file.name)} 음악을 ${targetNumber}번 장면으로 옮겼어요.${orderWarning}`)
+      return true
+    } catch (error) {
+      await loadMusic(productionId, scenes)
+      setNotice(`음악 장면 변경 실패: ${error.message}`)
+      return false
+    } finally {
+      setUploadingMusic(false)
     }
   }
 
@@ -1925,7 +1994,7 @@ export default function App() {
       setTab={setProductionTab} goBack={() => { selectedIdRef.current = ''; setSelected(null) }} daysLeft={daysLeft}
       progress={progress} showIndex={showIndex} setShowIndex={setShowIndex}
       form={sceneForm} setForm={setSceneForm} createScene={createScene}
-      updateScene={updateScene} deleteScene={deleteScene} showForm={showSceneForm} setShowForm={setShowSceneForm}
+      updateScene={updateScene} deleteScene={deleteScene} reorderScene={reorderScene} showForm={showSceneForm} setShowForm={setShowSceneForm}
       notice={notice} busy={busy}
       importText={importText} setImportText={setImportText} importRows={importRows} setImportRows={setImportRows}
       pdfExtractionReport={pdfExtractionReport}
@@ -1933,7 +2002,7 @@ export default function App() {
       analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
       readPdf={readPdf} readSpreadsheet={readSpreadsheet} undoLastImport={undoLastImport} importingPdf={importingPdf}
       pendingMusic={pendingMusic} musicByScene={musicByScene}
-      organizeMusicFiles={organizeMusicFiles} assignMusicScene={assignMusicScene} uploadOrganizedMusic={uploadOrganizedMusic} deleteMusicFile={deleteMusicFile} reorderMusic={reorderMusic}
+      organizeMusicFiles={organizeMusicFiles} assignMusicScene={assignMusicScene} uploadOrganizedMusic={uploadOrganizedMusic} deleteMusicFile={deleteMusicFile} reorderMusic={reorderMusic} moveMusicFile={moveMusicFile}
       autoLinkProductionCues={autoLinkProductionCues}
       uploadingMusic={uploadingMusic}
       castMembers={castMembers} castForm={castForm} setCastForm={setCastForm}
@@ -2666,8 +2735,8 @@ function RunCueList({ cues, music, sceneNo, completed, toggle, controller }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
-  const runScenes = useMemo(() => [...scenes].sort((a, b) => Number(a.scene_no) - Number(b.scene_no) || Number(a.sort_order || 0) - Number(b.sort_order || 0)), [scenes])
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, reorderScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, moveMusicFile, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
+  const runScenes = useMemo(() => [...scenes].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.scene_no) - Number(b.scene_no)), [scenes])
   const current = runScenes[showIndex]
   const pdfExtractionReport = props.pdfExtractionReport
   const consolidateCastDuplicates = props.consolidateCastDuplicates
@@ -3041,7 +3110,7 @@ function ProductionView(props) {
         : <>
           <div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm(true)}><Plus size={18} /> 장면</button></div>
           {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}
-          <section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section>
+          <section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => { const orderIndex = scenes.findIndex((item) => item.id === scene.id); return <SceneCard key={scene.id} scene={scene} scenes={scenes} musicFiles={musicByScene[scene.scene_no] || []} update={updateScene} remove={() => deleteScene(scene.id)} moveUp={() => reorderScene(scene.id, -1)} moveDown={() => reorderScene(scene.id, 1)} canMoveUp={orderIndex > 0} canMoveDown={orderIndex >= 0 && orderIndex < scenes.length - 1} orderLoading={busy} reorderMusic={reorderMusic} moveMusic={moveMusicFile} removeMusic={deleteMusicFile} musicLoading={uploadingMusic} openMusic={() => setTab('music')} /> })}</section>
         </>)}
       {tab === 'cast' && <CastPanel members={castMembers} pairs={castPairs} addPair={addCastPair} renamePair={renameCastPair} removePair={removeCastPair} addRosterActor={addCastRosterActor} removeRosterActor={removeCastRosterActor} assignRole={assignCastRole} scenes={scenes} songs={productionSongs} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} toggleChoreography={toggleCastChoreography} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
@@ -3052,7 +3121,7 @@ function ProductionView(props) {
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
-      {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} loading={uploadingMusic} />}
+      {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} moveMusic={moveMusicFile} loading={uploadingMusic} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
@@ -3485,7 +3554,33 @@ function parseSceneSummarySections(summary = '') {
 function ScenePeopleRow({ label, tone, people }) {
   return <div className={`scene-people-row ${tone}`}><div><Users /><strong>{label}</strong><span>{people.length}</span></div>{people.length ? <p>{people.map((person) => <em key={person}>{person}</em>)}</p> : <small>등록 없음</small>}</div>
 }
-function SceneCard({ scene, update, remove }) {
+function MusicTrackRow({ file, files, index, sceneNo, scenes = [], reorder, moveMusic, remove, loading, allowSceneChange = false }) {
+  const moveOrder = (direction) => {
+    const target = files[index + direction]
+    if (target) reorder(sceneNo, file.path, target.path)
+  }
+  return <div className="audio-row" data-track-path={file.path}>
+    <div className="audio-file-head">
+      <span className="track-position" aria-label={`${index + 1}번 순서`}>{index + 1}</span>
+      <FileAudio size={17} />
+      <span className="track-name">{cleanStoredFileName(file.name)}</span>
+      <div className="track-order-buttons" aria-label={`${cleanStoredFileName(file.name)} 순서 변경`}>
+        <button type="button" disabled={loading || index === 0} onClick={() => moveOrder(-1)} aria-label="한 칸 위로"><ArrowUp /></button>
+        <button type="button" disabled={loading || index === files.length - 1} onClick={() => moveOrder(1)} aria-label="한 칸 아래로"><ArrowDown /></button>
+      </div>
+      <button className="icon-button danger" type="button" disabled={loading} onClick={() => remove(file)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button>
+    </div>
+    {allowSceneChange && <label className="track-scene-select"><span>연결 장면</span><select value={sceneNo} disabled={loading} onChange={(event) => moveMusic(file, sceneNo, event.target.value)}>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></label>}
+    {file.url && <audio controls preload="none" src={file.url} />}
+  </div>
+}
+function SceneMusicEditor({ scene, scenes, files, reorder, moveMusic, remove, loading, openMusic }) {
+  return <section className="scene-music-section">
+    <div className="scene-detail-title"><Music /><strong>연결 음악</strong><span>{files.length}</span><button type="button" onClick={openMusic}><Plus /> 추가·연결</button></div>
+    {files.length ? <div className="scene-music-list">{files.map((file, index) => <MusicTrackRow key={file.path} file={file} files={files} index={index} sceneNo={scene.scene_no} scenes={scenes} reorder={reorder} moveMusic={moveMusic} remove={remove} loading={loading} allowSceneChange />)}</div> : <p className="scene-section-empty">이 장면에 연결된 음악이 없어요.</p>}
+  </section>
+}
+function SceneCard({ scene, scenes, musicFiles = [], update, remove, moveUp, moveDown, canMoveUp, canMoveDown, orderLoading, reorderMusic, moveMusic, removeMusic, musicLoading, openMusic }) {
   const [editing, setEditing] = useState(false)
   const [expanded, setExpanded] = useState(false)
   const [draft, setDraft] = useState({ title: scene.title, act_no: scene.act_no, scene_no: scene.scene_no, summary: scene.summary || '' })
@@ -3497,15 +3592,17 @@ function SceneCard({ scene, update, remove }) {
   if (editing) return <article className="scene-card scene-card-edit"><form onSubmit={save}><div className="two-col"><input type="number" min="1" step="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} aria-label="ACT 번호" /><input type="number" min="0" step="1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} aria-label="장면 번호" /></div><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="장면 제목" /><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} placeholder="등장인물, 소품, 진행상황" /><div className="scene-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact"><Save size={16} /> 저장</button></div></form></article>
   const sections = parseSceneSummarySections(scene.summary)
   const castCount = sections.main.length + sections.ensemble.length
-  const hasLinkedDetails = castCount > 0 || sections.props.length > 0
+  const hasLinkedDetails = castCount > 0 || sections.props.length > 0 || musicFiles.length > 0
   return <article className={expanded ? 'scene-hub-card open' : 'scene-hub-card'}>
-    <button className="scene-hub-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="scene-hub-number">{scene.scene_no}</span><div><small>ACT {scene.act_no}</small><h3>{scene.title}</h3>{hasLinkedDetails ? <p className="scene-hub-meta">{castCount > 0 && <span><Users /> {castCount}명</span>}{sections.props.length > 0 && <span><Package /> {sections.props.length}개</span>}</p> : <p className="scene-hub-empty-meta">연결된 정보 없음</p>}</div><ChevronRight /></button>
+    <button className="scene-hub-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}><span className="scene-hub-number">{scene.scene_no}</span><div><small>ACT {scene.act_no}</small><h3>{scene.title}</h3>{hasLinkedDetails ? <p className="scene-hub-meta">{castCount > 0 && <span><Users /> {castCount}명</span>}{sections.props.length > 0 && <span><Package /> {sections.props.length}개</span>}{musicFiles.length > 0 && <span><Music /> {musicFiles.length}곡</span>}</p> : <p className="scene-hub-empty-meta">연결된 정보 없음</p>}</div><ChevronRight /></button>
+    <div className="scene-order-controls" aria-label={`${scene.title} 순서 변경`}><button type="button" disabled={orderLoading || !canMoveUp} onClick={moveUp} aria-label="장면을 한 칸 위로"><ArrowUp /></button><button type="button" disabled={orderLoading || !canMoveDown} onClick={moveDown} aria-label="장면을 한 칸 아래로"><ArrowDown /></button></div>
     {expanded && <div className="scene-hub-body">
       <section className="scene-cast-sections">
         <ScenePeopleRow label="메인 배역" tone="main" people={sections.main} />
         <ScenePeopleRow label="등장 앙상블" tone="ensemble" people={sections.ensemble} />
       </section>
       {(sections.details.length > 0 || sections.soundtracks.length > 0) && <section className="scene-hierarchy-section">{sections.details.length > 0 && <div><span>SCENE DETAIL</span>{sections.details.map((item) => <b key={item}>{item}</b>)}</div>}{sections.soundtracks.length > 0 && <div><span>SOUNDTRACK</span>{sections.soundtracks.map((item) => <b key={item}><Music />{item}</b>)}</div>}</section>}
+      <SceneMusicEditor scene={scene} scenes={scenes} files={musicFiles} reorder={reorderMusic} moveMusic={moveMusic} remove={removeMusic} loading={musicLoading} openMusic={openMusic} />
       <section className="scene-prop-section"><div className="scene-detail-title"><Package /><strong>소품·대도구</strong><span>{sections.props.length}</span></div>{sections.props.length ? <div>{sections.props.map((item, index) => <article key={`${item.name}-${index}`}><span className={item.kind === '대도구' ? 'set' : ''}>{item.kind}</span><div><b>{item.name}</b><small><em>IN</em>{item.inBy || '미정'} <i /> <em>OUT</em>{item.outBy || '미정'}</small>{item.note && <p>{item.note}</p>}</div></article>)}</div> : <p className="scene-section-empty">등록된 소품이 없어요.</p>}</section>
       {(sections.status.length > 0 || sections.other.length > 0) && <section className="scene-notes-section"><div className="scene-detail-title"><FileText /><strong>연습 메모</strong></div>{[...sections.status, ...sections.other].map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</section>}
       <div className="scene-hub-actions"><button onClick={() => setEditing(true)}><Pencil /> 정보 수정</button><button className="danger" onClick={remove}><Trash2 /> 장면 삭제</button></div>
@@ -3745,19 +3842,7 @@ function buildImportAudit(rows) {
   return { scenes: rows.length, people: [...people].filter(Boolean).length, props: props.length, cues: rows.reduce((sum, row) => sum + (row.cues?.length || 0), 0), duplicateCount, warnings }
 }
 
-function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, reorder, loading }) {
-  const [dragging, setDragging] = useState(null)
-  const moveOver = (event, sceneNo, targetPath) => {
-    if (!dragging || dragging.sceneNo !== sceneNo || dragging.path === targetPath) return
-    event.preventDefault()
-    reorder(sceneNo, dragging.path, targetPath)
-    setDragging({ sceneNo, path: targetPath })
-  }
-  const pointerMove = (event, sceneNo) => {
-    if (!dragging || dragging.sceneNo !== sceneNo) return
-    const row = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-track-path]')
-    if (row?.dataset.trackPath) moveOver(event, sceneNo, row.dataset.trackPath)
-  }
+function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, remove, reorder, moveMusic, loading }) {
   const uploadedCount = Object.values(musicByScene).reduce((sum, files) => sum + files.length, 0)
   return <section className="import-panel music-panel">
     <div className="import-hero"><div className="import-icon music-icon"><Music /></div><div><p className="eyebrow">NUMBER MUSIC</p><h2>음악 자동정리</h2><p>음악파일을 한꺼번에 넣으면 파일명의 번호나 제목을 보고 해당 넘버에 자동 연결합니다. 한 넘버에 여러 파일도 저장할 수 있어요.</p></div></div>
@@ -3765,7 +3850,7 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
       <label className="upload-zone music-upload"><FileAudio size={28} /><strong>음악파일 여러 개 선택</strong><span>MP3, M4A, WAV, AAC · 여러 파일 동시 선택 가능</span><input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac" multiple disabled={loading} onChange={(event) => organize(event.target.files || [])} /></label>
       {!!pending.length && <div className="music-match"><div className="import-result-head"><div><p className="eyebrow">AUTO MATCH</p><h3>{pending.length}개 파일 분류 결과</h3></div><button className="primary compact" disabled={loading || !pending.some((item) => item.sceneNo !== null)} onClick={upload}><Upload size={17} /> {loading ? '업로드 중…' : '선택 파일 저장'}</button></div><div className="music-file-list">{pending.map((item, index) => <article className={item.sceneNo !== null ? 'matched' : 'unmatched'} key={`${item.file.name}-${index}`}><FileAudio /><div><strong>{item.file.name}</strong><select aria-label={`${item.file.name} 넘버 선택`} value={item.sceneNo ?? ''} onChange={(event) => assign(index, event.target.value)}><option value="">넘버 선택 안 함</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div></article>)}</div></div>}
       <div className="import-result-head"><div><p className="eyebrow">LIBRARY</p><h3>넘버별 음악 {uploadedCount}개</h3></div></div>
-      <div className="music-library">{scenes.map((scene) => { const files = musicByScene[scene.scene_no] || []; return <article className="music-scene" key={scene.id}><div className="music-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{files.length}개 파일 · 드래그해서 순서 변경</small></div></div>{files.length ? <div className="audio-list">{files.map((file) => <div className={dragging?.path === file.path ? 'audio-row dragging' : 'audio-row'} key={file.path} data-track-path={file.path} draggable onDragStart={() => setDragging({ sceneNo: scene.scene_no, path: file.path })} onDragOver={(event) => moveOver(event, scene.scene_no, file.path)} onDragEnd={() => setDragging(null)}><div className="audio-file-head"><button type="button" className="track-drag-handle" aria-label={`${cleanStoredFileName(file.name)} 순서 이동`} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); setDragging({ sceneNo: scene.scene_no, path: file.path }) }} onPointerMove={(event) => pointerMove(event, scene.scene_no)} onPointerUp={() => setDragging(null)}><GripVertical size={18} /></button><FileAudio size={17} /><span>{cleanStoredFileName(file.name)}</span><button className="icon-button danger" disabled={loading} onClick={() => remove(file)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button></div>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>등록된 음악이 없어요.</p>}</article> })}</div>
+      <div className="music-library">{scenes.map((scene) => { const files = musicByScene[scene.scene_no] || []; return <article className="music-scene" key={scene.id}><div className="music-scene-head"><span>{scene.scene_no}</span><div><strong>{scene.title}</strong><small>{files.length}개 파일 · 위·아래 버튼으로 순서 변경</small></div></div>{files.length ? <div className="audio-list">{files.map((file, index) => <MusicTrackRow key={file.path} file={file} files={files} index={index} sceneNo={scene.scene_no} scenes={scenes} reorder={reorder} moveMusic={moveMusic} remove={remove} loading={loading} allowSceneChange />)}</div> : <p>등록된 음악이 없어요.</p>}</article> })}</div>
     </>}
   </section>
 }
