@@ -277,12 +277,15 @@ export default function App() {
     try {
       const inviteToken = new URLSearchParams(window.location.search).get('invite')
       let joinedWorkspaceId = ''
+      let joinedProductionId = ''
       if (inviteToken) {
         const { data: joinedProduction, error: joinError } = await supabase.rpc('join_workspace_by_invite', { invite_token: inviteToken })
         if (joinError) setNotice(`팀 초대 확인 실패: ${joinError.message}`)
         else if (joinedProduction) {
-          const joinedProductionId = String(joinedProduction)
+          joinedProductionId = String(joinedProduction)
           setInviteProductionId(joinedProductionId)
+          setDefaultProductionId(joinedProductionId)
+          window.localStorage.setItem('stageflow:default-production', joinedProductionId)
           const { data: joinedRow } = await supabase.from('productions').select('workspace_id').eq('id', joinedProductionId).maybeSingle()
           joinedWorkspaceId = joinedRow?.workspace_id || ''
         }
@@ -301,7 +304,7 @@ export default function App() {
       }
       const current = data?.[0]?.workspaces || null
       setWorkspace(current)
-      if (current) await loadProductions(current.id)
+      if (current) await loadProductions(current.id, joinedProductionId)
     } catch (error) {
       setWorkspace(null)
       setNotice(`팀 정보를 불러오지 못했어요: ${error.message || '네트워크 연결을 확인해주세요.'}`)
@@ -325,7 +328,7 @@ export default function App() {
     } catch { setInviteCastMembers([]) }
   }
   async function createTeamInvite(targetProductionId) {
-    const productionId = typeof targetProductionId === 'string' ? targetProductionId : (defaultProductionId || productions[0]?.id)
+    const productionId = typeof targetProductionId === 'string' ? targetProductionId : ''
     if (!productionId) return setNotice('먼저 공연을 하나 만들어주세요.')
     const targetScenes = selected?.id === productionId ? scenes : defaultProductionId === productionId ? homeScenes : []
     const targetActors = selected?.id === productionId ? castMembers : defaultProductionId === productionId ? homeCastMembers : []
@@ -378,16 +381,47 @@ export default function App() {
     } finally { setBusy(false) }
   }
 
-  async function loadProductions(workspaceId) {
-    const { data, error } = await supabase
+  async function loadProductions(workspaceId, preferredProductionId = '') {
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from('production_members')
+      .select('production_id')
+      .eq('user_id', session.user.id)
+    const membershipUnavailable = membershipError && isMissingBackendObject(membershipError, 'production_members')
+    if (membershipError && !membershipUnavailable) {
+      setProductions([])
+      setSelected(null)
+      setNotice(`공연별 접근 권한을 불러오지 못했어요: ${membershipError.message}`)
+      return
+    }
+    const allowedIds = [...new Set((membershipRows || []).map((row) => row.production_id).filter(Boolean))]
+    let productionQuery = supabase
       .from('productions')
       .select('*')
       .eq('workspace_id', workspaceId)
       .order('created_at', { ascending: false })
+    if (!membershipUnavailable) {
+      if (!allowedIds.length) {
+        setProductions([])
+        setSelected(null)
+        setDefaultProductionId('')
+        window.localStorage.removeItem('stageflow:default-production')
+        return
+      }
+      productionQuery = productionQuery.in('id', allowedIds)
+    }
+    const { data, error } = await productionQuery
     if (error) setNotice(`공연을 불러오지 못했어요: ${error.message}`)
     else {
       const next = data || []
       setProductions(next)
+      const preferred = preferredProductionId && next.find((item) => item.id === preferredProductionId)
+      if (preferred) {
+        setSelected(preferred)
+        setDefaultProductionId(preferred.id)
+        window.localStorage.setItem('stageflow:default-production', preferred.id)
+        return
+      }
+      if (selectedIdRef.current && !next.some((item) => item.id === selectedIdRef.current)) setSelected(null)
       const saved = window.localStorage.getItem('stageflow:default-production')
       if (!saved || !next.some((item) => item.id === saved)) {
         const firstId = next[0]?.id || ''

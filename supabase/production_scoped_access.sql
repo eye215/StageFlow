@@ -6,25 +6,36 @@ create table if not exists public.production_members (
   production_id uuid not null references public.productions(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'editor', 'member')),
+  access_source text not null default 'legacy',
   invited_by uuid references auth.users(id) on delete set null,
   joined_at timestamptz not null default now(),
   unique (production_id, user_id)
 );
+
+alter table public.production_members
+  add column if not exists access_source text not null default 'legacy';
 
 create index if not exists production_members_user_idx
   on public.production_members(user_id, production_id);
 
 -- 기존 workspace 멤버는 현재 존재하는 공연에만 이관합니다.
 -- 이관 이후 새 초대는 join_workspace_by_invite 함수가 선택한 공연 한 곳에만 추가합니다.
-insert into public.production_members (production_id, user_id, role, invited_by)
+insert into public.production_members (production_id, user_id, role, access_source, invited_by)
 select
   p.id,
-  wm.user_id,
-  case when p.created_by = wm.user_id then 'owner' else 'member' end,
+  p.created_by,
+  'owner',
+  'owner',
   p.created_by
 from public.productions p
-join public.workspace_members wm on wm.workspace_id = p.workspace_id
-on conflict (production_id, user_id) do nothing;
+where p.created_by is not null
+on conflict (production_id, user_id) do update
+set role = 'owner', access_source = 'owner';
+
+update public.production_members pm
+set role = 'owner', access_source = 'owner'
+from public.productions p
+where p.id = pm.production_id and p.created_by = pm.user_id;
 
 create or replace function public.stageflow_can_access_production(target_production_id uuid)
 returns boolean
@@ -38,6 +49,7 @@ as $$
     from public.production_members pm
     where pm.production_id = target_production_id
       and pm.user_id = auth.uid()
+      and pm.access_source in ('owner', 'invite', 'manual')
   );
 $$;
 
@@ -54,6 +66,7 @@ as $$
     where pm.production_id = target_production_id
       and pm.user_id = auth.uid()
       and pm.role = 'owner'
+      and pm.access_source in ('owner', 'manual')
   );
 $$;
 
@@ -68,9 +81,9 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.production_members (production_id, user_id, role, invited_by)
-  values (new.id, new.created_by, 'owner', new.created_by)
-  on conflict (production_id, user_id) do update set role = 'owner';
+  insert into public.production_members (production_id, user_id, role, access_source, invited_by)
+  values (new.id, new.created_by, 'owner', 'owner', new.created_by)
+  on conflict (production_id, user_id) do update set role = 'owner', access_source = 'owner';
   return new;
 end;
 $$;
@@ -183,9 +196,10 @@ begin
   values(found_invite.workspace_id, auth.uid(), 'member')
   on conflict (workspace_id, user_id) do nothing;
 
-  insert into public.production_members(production_id, user_id, role, invited_by)
-  values(found_invite.production_id, auth.uid(), 'member', found_invite.created_by)
-  on conflict (production_id, user_id) do nothing;
+  insert into public.production_members(production_id, user_id, role, access_source, invited_by)
+  values(found_invite.production_id, auth.uid(), 'member', 'invite', found_invite.created_by)
+  on conflict (production_id, user_id) do update
+  set access_source = 'invite', invited_by = excluded.invited_by;
 
   update public.workspace_invites set uses = uses + 1 where id = found_invite.id;
   return found_invite.production_id;

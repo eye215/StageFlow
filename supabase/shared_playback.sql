@@ -6,19 +6,23 @@ create table if not exists public.production_members (
   production_id uuid not null references public.productions(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'editor', 'member')),
+  access_source text not null default 'legacy',
   invited_by uuid references auth.users(id) on delete set null,
   joined_at timestamptz not null default now(),
   unique (production_id, user_id)
 );
 
+alter table public.production_members
+  add column if not exists access_source text not null default 'legacy';
+
 create index if not exists production_members_user_idx
   on public.production_members(user_id, production_id);
 
-insert into public.production_members (production_id, user_id, role, invited_by)
-select p.id, p.created_by, 'owner', p.created_by
+insert into public.production_members (production_id, user_id, role, access_source, invited_by)
+select p.id, p.created_by, 'owner', 'owner', p.created_by
 from public.productions p
 where p.created_by is not null
-on conflict (production_id, user_id) do update set role = 'owner';
+on conflict (production_id, user_id) do update set role = 'owner', access_source = 'owner';
 
 create or replace function public.stageflow_can_access_production(target_production_id uuid)
 returns boolean
@@ -31,6 +35,7 @@ as $$
     select 1 from public.production_members pm
     where pm.production_id = target_production_id
       and pm.user_id = auth.uid()
+      and pm.access_source in ('owner', 'invite', 'manual')
   );
 $$;
 
@@ -46,6 +51,7 @@ as $$
     where pm.production_id = target_production_id
       and pm.user_id = auth.uid()
       and pm.role = 'owner'
+      and pm.access_source in ('owner', 'manual')
   );
 $$;
 
@@ -61,9 +67,9 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.production_members (production_id, user_id, role, invited_by)
-  values (new.id, new.created_by, 'owner', new.created_by)
-  on conflict (production_id, user_id) do update set role = 'owner';
+  insert into public.production_members (production_id, user_id, role, access_source, invited_by)
+  values (new.id, new.created_by, 'owner', 'owner', new.created_by)
+  on conflict (production_id, user_id) do update set role = 'owner', access_source = 'owner';
   return new;
 end;
 $$;

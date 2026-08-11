@@ -11,18 +11,21 @@ create table if not exists public.production_members (
   production_id uuid not null references public.productions(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'member' check (role in ('owner', 'editor', 'member')),
+  access_source text not null default 'legacy',
   invited_by uuid references auth.users(id) on delete set null,
   joined_at timestamptz not null default now(),
   unique (production_id, user_id)
 );
 
-insert into public.production_members (production_id, user_id, role, invited_by)
-select p.id, wm.user_id,
-  case when p.created_by = wm.user_id then 'owner' else 'member' end,
-  p.created_by
+alter table public.production_members
+  add column if not exists access_source text not null default 'legacy';
+
+insert into public.production_members (production_id, user_id, role, access_source, invited_by)
+select p.id, p.created_by, 'owner', 'owner', p.created_by
 from public.productions p
-join public.workspace_members wm on wm.workspace_id = p.workspace_id
-on conflict (production_id, user_id) do nothing;
+where p.created_by is not null
+on conflict (production_id, user_id) do update
+set role = 'owner', access_source = 'owner';
 
 create table if not exists public.production_pairs (
   id uuid primary key default gen_random_uuid(),
@@ -164,7 +167,9 @@ returns boolean language sql stable security definer set search_path = public as
   select exists (
     select 1
     from public.production_members pm
-    where pm.production_id = target_production_id and pm.user_id = auth.uid()
+    where pm.production_id = target_production_id
+      and pm.user_id = auth.uid()
+      and pm.access_source in ('owner', 'invite', 'manual')
   );
 $$;
 
