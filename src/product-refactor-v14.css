@@ -1,0 +1,41 @@
+/* Relationship-first mobile UX: editors are pages, scenes and songs remain separate. */
+.entity-editor-page{display:grid;gap:14px;min-width:0;padding:2px 0 18px}
+.entity-editor-back{width:max-content;min-height:42px;display:inline-flex;align-items:center;gap:5px;padding:8px 11px;border:1px solid var(--u-line,rgba(148,163,184,.15));border-radius:12px;background:var(--u-raised,#11182a);color:var(--u-text,#f8fafc);font-weight:800}
+.entity-editor-page>header{display:grid;gap:5px;padding:7px 2px 3px}
+.entity-editor-page>header h2{margin:0;font-size:clamp(25px,7vw,32px);letter-spacing:-.04em}
+.entity-editor-page>header>p:last-child{max-width:560px;margin:0;color:var(--u-muted,#93a4bd);font-size:13px;line-height:1.55}
+.entity-editor-form{width:100%;max-width:620px;margin:0!important;padding:18px!important}
+.entity-editor-form label{display:grid;gap:7px;min-width:0;color:var(--u-muted,#93a4bd);font-size:12px;font-weight:750}
+.entity-editor-form label>span{padding-inline:2px}
+.entity-editor-form :is(input,select,textarea){min-width:0;max-width:100%}
+
+.cast-relation-section{display:grid;gap:10px;margin-top:15px;padding-top:14px;border-top:1px solid var(--u-line,rgba(148,163,184,.12))}
+.cast-relation-section .cast-scenes-head{align-items:center;margin:0;padding:0;border:0}
+.cast-scenes-head>div{display:grid;gap:3px;min-width:0}
+.cast-scenes-head>div small{color:var(--u-muted,#93a4bd);font-size:10px;font-weight:500;line-height:1.4}
+.relation-count{min-width:26px;height:26px;display:grid;place-items:center;border-radius:999px;background:rgba(124,92,255,.14);color:#b9b7ff;font-size:11px;font-weight:900}
+.cast-scene-chip-list{display:flex;flex-wrap:wrap;gap:6px;min-width:0}
+.cast-scene-chip-list>span{max-width:100%;display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--u-line,rgba(148,163,184,.12));border-radius:10px;background:rgba(9,14,28,.5);color:var(--u-text,#f8fafc);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cast-scene-chip-list b{display:grid;place-items:center;min-width:22px;height:22px;border-radius:7px;background:rgba(124,92,255,.15);color:#b9b7ff;font-size:10px}
+.cast-scene-chip-list>small{padding:8px 2px;color:var(--u-muted,#93a4bd)}
+.choreography-song-list{display:grid;gap:7px;min-width:0}
+.choreography-song-list>button{width:100%;min-width:0;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px;border:1px solid var(--u-line,rgba(148,163,184,.12));border-radius:13px;background:rgba(9,14,28,.55);color:var(--u-text,#f8fafc);text-align:left}
+.choreography-song-list>button>span{min-width:0;display:flex;align-items:center;gap:9px}
+.choreography-song-list>button>span>span{min-width:0;display:grid;gap:3px}
+.choreography-song-list b,.choreography-song-list small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.choreography-song-list b{font-size:12px}.choreography-song-list small{color:var(--u-muted,#93a4bd);font-size:9px}
+.choreography-song-list em{flex:0 0 auto;padding:6px 8px;border-radius:999px;background:rgba(34,197,94,.1);color:#86efac;font-size:10px;font-style:normal;font-weight:900}
+.choreography-song-list>button.excluded{border-color:rgba(251,113,133,.22);background:rgba(127,29,29,.09)}
+.choreography-song-list>button.excluded em{background:rgba(251,113,133,.12);color:#fda4af}
+.relation-empty{display:flex;align-items:flex-start;gap:8px;padding:11px;border:1px dashed var(--u-line,rgba(148,163,184,.15));border-radius:12px;color:var(--u-muted,#93a4bd);font-size:11px;line-height:1.5}
+
+@media(max-width:640px){
+  .entity-editor-form{padding:14px!important;border-radius:16px!important}
+  .entity-editor-form .two-col{grid-template-columns:1fr!important}
+  .cast-card{padding:13px!important}
+  .cast-card-head{display:grid!important;grid-template-columns:auto minmax(0,1fr) auto auto;gap:8px!important}
+  .cast-card-head .icon-button{width:36px!important;height:36px!important;border-radius:11px!important}
+  .cast-avatar{width:42px!important;height:42px!important}
+  .choreography-song-list>button{padding:10px}
+  .production-content :is(.cast-panel,.props-panel,.entity-editor-page,.scene-list){min-width:0;max-width:100%}
+}

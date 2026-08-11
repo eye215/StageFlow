@@ -302,7 +302,7 @@ export default function App() {
         ? { ...item, userId: session.user.id, email: session.user.email, claimedAt: now }
         : item)
       const pairs = [...new Set(next.map((item) => item.pairGroup?.trim()).filter(Boolean))]
-      const body = new Blob([JSON.stringify({ version: 7, model: 'role-pair-actor-roster', members: next, pairs, updatedAt: now }, null, 2)], { type: 'application/json' })
+      const body = new Blob([JSON.stringify({ version: 8, model: 'role-pair-actor-roster-song-choreography', members: next, pairs, updatedAt: now }, null, 2)], { type: 'application/json' })
       const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(inviteProductionId), body, { upsert: true, contentType: 'application/json' })
       if (error) return setNotice(`배역 선택 실패: ${error.message}`)
       setInviteCastMembers(next)
@@ -1119,7 +1119,7 @@ export default function App() {
   async function persistCastData(members, pairs = castPairs) {
     const normalizedMembers = ensureActorRosterRecords(members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment))
     const normalizedPairs = [...new Set([...(pairs || []).flatMap(splitPairEntries), ...normalizedMembers.map((member) => member.pairGroup)].map((pair) => String(pair || '').trim()).filter(Boolean))]
-    const body = new Blob([JSON.stringify({ version: 7, model: 'role-pair-actor-roster', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
+    const body = new Blob([JSON.stringify({ version: 8, model: 'role-pair-actor-roster-song-choreography', members: normalizedMembers, pairs: normalizedPairs, updatedAt: new Date().toISOString() }, null, 2)], { type: 'application/json' })
     const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(selected.id), body, { upsert: true, contentType: 'application/json' })
     if (error) {
       setNotice(`배우 정보 저장 실패: ${error.message}`)
@@ -1306,12 +1306,19 @@ export default function App() {
     await persistCastData(next)
   }
 
-  async function toggleCastChoreography(memberId, sceneNo) {
+  async function toggleCastChoreography(memberId, songKey) {
+    const normalizedSongKey = String(songKey || '').trim()
+    if (!normalizedSongKey) return
     const next = castMembers.map((member) => {
       if (member.id !== memberId) return member
-      const numbers = member.choreographySceneNumbers || []
-      const hasScene = numbers.includes(sceneNo)
-      return { ...member, choreographySceneNumbers: hasScene ? numbers.filter((value) => value !== sceneNo) : [...numbers, sceneNo].sort((a, b) => a - b) }
+      const excluded = member.choreographyExcludedSongKeys || []
+      const isExcluded = excluded.includes(normalizedSongKey)
+      return {
+        ...member,
+        choreographyExcludedSongKeys: isExcluded
+          ? excluded.filter((value) => value !== normalizedSongKey)
+          : [...excluded, normalizedSongKey].sort((a, b) => a.localeCompare(b, 'ko')),
+      }
     })
     await persistCastData(next)
   }
@@ -1363,6 +1370,7 @@ export default function App() {
       if (!grouped.has(key)) { grouped.set(key, { ...member, sceneNumbers: [...new Set(member.sceneNumbers || [])] }); continue }
       const current = grouped.get(key)
       current.sceneNumbers = [...new Set([...(current.sceneNumbers || []), ...(member.sceneNumbers || [])])].sort((a, b) => Number(a) - Number(b))
+      current.choreographyExcludedSongKeys = [...new Set([...(current.choreographyExcludedSongKeys || []), ...(member.choreographyExcludedSongKeys || [])])]
       current.notes = [...new Set([current.notes, member.notes].filter(Boolean))].join(' · ')
       if (!current.userId && member.userId) Object.assign(current, { userId: member.userId, email: member.email, claimedAt: member.claimedAt })
       if ((member.name || '').trim().length < (current.name || '').trim().length) current.name = member.name.trim()
@@ -1904,6 +1912,7 @@ function normalizeCastAssignment(member = {}) {
     notes: String(member.notes || '').trim(),
     sceneNumbers: [...new Set((member.sceneNumbers || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
     choreographySceneNumbers: [...new Set((member.choreographySceneNumbers || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
+    choreographyExcludedSongKeys: [...new Set((member.choreographyExcludedSongKeys || member.choreographyExcludedSongs || []).map((value) => String(value || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko')),
   }
 }
 
@@ -2266,6 +2275,7 @@ function ProductionView(props) {
   const lastShowCursorAtRef = useRef(0)
   const runAdvanceRef = useRef(false)
   const sharedPlaylist = useMemo(() => Object.entries(musicByScene).flatMap(([sceneNo, files]) => (files || []).map((file) => ({ ...file, sceneNo: Number(sceneNo) }))), [musicByScene])
+  const productionSongs = useMemo(() => buildProductionSongs(runScenes, musicByScene), [runScenes, musicByScene])
   const sharedPlayback = useSharedProductionPlayback({ production, session, playlist: sharedPlaylist })
   useEffect(() => {
     if (tab !== 'show') return undefined
@@ -2573,8 +2583,14 @@ function ProductionView(props) {
       <nav className="production-primary-nav" aria-label="공연 주요 메뉴"><button className={tab === 'overview' ? 'active' : ''} onClick={() => setTab('overview')}><Home /><span>개요</span></button>{!setupState.script && <button className={tab === 'import' ? 'active' : ''} onClick={() => setTab('import')}><FileText /><span>대본 등록</span></button>}{setupState.script && <button className={tab === 'scenes' ? 'active' : ''} onClick={() => setTab('scenes')}><Clapperboard /><span>장면</span></button>}{setupState.script && <button className={tab === 'cast' ? 'active' : ''} onClick={() => setTab('cast')}><Users /><span>배우</span></button>}{canRun && <button className={tab === 'show' ? 'active' : ''} onClick={() => setTab('show')}><Play /><span>준비/공연</span></button>}{setupState.script && <button className={!['overview', 'scenes', 'cast', 'show'].includes(tab) ? 'active' : ''} onClick={() => setMoreOpen(true)}><MoreHorizontal /><span>더보기</span></button>}</nav>
       <DeletionApprovalBanner workspace={workspace} production={production} session={session} open={() => setTab('settings')} />
       {tab === 'overview' && <><ProductionSetupProgress state={setupState} open={setTab} />{setupState.script ? <ConnectedOverview progress={progress} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} open={setTab} /> : <section className="setup-first-action"><FileText /><div><h2>대본을 등록해 주세요</h2><p>PDF·엑셀·텍스트를 올리면 장면과 등장인물을 먼저 정리합니다.</p></div><button className="primary" onClick={() => setTab('import')}>대본 등록 시작 <ChevronRight /></button></section>}</>}
-      {tab === 'scenes' && <><div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm((v) => !v)}><Plus size={18} /> 장면</button></div>{showForm && <SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} />} {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}<section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section></>}
-      {tab === 'cast' && <CastPanel members={castMembers} pairs={castPairs} addPair={addCastPair} renamePair={renameCastPair} removePair={removeCastPair} addRosterActor={addCastRosterActor} removeRosterActor={removeCastRosterActor} assignRole={assignCastRole} scenes={scenes} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} toggleChoreography={toggleCastChoreography} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
+      {tab === 'scenes' && (showForm
+        ? <EntityEditorPage eyebrow="SCENE" title="장면 등록" description="장면 번호는 0부터 입력할 수 있으며, 세부 장면은 장면 설명에 연결해 관리합니다." back={() => setShowForm(false)}><SceneForm form={form} setForm={setForm} submit={createScene} busy={busy} /></EntityEditorPage>
+        : <>
+          <div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm(true)}><Plus size={18} /> 장면</button></div>
+          {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}
+          <section className="scene-list">{!scenes.length && <Empty icon={<Clapperboard />} title="아직 장면이 없어요" description="첫 장면을 등록해 공연 흐름을 만들어보세요." action={() => setShowForm(true)} />}{!!scenes.length && !visibleScenes.length && <Empty icon={<Search />} title="검색 결과가 없어요" description="다른 검색어나 ACT를 선택해보세요." />}{visibleScenes.map((scene) => <SceneCard key={scene.id} scene={scene} update={updateScene} remove={() => deleteScene(scene.id)} />)}</section>
+        </>)}
+      {tab === 'cast' && <CastPanel members={castMembers} pairs={castPairs} addPair={addCastPair} renamePair={renameCastPair} removePair={removeCastPair} addRosterActor={addCastRosterActor} removeRosterActor={removeCastRosterActor} assignRole={assignCastRole} scenes={scenes} songs={productionSongs} propItems={propItems} form={castForm} setForm={setCastForm} showForm={showCastForm} setShowForm={setShowCastForm} submit={addCastMember} update={updateCastMember} remove={removeCastMember} toggleScene={toggleCastScene} toggleChoreography={toggleCastChoreography} importFromScenes={importCastFromScenes} consolidate={consolidateCastDuplicates} undoCleanup={undoCastNameCleanup} busy={busy} />}
       {tab === 'props' && <PropsPanel items={propItems} scenes={scenes} form={propForm} setForm={setPropForm} showForm={showPropForm} setShowForm={setShowPropForm} filter={propFilter} setFilter={setPropFilter} submit={addPropItem} update={updatePropItem} remove={removePropItem} toggleReady={togglePropReady} importFromScenes={importPropsFromScenes} busy={busy} />}
       {tab === 'costumes' && <CostumePanel scenes={scenes} castMembers={castMembers} updateScene={updateScene} />}
       {tab === 'cues' && <CuePanel scenes={scenes} completed={completedCues} toggle={toggleCue} updateScene={updateScene} autoLink={autoLinkProductionCues} busy={busy} />}
@@ -2597,7 +2613,7 @@ function ProductionView(props) {
       {tab === 'show' && runSession && current && <article className="run-current-scene"><span>ACT {current.act_no} · SCENE {current.scene_no}</span><h2>{current.title}</h2><small>{selectedRunPair} · {showIndex + 1}/{runScenes.length}</small></article>}
       {tab === 'show' && runSession && current && <RunCueList cues={currentCues} music={currentMusic} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} controller={sharedPlayback} />}
       {tab === 'show' && current && selectedRunPair && <section className="run-pair-scene-summary"><div className="active-run-pair"><Combine /><span><small>RUN PAIR · SCENE {current.scene_no}</small><b>{selectedRunPair}</b></span><em>{currentSceneAssignments.length}개 캐스팅</em></div>{missingCharacters.length > 0 ? <div className="run-missing-cast"><AlertTriangle /><span><b>미배정 Character</b><small>{missingCharacters.join(' · ')}</small></span></div> : <div className="run-cast-complete"><CheckCircle2 /><span>이 장면의 Character가 모두 배정됐어요.</span></div>}{currentCostumeChanges.length > 0 && <div className="run-costume-changes"><Shirt /><div><b>의상 체인지</b>{currentCostumeChanges.map((change) => <span key={`${change.actor}-${change.sceneNo}`}><strong>{change.actor}</strong><small>{change.previousRole} 의상 · {change.previousCostume} → {change.role} 의상 · {change.costume}</small></span>)}</div></div>}</section>}
-      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}{(member.choreographySceneNumbers || []).includes(current.scene_no) ? ' · 안무 참여' : ''}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
+      {tab === 'show' && <section className="show-mode">{!current ? <Empty icon={<Play />} title="진행할 장면이 없어요" description="장면을 먼저 등록해주세요." action={() => setTab('scenes')} /> : <><div className="show-head"><span>NOW PLAYING</span><strong>{showIndex + 1} / {scenes.length}</strong></div><label className="briefing-picker"><UserRound /><span>내 배역 브리핑</span><select value={briefingMemberId} onChange={(event) => selectBriefingMember(event.target.value)}><option value="">전체 보기</option>{runPairMembers.map((member) => <option key={member.id} value={member.id}>{member.roleName || '배역 미정'} · {member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}</option>)}</select></label><article className="current-scene"><p>ACT {current.act_no} · SCENE {current.scene_no}</p><h2>{current.title}</h2>{briefingMember && <span className={(briefingMember.sceneNumbers || []).includes(current.scene_no) ? 'briefing-status onstage' : 'briefing-status standby'}>{(briefingMember.sceneNumbers || []).includes(current.scene_no) ? `${briefingMember.roleName || briefingMember.name} 등장 장면` : '대기 · 다음 준비 확인'}</span>}</article><div className="show-operations"><article><div className="show-section-title"><ListChecks /><strong>현재 큐</strong><span>{currentCues.filter((_, index) => completedCues[`${current.scene_no}-${index}`]).length}/{currentCues.length}</span></div>{currentCues.length ? <CueList cues={currentCues} sceneNo={current.scene_no} completed={completedCues} toggle={toggleCue} compact /> : <p>연결된 큐가 없어요.</p>}</article><article><div className="show-section-title"><Users /><strong>등장 배역 · 배우</strong><span>{currentCast.length}</span></div>{currentCast.length ? <div className="show-cast-list">{currentCast.map((member) => <span className={member.groupedMemberIds?.includes(briefingMemberId) ? 'selected' : ''} key={member.id}><b>{member.roleName || '배역 미정'}</b><small>{member.name}{member.pairGroup ? ` · ${member.pairGroup}` : ''}{choreographyStatusForMusic(member, currentMusic)}</small></span>)}</div> : <p>연결된 배우가 없어요.</p>}</article><article><div className="show-section-title"><Shirt /><strong>{briefingMember ? '내 의상 · 체인지' : '현재 의상 · 체인지'}</strong><span>{briefingCurrentCostumes.length}</span></div>{briefingCurrentCostumes.length ? <div className="show-costume-list">{briefingCurrentCostumes.map((item, index) => <div key={`${item.role}-${index}`}><b>{item.role}</b><span>{item.name}</span>{item.note && <small>{item.note}</small>}</div>)}</div> : <p>{briefingMember ? '현재 장면에 내 의상 체인지가 없어요.' : '등록된 의상 체인지가 없어요.'}</p>}</article><article><div className="show-section-title"><Package /><strong>{briefingMember ? '내 소품 업무' : '소품·대도구'}</strong><span>{briefingCurrentProps.filter((item) => item.ready).length}/{briefingCurrentProps.length}</span></div>{briefingCurrentProps.length ? <div className="show-prop-list">{briefingCurrentProps.map((item) => <button className={item.ready ? 'ready' : ''} key={item.id} onClick={() => togglePropReady(item.id)}><CheckCircle2 /><div><b>{item.name}</b><small>IN {item.inBy || '미정'} · OUT {item.outBy || '미정'}</small></div></button>)}</div> : <p>{briefingMember ? '현재 장면에 내 소품 업무가 없어요.' : '연결된 소품이 없어요.'}</p>}</article><article><div className="show-section-title"><FileAudio /><strong>음악</strong><span>{currentMusic.length}</span></div>{currentMusic.length ? <div className="show-music-list">{currentMusic.map((file) => <div key={file.path}><span>{cleanStoredFileName(file.name)}</span>{file.url && <audio controls preload="none" src={file.url} />}</div>)}</div> : <p>연결된 음악이 없어요.</p>}</article></div><article className="next-cue"><span>NEXT</span><strong>{next ? `${next.scene_no}. ${next.title}` : 'Curtain Call'}</strong>{next && <div className="next-prep"><div><Shirt /><b>의상 준비</b><span>{briefingNextCostumes.length ? briefingNextCostumes.map((item) => `${item.role} → ${item.name}`).join(' · ') : briefingMember ? '내 체인지 없음' : '등록 없음'}</span></div><div><Package /><b>소품 준비</b><span>{briefingNextProps.length ? briefingNextProps.map((item) => `${item.name} (${item.inBy || '담당 미정'})`).join(' · ') : briefingMember ? '내 준비 업무 없음' : '등록 없음'}</span></div></div>}</article><div className="show-actions"><button disabled={!showIndex} onClick={() => setShowIndex((i) => Math.max(0, i - 1))}>이전</button><button className="go-button" disabled={!next} onClick={() => setShowIndex((i) => Math.min(scenes.length - 1, i + 1))}>GO <Play fill="currentColor" /></button></div></>}</section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
     {moreOpen && <ProductionMoreSheet active={tab} setup={setupState} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
@@ -2970,7 +2986,7 @@ function ProductionForm({ form, setForm, submit, busy }) { return <form classNam
 function ProductionCreateModal({ form, setForm, submit, busy, close }) {
   return <div className="production-create-backdrop" onClick={close}><section className="production-create-modal" role="dialog" aria-modal="true" aria-label="새 공연 만들기" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="production-create-head"><div><span>NEW PRODUCTION</span><h2>새 공연 만들기</h2><p>공연 정보를 입력한 뒤 자료를 자동정리할 수 있어요.</p></div><button className="icon-button" onClick={close} aria-label="닫기"><X /></button></div><ProductionForm form={form} setForm={setForm} submit={submit} busy={busy} /></section></div>
 }
-function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid" onSubmit={submit}><input required placeholder="장면 제목" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /><div className="two-col"><input type="number" min="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /><input type="number" min="0" step="0.1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></div><textarea placeholder="장면 설명" value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /><button className="primary" disabled={busy}>장면 저장</button></form> }
+function SceneForm({ form, setForm, submit, busy }) { return <form className="panel form-grid entity-editor-form" onSubmit={submit}><label><span>장면 제목</span><input required placeholder="예: 가려진 진실" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><div className="two-col"><label><span>ACT</span><input type="number" min="1" value={form.act_no} onChange={(e) => setForm({ ...form, act_no: Number(e.target.value) })} /></label><label><span>장면 번호</span><input type="number" min="0" step="0.1" value={form.scene_no} onChange={(e) => setForm({ ...form, scene_no: Number(e.target.value) })} /></label></div><label><span>장면 설명</span><textarea placeholder="등장 배역, 소품, 큐 등 장면 정보를 입력하세요." value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} /></label><button className="primary" disabled={busy}>장면 저장</button></form> }
 function ProductionCard({ item, index, open, remove }) { return <article className="production-card" onClick={open}><div className={`poster poster-${index % 3}`}><Theater size={38} /></div><div className="production-info"><div className="card-top"><span className="status">준비 중</span><button className="icon-button danger" onClick={(e) => { e.stopPropagation(); remove() }} aria-label="공연 삭제"><Trash2 size={17} /></button></div><h3>{item.title}</h3><p>{item.venue || '장소 미정'}</p><small>{item.performance_start_date || '공연일 미정'}</small></div></article> }
 function parseSceneSummarySections(summary = '') {
   const result = { main: [], ensemble: [], backstage: [], details: [], soundtracks: [], props: [], status: [], other: [] }
@@ -3276,7 +3292,26 @@ function MusicPanel({ scenes, pending, musicByScene, organize, assign, upload, r
     </>}
   </section>
 }
-function CastPanel({ members, pairs = [], addPair, renamePair, removePair, addRosterActor, removeRosterActor, assignRole, scenes, propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, toggleChoreography, importFromScenes, consolidate, undoCleanup, busy }) {
+function EntityEditorPage({ eyebrow, title, description, back, children }) {
+  return <section className="entity-editor-page"><button className="entity-editor-back" type="button" onClick={back}><ChevronLeft size={18} /> 목록으로</button><header><p className="eyebrow">{eyebrow}</p><h2>{title}</h2>{description && <p>{description}</p>}</header>{children}</section>
+}
+
+function CastingAssignmentForm({ form, setForm, pairGroups, rosterRecords, submit, busy }) {
+  return <form className="panel form-grid cast-form casting-assignment-form entity-editor-form" onSubmit={submit}>
+    <div className="casting-form-guide"><span>1</span><b>배역</b><i /><span>2</span><b>페어</b><i /><span>3</span><b>배우</b></div>
+    <div className="two-col"><label className="cast-field"><span>1Depth 배역</span><input required placeholder="예: 대니" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></label><label className="cast-field"><span>2Depth 세부배역 <small>선택</small></span><input placeholder="예: 고등학생 대니" value={form.subRoleName || ''} onChange={(event) => setForm({ ...form, subRoleName: event.target.value })} /></label></div>
+    <label className="cast-field pair-group-field"><span>페어명</span><input required list="production-pair-groups" placeholder="예: A페어" value={form.pairGroup || ''} onChange={(event) => setForm({ ...form, pairGroup: event.target.value })} /><small>런에서 이 페어를 선택하면 같은 페어의 캐스팅을 전부 불러와요.</small></label>
+    <datalist id="production-pair-groups">{pairGroups.map((pair) => <option value={pair} key={pair} />)}</datalist>
+    <label className="cast-field"><span>배우 이름</span><input required list="pair-actor-roster" placeholder="페어 명단에서 선택" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
+    <datalist id="pair-actor-roster">{rosterRecords.filter((member) => !form.pairGroup || normalizeMatch(member.pairGroup) === normalizeMatch(form.pairGroup)).map((member) => <option key={member.id} value={member.name}>{member.pairGroup}</option>)}</datalist>
+    <label className="cast-field"><span>성별</span><select value={form.gender || '미지정'} onChange={(event) => setForm({ ...form, gender: event.target.value })}><option>미지정</option><option>남</option><option>여</option></select></label>
+    <label className="cast-field"><span>배역 구분</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>조연</option><option>앙상블</option></select></label>
+    <label className="cast-field"><span>메모</span><textarea placeholder="더블 캐스팅, 참고사항" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label>
+    <button className="primary" disabled={busy}>캐스팅 등록</button>
+  </form>
+}
+
+function CastPanel({ members, pairs = [], addPair, renamePair, removePair, addRosterActor, removeRosterActor, assignRole, scenes, songs = [], propItems, form, setForm, showForm, setShowForm, submit, update, remove, toggleScene, toggleChoreography, importFromScenes, consolidate, undoCleanup, busy }) {
   const [query, setQuery] = useState('')
   const [groupNotice, setGroupNotice] = useState('')
   const [viewMode, setViewMode] = useState('roles')
@@ -3339,6 +3374,7 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, addRo
   function toggleCleanupMember(memberId) {
     setCleanupSelectedIds((value) => value.includes(memberId) ? value.filter((id) => id !== memberId) : [...value, memberId])
   }
+  if (showForm) return <EntityEditorPage eyebrow="CASTING" title="캐스팅 등록" description="배역과 페어를 먼저 고른 뒤 해당 페어의 배우를 연결합니다." back={() => setShowForm(false)}><CastingAssignmentForm form={form} setForm={setForm} pairGroups={pairGroups} rosterRecords={rosterRecords} submit={submit} busy={busy} /></EntityEditorPage>
   return <section className="cast-panel">
     <div className="section-heading"><div><p className="eyebrow">CAST</p><h2>배우</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 추가</button></div>
     <PairCastingManager pairs={pairGroups} members={members} addPair={addPair} renamePair={renamePair} removePair={removePair} addRosterActor={addRosterActor} removeRosterActor={removeRosterActor} busy={busy} />
@@ -3347,18 +3383,7 @@ function CastPanel({ members, pairs = [], addPair, renamePair, removePair, addRo
     <div className="cast-utility-bar"><button disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>대본 배역 다시 찾기</b><small>배우 이름을 만들지 않고 배역 후보만 정리</small></span></button>{!!assignments.length && <button disabled={busy} onClick={toggleCleanupPreview}><Sparkles /><span><b>배역 이름 정리</b><small>, | / - _ + 로 붙은 배역 분리·중복 병합</small></span></button>}{!!assignments.length && <button disabled={busy} onClick={undoRegroupRoles}><RotateCcw /><span><b>정리 되돌리기</b><small>마지막 배역 정리 직전 상태 복원</small></span></button>}</div>
     {cleanupPreviewOpen && <section className="cast-cleanup-preview"><div className="cast-cleanup-preview-head"><div><span>NAME CLEANUP</span><h3>정리 결과 미리보기</h3></div><strong>{cleanupSelectedIds.length}/{cleanupPreview.length}명 선택</strong></div>{cleanupPreview.length ? <><div className="cast-cleanup-select-actions"><button onClick={() => setCleanupSelectedIds(cleanupPreview.map(({ member }) => member.id))}>전체 선택</button><button onClick={() => setCleanupSelectedIds([])}>전체 해제</button></div><div className="cast-cleanup-preview-list">{cleanupPreview.slice(0, 20).map(({ member }) => { const checked = cleanupSelectedIds.includes(member.id); const draft = cleanupRoleDrafts[member.id] ?? member.roleName ?? ''; const draftRoles = splitRoleEntries(draft); return <article className={checked ? 'selected' : ''} key={member.id}><label><input type="checkbox" checked={checked} onChange={() => toggleCleanupMember(member.id)} /><UserRound /></label><div><b>{member.name}</b><small>원본: {member.roleName}</small><input className="cast-cleanup-role-input" value={draft} disabled={!checked} onChange={(event) => setCleanupRoleDrafts((value) => ({ ...value, [member.id]: event.target.value }))} aria-label={`${member.name} 정리할 배역명`} /><p>{draftRoles.map((role) => { const roleScenes = matchScenesForSplitRole(member.name, role, scenes, member.sceneNumbers || []); return <span key={role}>{role}<i>{roleScenes.length}장면</i></span> })}</p></div><em>{draftRoles.length}개</em></article> })}</div></> : <p className="cast-cleanup-empty">구분자로 붙어 있는 배역은 없어요. 적용하면 같은 배우·배역 중복만 병합합니다.</p>}{cleanupPreview.length > 20 && <small className="cast-cleanup-more">외 {cleanupPreview.length - 20}명은 적용 후 함께 정리돼요.</small>}<div className="cast-cleanup-preview-actions"><button onClick={() => setCleanupPreviewOpen(false)}>취소</button><button className="primary compact" disabled={busy || (cleanupPreview.length > 0 && !cleanupSelectedIds.length)} onClick={regroupRoles}><CheckCircle2 size={16} /> 선택 정리 적용</button></div></section>}
     {groupNotice && <p className="notice role-group-notice">{groupNotice}</p>}
-    {showForm && <form className="panel form-grid cast-form casting-assignment-form" onSubmit={submit}>
-      <div className="casting-form-guide"><span>1</span><b>배역</b><i /><span>2</span><b>페어</b><i /><span>3</span><b>배우</b></div>
-      <div className="two-col"><label className="cast-field"><span>1Depth 배역</span><input required placeholder="예: 대니" value={form.roleName} onChange={(event) => setForm({ ...form, roleName: event.target.value })} /></label><label className="cast-field"><span>2Depth 세부배역 <small>선택</small></span><input placeholder="예: 고등학생 대니" value={form.subRoleName || ''} onChange={(event) => setForm({ ...form, subRoleName: event.target.value })} /></label></div>
-      <label className="cast-field pair-group-field"><span>페어명</span><input required list="production-pair-groups" placeholder="예: A페어" value={form.pairGroup || ''} onChange={(event) => setForm({ ...form, pairGroup: event.target.value })} /><small>런에서 이 페어를 선택하면 같은 페어의 캐스팅을 전부 불러와요.</small></label>
-      <datalist id="production-pair-groups">{pairGroups.map((pair) => <option value={pair} key={pair} />)}</datalist>
-      <label className="cast-field"><span>배우 이름</span><input required list="pair-actor-roster" placeholder="페어 명단에서 선택" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label>
-      <datalist id="pair-actor-roster">{rosterRecords.filter((member) => !form.pairGroup || normalizeMatch(member.pairGroup) === normalizeMatch(form.pairGroup)).map((member) => <option key={member.id} value={member.name}>{member.pairGroup}</option>)}</datalist>
-      <label className="cast-field"><span>성별</span><select value={form.gender || '미지정'} onChange={(event) => setForm({ ...form, gender: event.target.value })}><option>미지정</option><option>남</option><option>여</option></select></label>
-      <label className="cast-field"><span>배역 구분</span><select value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })}><option>주연</option><option>조연</option><option>앙상블</option></select></label>
-      <label className="cast-field"><span>메모</span><textarea placeholder="더블 캐스팅, 참고사항" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} /></label><button className="primary" disabled={busy}>캐스팅 등록</button>
-    </form>}
-    {!!roleRecords.length && <><div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배역·페어·배우 검색' : '장면·배역·배우 검색'} /></label><span>{visible.length}/{roleRecords.length}건</span></div><div className="cast-gender-filter" aria-label="배우 성별 빠른 선택">{[['all','모두'],['남','남자들'],['여','여자들']].map(([key,label]) => <button className={genderFilter === key ? 'active' : ''} key={key} onClick={() => setGenderFilter(key)}>{label}<b>{key === 'all' ? assignments.length : assignments.filter((member) => member.gender === key).length}</b></button>)}</div><div className="cast-status-filters">{[['all','전체'],['unlinked','장면 미연결'],['unclaimed','팀원 미선택'],['cleanup','이름 정리 필요']].map(([key, label]) => <button className={statusFilter === key ? 'active' : ''} key={key} onClick={() => setStatusFilter(key)}><span>{label}</span><b>{statusCounts[key]}</b></button>)}</div></>}{viewMode === 'roles' ? <div className="cast-role-groups">{!roleRecords.length && <Empty icon={<Users />} title="대본에서 찾은 배역이 없어요" description="대본 배역 다시 찾기를 먼저 실행해 주세요." />}{!!roleRecords.length && !visible.length && <Empty icon={<Search />} title="조건에 맞는 배역이 없어요" description="검색어나 상태 필터를 변경해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} allPairs={pairGroups} roster={rosterRecords} assignRole={assignRole} scenes={scenes} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={assignments.filter((member) => visible.some((item) => item.id === member.id))} query={query} />}
+    {!!roleRecords.length && <><div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={viewMode === 'roles' ? '배역·페어·배우 검색' : '장면·배역·배우 검색'} /></label><span>{visible.length}/{roleRecords.length}건</span></div><div className="cast-gender-filter" aria-label="배우 성별 빠른 선택">{[['all','모두'],['남','남자들'],['여','여자들']].map(([key,label]) => <button className={genderFilter === key ? 'active' : ''} key={key} onClick={() => setGenderFilter(key)}>{label}<b>{key === 'all' ? assignments.length : assignments.filter((member) => member.gender === key).length}</b></button>)}</div><div className="cast-status-filters">{[['all','전체'],['unlinked','장면 미연결'],['unclaimed','팀원 미선택'],['cleanup','이름 정리 필요']].map(([key, label]) => <button className={statusFilter === key ? 'active' : ''} key={key} onClick={() => setStatusFilter(key)}><span>{label}</span><b>{statusCounts[key]}</b></button>)}</div></>}{viewMode === 'roles' ? <div className="cast-role-groups">{!roleRecords.length && <Empty icon={<Users />} title="대본에서 찾은 배역이 없어요" description="대본 배역 다시 찾기를 먼저 실행해 주세요." />}{!!roleRecords.length && !visible.length && <Empty icon={<Search />} title="조건에 맞는 배역이 없어요" description="검색어나 상태 필터를 변경해보세요." />}{roleGroups.map((group) => <CastRoleGroup key={group.key} group={group} allPairs={pairGroups} roster={rosterRecords} assignRole={assignRole} scenes={scenes} songs={songs} propItems={propItems} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} forceOpen={!!query} />)}</div> : <CastSceneGroups scenes={scenes} members={assignments.filter((member) => visible.some((item) => item.id === member.id))} query={query} />}
   </section>
 }
 
@@ -3468,7 +3493,7 @@ function buildCastRoleHierarchy(members = []) {
   }).sort((a, b) => a.roleName === '배역 미정' ? 1 : b.roleName === '배역 미정' ? -1 : a.roleName.localeCompare(b.roleName, 'ko'))
 }
 
-function CastRoleGroup({ group, allPairs = [], roster = [], assignRole, scenes, propItems, update, remove, toggleScene, toggleChoreography, busy, forceOpen }) {
+function CastRoleGroup({ group, allPairs = [], roster = [], assignRole, scenes, songs = [], propItems, update, remove, toggleScene, toggleChoreography, busy, forceOpen }) {
   const [open, setOpen] = useState(false)
   const [shareStatus, setShareStatus] = useState('')
   const expanded = forceOpen || open
@@ -3515,7 +3540,7 @@ function CastRoleGroup({ group, allPairs = [], roster = [], assignRole, scenes, 
       <div className="role-casting-matrix">{pairRows.map((row) => <article key={row.pair}><b>{row.pair}</b><div>{row.members.map((member) => <span key={member.id}><UserRound /><em>{member.name}</em>{member.subRoleName && <small>{member.subRoleName}</small>}</span>)}<select aria-label={`${group.roleName} ${row.pair} 배우 선택`} value="" disabled={busy || !row.actors.length} onChange={(event) => connectActor(row.pair, event.target.value)}><option value="">{row.actors.length ? '+ 배우 선택' : '명단 없음'}</option>{row.actors.filter((actor) => !row.members.some((member) => canonicalActor(member.name) === canonicalActor(actor.name))).map((actor) => <option value={actor.name} key={actor.id}>{actor.name}</option>)}</select></div></article>)}</div>
       <div className="role-scene-strip"><span>등장 장면</span><div>{roleScenes.map((scene) => <b key={scene.id}>{scene.scene_no}. {scene.title}</b>)}{!roleScenes.length && <small>연결된 장면 없음</small>}</div></div>
       <button className="actor-call-share" onClick={shareRoleCall}><Upload /><span><b>배역 콜시트 공유</b><small>페어별 배우·등장 장면·준비물 정리</small></span></button>{shareStatus && <p>{shareStatus}</p>}
-      <div className="cast-list">{group.assignments.map((member) => <CastCard key={member.id} member={member} scenes={scenes} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} />)}</div>
+      <div className="cast-list">{group.assignments.map((member) => <CastCard key={member.id} member={member} scenes={scenes} songs={songs} update={update} remove={remove} toggleScene={toggleScene} toggleChoreography={toggleChoreography} busy={busy} />)}</div>
     </div>}
   </section>
 }
@@ -3539,6 +3564,7 @@ function groupCastMembersByActor(members, options = {}) {
       ...representative,
       roleName: [...new Set(roles.map((member) => member.roleName || '배역 미정'))].join(' · '),
       sceneNumbers: [...new Set(roles.flatMap((member) => member.sceneNumbers || []))].sort((a, b) => Number(a) - Number(b)),
+      choreographyExcludedSongKeys: [...new Set(roles.flatMap((member) => member.choreographyExcludedSongKeys || []))],
       groupedMemberIds: roles.map((member) => member.id),
     }
   })
@@ -3555,8 +3581,18 @@ function groupCastMembersByRole(members = []) {
     ...assignments[0],
     name: [...new Set(assignments.map((member) => member.name?.trim()).filter(Boolean))].join(' · '),
     pairGroup: [...new Set(assignments.map((member) => member.pairGroup?.trim()).filter(Boolean))].join(' · '),
+    choreographyExcludedSongKeys: [...new Set(assignments.flatMap((member) => member.choreographyExcludedSongKeys || []))],
     groupedMemberIds: assignments.map((member) => member.id),
   }))
+}
+
+function choreographyStatusForMusic(member, music = []) {
+  if (!music.length) return ''
+  const excluded = new Set(member?.choreographyExcludedSongKeys || [])
+  const excludedTitles = music
+    .filter((file) => excluded.has(songKeyFromTitle(file)))
+    .map((file) => stripFileExtension(cleanStoredFileName(file.name || file.title || '음악')))
+  return excludedTitles.length ? ` · 안무 제외: ${excludedTitles.join(', ')}` : ' · 안무 참여'
 }
 
 function matchScenesForSplitRole(actorName, roleName, scenes, originalSceneNumbers) {
@@ -3578,20 +3614,34 @@ function analyzeScenesForSplitRole(actorName, roleName, scenes, originalSceneNum
     : { sceneNumbers: originals.sort((a, b) => a - b), matched: false }
 }
 
-function CastCard({ member, scenes, update, remove, toggleScene, toggleChoreography, busy }) {
+function CastCard({ member, scenes, songs = [], update, remove, toggleScene, toggleChoreography, busy }) {
   const [editing, setEditing] = useState(false)
   const [editingScenes, setEditingScenes] = useState(false)
   const [sceneSearch, setSceneSearch] = useState('')
   const [draft, setDraft] = useState({ name: member.name || '', gender: member.gender || '미지정', pairGroup: member.pairGroup || '', roleName: member.roleName || '', subRoleName: member.subRoleName || '', type: member.type || '주연', notes: member.notes || '' })
   const selectedScenes = scenes.filter((scene) => (member.sceneNumbers || []).includes(scene.scene_no))
   const filteredScenes = scenes.filter((scene) => !normalizeMatch(sceneSearch) || normalizeMatch(`${scene.scene_no} ${scene.title}`).includes(normalizeMatch(sceneSearch)))
+  const selectedSceneNumbers = new Set((member.sceneNumbers || []).map(Number))
+  const linkedSongs = songs.filter((song) => song.sceneNumbers.some((sceneNo) => selectedSceneNumbers.has(Number(sceneNo))))
+  const choreographyExcluded = new Set(member.choreographyExcludedSongKeys || [])
   async function save(event) {
     event.preventDefault()
     if (!draft.name.trim()) return
     if (await update(member.id, draft)) setEditing(false)
   }
   if (editing) return <article className="cast-card"><form className="cast-edit-form" onSubmit={save}><div className="two-col"><input required value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="배우 이름" /><select value={draft.gender} onChange={(event) => setDraft({ ...draft, gender: event.target.value })}><option>미지정</option><option>남</option><option>여</option></select></div><input value={draft.pairGroup} onChange={(event) => setDraft({ ...draft, pairGroup: event.target.value })} placeholder="페어/그룹" /><div className="two-col"><input value={draft.roleName} onChange={(event) => setDraft({ ...draft, roleName: event.target.value })} placeholder="1Depth 배역" /><input value={draft.subRoleName} onChange={(event) => setDraft({ ...draft, subRoleName: event.target.value })} placeholder="2Depth 세부배역" /></div><select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value })}><option>주연</option><option>조연</option><option>앙상블</option></select><textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} placeholder="개인 연습 메모" /><div className="cast-edit-actions"><button type="button" onClick={() => setEditing(false)}>취소</button><button className="primary compact" disabled={busy}><Save size={16} /> 저장</button></div></form></article>
-  return <article className="cast-card"><div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.pairGroup || '페어 미정'} · {member.type}</span><h3>{member.name}</h3><p>{[member.roleName || '배역 미정', member.subRoleName].filter(Boolean).join(' › ')}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="캐스팅 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(member.id)} aria-label="캐스팅 삭제"><Trash2 size={17} /></button></div>{member.notes && <p className="cast-notes">{member.notes}</p>}<div className="cast-scenes-head"><strong>등장·안무 설정</strong><button className="scene-edit-toggle" onClick={() => setEditingScenes((value) => !value)}>{editingScenes ? '완료' : '등장 장면 편집'} · {selectedScenes.length}개</button></div>{!editingScenes ? <div className="cast-scene-activity-list">{selectedScenes.map((scene) => { const choreography = (member.choreographySceneNumbers || []).includes(scene.scene_no); return <div key={scene.id}><span><b>{scene.scene_no}</b>{scene.title}</span><button className={choreography ? 'active' : ''} onClick={() => toggleChoreography?.(member.id, scene.scene_no)}><CheckCircle2 />{choreography ? '안무 참여' : '안무 제외'}</button></div> })}{!selectedScenes.length && <small>등록된 등장 장면이 없어요.</small>}</div> : <div className="scene-picker"><label><Search size={15} /><input value={sceneSearch} onChange={(event) => setSceneSearch(event.target.value)} placeholder="장면 번호·제목 검색" /></label><div>{filteredScenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span><b>{scene.scene_no}</b><strong>{scene.title}</strong></span><CheckCircle2 /></button> })}{!filteredScenes.length && <small>검색 결과가 없어요.</small>}</div></div>}</article>
+  return <article className="cast-card">
+    <div className="cast-card-head"><div className={`cast-avatar cast-${member.type}`}><UserRound /></div><div><span>{member.pairGroup || '페어 미정'} · {member.type}</span><h3>{member.name}</h3><p>{[member.roleName || '배역 미정', member.subRoleName].filter(Boolean).join(' › ')}</p></div><button className="icon-button" onClick={() => setEditing(true)} aria-label="캐스팅 정보 수정"><Pencil size={16} /></button><button className="icon-button danger" onClick={() => remove(member.id)} aria-label="캐스팅 삭제"><Trash2 size={17} /></button></div>
+    {member.notes && <p className="cast-notes">{member.notes}</p>}
+    <section className="cast-relation-section">
+      <div className="cast-scenes-head"><div><strong>등장 장면</strong><small>배역이 실제로 등장하는 장면</small></div><button className="scene-edit-toggle" onClick={() => setEditingScenes((value) => !value)}>{editingScenes ? '편집 완료' : '장면 편집'} · {selectedScenes.length}</button></div>
+      {!editingScenes ? <div className="cast-scene-chip-list">{selectedScenes.map((scene) => <span key={scene.id}><b>{scene.scene_no}</b>{scene.title}</span>)}{!selectedScenes.length && <small>등장 장면을 연결해 주세요.</small>}</div> : <div className="scene-picker"><label><Search size={15} /><input value={sceneSearch} onChange={(event) => setSceneSearch(event.target.value)} placeholder="장면 번호·제목 검색" /></label><div>{filteredScenes.map((scene) => { const active = (member.sceneNumbers || []).includes(scene.scene_no); return <button className={active ? 'active' : ''} key={scene.id} onClick={() => toggleScene(member.id, scene.scene_no)}><span><b>{scene.scene_no}</b><strong>{scene.title}</strong></span><CheckCircle2 /></button> })}{!filteredScenes.length && <small>검색 결과가 없어요.</small>}</div></div>}
+    </section>
+    <section className="cast-relation-section choreography-song-section">
+      <div className="cast-scenes-head"><div><strong>음악별 안무 설정</strong><small>기본은 참여이며, 이 배우만 제외할 음악을 선택하세요.</small></div><span className="relation-count">{linkedSongs.length}</span></div>
+      {linkedSongs.length ? <div className="choreography-song-list">{linkedSongs.map((song) => { const excluded = choreographyExcluded.has(song.key); return <button type="button" className={excluded ? 'excluded' : 'included'} key={song.key} onClick={() => toggleChoreography?.(member.id, song.key)}><span><Music size={16} /><span><b>{song.title}</b><small>{song.sceneNumbers.map((sceneNo) => `SCENE ${sceneNo}`).join(' · ')}</small></span></span><em>{excluded ? '안무 제외' : '안무 참여'}</em></button> })}</div> : <div className="relation-empty"><Music size={17} /><span>{selectedScenes.length ? '연결된 음악이 없어요. 음악을 업로드하거나 Song을 장면에 연결해 주세요.' : '등장 장면을 먼저 연결하면 해당 음악을 선택할 수 있어요.'}</span></div>}
+    </section>
+  </article>
 }
 
 function CostumePanel({ scenes, castMembers, updateScene }) {
@@ -3639,6 +3689,10 @@ function appendSummarySection(summary = '', heading, line) {
   return [text, heading, line].filter(Boolean).join('\n')
 }
 
+function PropsEditorForm({ form, setForm, scenes, submit, busy }) {
+  return <form className="panel form-grid prop-form entity-editor-form" onSubmit={submit}><div className="two-col"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><div className="two-col"><input placeholder="In 담당자" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /><input placeholder="Out 담당자" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></div><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary" disabled={busy}>항목 저장</button></form>
+}
+
 function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filter, setFilter, submit, update, remove, toggleReady, importFromScenes, busy }) {
   const [query, setQuery] = useState('')
   const visible = items.filter((item) => (filter === '전체' || (filter === '미준비' && !item.ready) || (filter === '완료' && item.ready) || item.kind === filter) && (!normalizeMatch(query) || normalizeMatch(`${item.name} ${item.inBy || ''} ${item.outBy || ''} ${item.note || ''}`).includes(normalizeMatch(query)))).sort((a, b) => Number(a.ready) - Number(b.ready) || Number(a.sceneNo ?? 9999) - Number(b.sceneNo ?? 9999))
@@ -3651,11 +3705,11 @@ function PropsPanel({ items, scenes, form, setForm, showForm, setShowForm, filte
     else result.push({ key, title: item.sceneNo !== null && item.sceneNo !== undefined && item.sceneNo !== '' ? sceneTitle(item.sceneNo) : '장면 미지정', items: [item] })
     return result
   }, [])
+  if (showForm) return <EntityEditorPage eyebrow="PROPS" title="소품·대도구 등록" description="장면과 IN·OUT 담당자를 연결하면 런 화면에 자동으로 표시됩니다." back={() => setShowForm(false)}><PropsEditorForm form={form} setForm={setForm} scenes={scenes} submit={submit} busy={busy} /></EntityEditorPage>
   return <section className="props-panel">
     <div className="section-heading"><div><p className="eyebrow">PROPS & SET PIECES</p><h2>소품·대도구</h2></div><button className="primary compact" onClick={() => setShowForm((value) => !value)}><Plus size={18} /> 항목</button></div>
     <section className="prop-summary compact-summary"><article><strong>{items.length - readyCount}</strong><span>미준비</span></article><article><strong>{readyCount}</strong><span>준비 완료</span></article><article><strong>{items.length}</strong><span>전체</span></article></section>
     <button className="props-import-compact" disabled={!scenes.length || busy} onClick={importFromScenes}><WandSparkles /><span><b>장면 자료에서 가져오기</b><small>소품·대도구와 IN/OUT 담당자 자동 연결</small></span><ChevronRight /></button>
-    {showForm && <form className="panel form-grid prop-form" onSubmit={submit}><div className="two-col"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option>소품</option><option>대도구</option></select><select value={form.sceneNo} onChange={(event) => setForm({ ...form, sceneNo: event.target.value })}><option value="">장면 미지정</option>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></div><input required placeholder="소품 또는 대도구 이름" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /><div className="two-col"><input placeholder="In 담당자" value={form.inBy} onChange={(event) => setForm({ ...form, inBy: event.target.value })} /><input placeholder="Out 담당자" value={form.outBy} onChange={(event) => setForm({ ...form, outBy: event.target.value })} /></div><textarea placeholder="배치 위치, 이동 방법, 주의사항" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} /><button className="primary" disabled={busy}>항목 저장</button></form>}
     {!!items.length && <div className="entity-search"><label><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="소품·담당자 검색" /></label><span>{visible.length}/{items.length}개</span></div>}<div className="prop-filters prop-filters-scroll">{['미준비', '전체', '소품', '대도구', '완료'].map((value) => <button key={value} className={filter === value ? 'active' : ''} onClick={() => setFilter(value)}>{value}</button>)}</div>
     <div className="prop-scene-groups">{!visible.length && <Empty icon={items.length ? <Search /> : <Package />} title={items.length ? '조건에 맞는 항목이 없어요' : '등록된 항목이 없어요'} description={items.length ? '다른 필터나 검색어를 선택해보세요.' : '직접 추가하거나 장면 자동정리 결과에서 한 번에 가져오세요.'} action={items.length ? null : () => setShowForm(true)} />}{groups.map((group) => <section key={group.key}><div className="prop-group-head"><span>{group.key === 'unassigned' ? '—' : group.key}</span><div><strong>{group.title}</strong><small>{group.items.filter((item) => item.ready).length}/{group.items.length} 준비</small></div></div><div className="prop-list">{group.items.map((item) => <PropCard key={item.id} item={item} scenes={scenes} sceneTitle={sceneTitle} update={update} remove={remove} toggleReady={toggleReady} busy={busy} />)}</div></section>)}</div>
   </section>
@@ -4292,6 +4346,33 @@ function sceneSoundtrackTitles(scene) {
     if (match?.[1]) titles.push(match[1].trim())
   })
   return titles
+}
+
+function songKeyFromTitle(value) {
+  const label = typeof value === 'object' ? (value?.title || value?.name || value?.code || '') : value
+  const normalized = normalizeMusicTitle(label) || normalizeMatch(cleanStoredFileName(String(label || '')))
+  return normalized ? `song:${normalized}` : ''
+}
+
+function buildProductionSongs(scenes = [], musicByScene = {}) {
+  const songs = new Map()
+  const add = (label, sceneNo, file = null) => {
+    const key = songKeyFromTitle(label)
+    if (!key) return
+    const title = stripFileExtension(cleanStoredFileName(String(label || ''))).trim() || '제목 미정 음악'
+    const current = songs.get(key) || { key, title, sceneNumbers: [], files: [] }
+    if (Number.isFinite(Number(sceneNo)) && !current.sceneNumbers.includes(Number(sceneNo))) current.sceneNumbers.push(Number(sceneNo))
+    if (file?.path && !current.files.some((item) => item.path === file.path)) current.files.push({ ...file, sceneNo: Number(sceneNo), songKey: key })
+    if (current.title === '제목 미정 음악' || title.length < current.title.length) current.title = title
+    songs.set(key, current)
+  }
+  scenes.forEach((scene) => {
+    sceneSoundtrackTitles(scene).forEach((title) => add(title, scene.scene_no))
+    ;(musicByScene[scene.scene_no] || []).forEach((file) => add(file.name, scene.scene_no, file))
+  })
+  return [...songs.values()]
+    .map((song) => ({ ...song, sceneNumbers: song.sceneNumbers.sort((a, b) => a - b) }))
+    .sort((a, b) => (a.sceneNumbers[0] ?? Number.MAX_SAFE_INTEGER) - (b.sceneNumbers[0] ?? Number.MAX_SAFE_INTEGER) || a.title.localeCompare(b.title, 'ko'))
 }
 
 function musicTitleSimilarity(left, right) {

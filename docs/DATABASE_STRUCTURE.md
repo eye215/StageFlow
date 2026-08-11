@@ -3,6 +3,30 @@
 > 이 문서는 현재 legacy 구조를 설명한다. 중복을 제거한 최종 목표 구조는
 > [`DATABASE_V4_CLEAN.md`](./DATABASE_V4_CLEAN.md)를 기준으로 한다.
 
+> 최신 추가 관계는 `supabase/stageflow_v7_performance_relations.sql`을 기준으로 한다. 기존 JSON 저장은 마이그레이션 기간의 읽기·쓰기 호환 계층이며, 최종 관계는 항상 `production_id`로 격리한다.
+
+## 0. 확정 관계
+
+```mermaid
+erDiagram
+  PRODUCTIONS ||--o{ SCENES : has
+  PRODUCTIONS ||--o{ SOUNDTRACKS : has
+  SCENES ||--o{ SCENE_SONGS : uses
+  SOUNDTRACKS ||--o{ SCENE_SONGS : appears_in
+  PEOPLE ||--o{ CASTINGS : performs
+  CHARACTERS ||--o{ CASTINGS : role
+  PAIRS ||--o{ CASTINGS : groups
+  CASTINGS ||--o{ CASTING_SONG_SETTINGS : configures
+  SOUNDTRACKS ||--o{ CASTING_SONG_SETTINGS : choreography
+  SOUNDTRACKS ||--o{ SONG_COSTUMES : costume
+```
+
+- 배우(people)와 배역(characters)은 별도 원본 데이터다.
+- 캐스팅(castings)은 `배우 + 배역 + 페어` 한 건이며 모두 N:M을 허용한다.
+- Scene과 Song은 N:M이다. 세부 장면은 Song의 필수 부모가 아니다.
+- 안무 제외는 Scene이 아니라 `캐스팅 + Song`에 저장한다. 행이 없거나 `false`면 기본 참여다.
+- 런 시작 시 Pair의 캐스팅을 불러온 뒤 실제 참여 Actor만 별도로 선택한다.
+
 ## 1. 현재 상태 요약
 
 | 영역 | 현재 저장 위치 | 앱 연결 상태 | 목표 |
