@@ -410,6 +410,8 @@ export default function App() {
   async function createTeamInvite(targetProductionId) {
     const productionId = typeof targetProductionId === 'string' ? targetProductionId : ''
     if (!productionId) return setNotice('먼저 공연을 하나 만들어주세요.')
+    const targetProduction = productions.find((item) => item.id === productionId)
+    if (!targetProduction) return setNotice('현재 계정에서 접근할 수 있는 공연만 초대할 수 있어요.')
     const targetScenes = selected?.id === productionId ? scenes : defaultProductionId === productionId ? homeScenes : []
     const targetActors = selected?.id === productionId ? castMembers : defaultProductionId === productionId ? homeCastMembers : []
     if (!targetScenes.length && !targetActors.length) return setNotice('대본과 배우 정보를 먼저 등록해 주세요.')
@@ -418,7 +420,9 @@ export default function App() {
     const { data, error } = await supabase.rpc('create_workspace_invite', { target_workspace_id: workspace.id, target_production_id: productionId })
     if (error) return setNotice(`초대 링크 생성 실패: ${error.message}`)
     const link = `${window.location.origin}${window.location.pathname}?invite=${encodeURIComponent(data)}&production=${encodeURIComponent(productionId)}`
-    try { if (navigator.share) await navigator.share({ title: `${workspace.name} StageFlow 초대`, text: '회원가입 후 팀 참가와 배역 선택을 진행해주세요.', url: link }); else await navigator.clipboard.writeText(link); setNotice('팀 초대 링크를 공유했어요.') }
+    const linkedProductionId = new URL(link).searchParams.get('production')
+    if (linkedProductionId !== targetProduction.id) return setNotice('초대 링크의 공연 정보가 일치하지 않아 생성을 중단했어요.')
+    try { if (navigator.share) await navigator.share({ title: `${targetProduction.title} · StageFlow 초대`, text: `${targetProduction.title} 공연에 참가한 뒤 배역을 선택해주세요.`, url: link }); else await navigator.clipboard.writeText(link); setNotice(`${targetProduction.title} 공연 초대 링크를 공유했어요.`) }
     catch (error) { if (error?.name !== 'AbortError') setNotice(`초대 링크 공유 실패: ${error.message}`) }
   }
   async function claimInviteRole(memberId) {
@@ -539,10 +543,12 @@ export default function App() {
   }
 
   function chooseDefaultProduction(id) {
+    const targetProduction = productions.find((item) => item.id === id)
+    if (!targetProduction) return setNotice('선택한 공연을 찾지 못했어요.')
     setDefaultProductionId(id)
     window.localStorage.setItem('stageflow:default-production', id)
     setProfileOpen(false)
-    setNotice('기본 공연을 변경했어요.')
+    setNotice(`현재 공연을 ${targetProduction.title}(으)로 변경했어요.`)
   }
 
   async function loadHomeOverview(productionId) {
@@ -2137,7 +2143,7 @@ function ActorHome({ session, workspace, productions, production, daysLeft, prog
         ? { step: '3', title: '넘버 음악을 연결해 주세요', description: '파일명을 기준으로 장면에 자동 연결해드려요.', tab: 'music', action: '음악 올리기', icon: <FileAudio /> }
         : { step: '✓', title: '런을 시작할 준비가 됐어요', description: '페어를 선택하고 장면별 시간을 기록해보세요.', tab: 'show', action: '런 시작', icon: <Play /> }
   return <div className="app-shell actor-home">
-    <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>{production?.title || '배우용 공연 노트'}</span></div></div><div className="actor-home-header-actions"><button className="actor-share-button" disabled={!production} onClick={() => createTeamInvite(production?.id)} aria-label="현재 공연 팀원 초대"><Upload /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div></header>
+    <header className="topbar actor-home-topbar"><div className="brand-inline"><Theater /><div><strong>StageFlow</strong><span>{production?.title || '배우용 공연 노트'}</span></div></div><div className="actor-home-header-actions"><button className="actor-share-button" disabled={!production} onClick={() => createTeamInvite(production?.id)} aria-label={production ? `${production.title} 공연 팀원 초대` : '공연 팀원 초대'} title={production ? `${production.title} 공연 초대 링크` : '공연을 먼저 선택해주세요'}><Upload /></button><button className="avatar" onClick={() => setProfileOpen(true)} aria-label="프로필과 공연 선택">{session.user.email?.[0]?.toUpperCase() || 'U'}</button></div></header>
     <main className="content actor-home-content">
       {showForm && <ProductionCreateModal form={productionForm} setForm={setProductionForm} submit={createProduction} busy={busy} close={() => setShowForm(false)} />}
       {production ? <>
