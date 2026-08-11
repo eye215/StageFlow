@@ -223,6 +223,9 @@ create table if not exists public.production_playback (
   is_playing boolean not null default false,
   position_seconds double precision not null default 0 check (position_seconds >= 0),
   command_seq bigint not null default 0,
+  output_device_id text,
+  output_user_id uuid references auth.users(id) on delete set null,
+  output_claimed_at timestamptz,
   updated_by uuid references auth.users(id) on delete set null,
   updated_at timestamptz not null default now()
 );

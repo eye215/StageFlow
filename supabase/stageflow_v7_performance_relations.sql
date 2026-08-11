@@ -91,6 +91,12 @@ alter table if exists public.show_sessions add column if not exists audio_output
 alter table if exists public.show_sessions add column if not exists playback_state jsonb not null default '{"status":"paused","position":0}'::jsonb;
 alter table if exists public.show_sessions add column if not exists updated_at timestamptz not null default now();
 
+-- The shared command row keeps one physical audio output device while every
+-- authenticated production member can remain a controller.
+alter table if exists public.production_playback add column if not exists output_device_id text;
+alter table if exists public.production_playback add column if not exists output_user_id uuid references auth.users(id) on delete set null;
+alter table if exists public.production_playback add column if not exists output_claimed_at timestamptz;
+
 create table if not exists public.run_participants (
   id uuid primary key default gen_random_uuid(),
   production_id uuid not null references public.productions(id) on delete cascade,
@@ -123,4 +129,3 @@ begin
     execute format('grant select, insert, update, delete on public.%I to authenticated', table_name);
   end loop;
 end $$;
-

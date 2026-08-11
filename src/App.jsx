@@ -2332,9 +2332,16 @@ function projectedPlaybackPosition(value, now = Date.now()) {
 function useSharedProductionPlayback({ production, session, playlist }) {
   const audioRef = useRef(null)
   const playbackRef = useRef(null)
+  const deviceIdRef = useRef(null)
+  if (!deviceIdRef.current) {
+    const storageKey = 'stageflow-playback-device-id'
+    deviceIdRef.current = window.localStorage.getItem(storageKey) || crypto.randomUUID()
+    window.localStorage.setItem(storageKey, deviceIdRef.current)
+  }
   const [playback, setPlayback] = useState(null)
   const [error, setError] = useState('')
   const [sharedAvailable, setSharedAvailable] = useState(true)
+  const [outputOwnerSupported, setOutputOwnerSupported] = useState(false)
   const [position, setPosition] = useState(0)
   const [duration, setDuration] = useState(0)
   const activeFile = useMemo(() => playlist.find((file) => file.path === playback?.file_path) || null, [playlist, playback?.file_path])
@@ -2358,7 +2365,8 @@ function useSharedProductionPlayback({ production, session, playlist }) {
   const publish = useCallback(async (patch) => {
     const audio = audioRef.current
     const currentPlayback = playbackRef.current
-    const localPosition = audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
+    const localIsOutputDevice = !outputOwnerSupported || !currentPlayback?.output_device_id || currentPlayback.output_device_id === deviceIdRef.current
+    const localPosition = localIsOutputDevice && audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
       ? Math.max(0, audio.currentTime)
       : projectedPlaybackPosition(currentPlayback)
     const payload = {
@@ -2371,6 +2379,12 @@ function useSharedProductionPlayback({ production, session, playlist }) {
       command_seq: Math.max(Date.now(), Number(currentPlayback?.command_seq || 0) + 1),
       updated_by: session.user.id,
       updated_at: new Date().toISOString(),
+    }
+    if (outputOwnerSupported) {
+      const shouldClaimOutput = Boolean(patch.claim_output) || !currentPlayback?.output_device_id
+      payload.output_device_id = shouldClaimOutput ? deviceIdRef.current : currentPlayback.output_device_id
+      payload.output_user_id = shouldClaimOutput ? session.user.id : (currentPlayback.output_user_id || null)
+      payload.output_claimed_at = shouldClaimOutput ? new Date().toISOString() : (currentPlayback.output_claimed_at || null)
     }
     if (!payload.file_path) return false
     playbackRef.current = payload
@@ -2393,24 +2407,40 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     }
     setError('')
     return true
-  }, [missingPlaybackTable, production.id, session.user.id, sharedAvailable])
+  }, [missingPlaybackTable, outputOwnerSupported, production.id, session.user.id, sharedAvailable])
 
-  const playFile = useCallback((file) => file?.path && publish({ file_path: file.path, file_name: cleanStoredFileName(file.name), scene_no: file.sceneNo, is_playing: true, position_seconds: 0 }), [publish])
+  const playFile = useCallback((file) => file?.path && publish({ file_path: file.path, file_name: cleanStoredFileName(file.name), scene_no: file.sceneNo, is_playing: true, position_seconds: 0, claim_output: !playbackRef.current?.output_device_id }), [publish])
   const toggle = useCallback(() => {
     const currentPlayback = playbackRef.current
     if (!currentPlayback?.file_path) return false
     const audio = audioRef.current
-    const currentPosition = audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
+    const localIsOutputDevice = !outputOwnerSupported || !currentPlayback.output_device_id || currentPlayback.output_device_id === deviceIdRef.current
+    const currentPosition = localIsOutputDevice && audio?.readyState >= 1 && Number.isFinite(audio.currentTime)
       ? audio.currentTime
       : projectedPlaybackPosition(currentPlayback)
     return publish({ is_playing: !currentPlayback.is_playing, position_seconds: currentPosition })
-  }, [publish])
+  }, [outputOwnerSupported, publish])
   const seek = useCallback((seconds) => {
     const next = Math.max(0, Math.min(Number(seconds) || 0, duration || Number.MAX_SAFE_INTEGER))
     if (audioRef.current) audioRef.current.currentTime = next
     setPosition(next)
     return publish({ position_seconds: next, is_playing: playbackRef.current?.is_playing || false })
   }, [duration, publish])
+  const stop = useCallback(() => {
+    if (audioRef.current) audioRef.current.currentTime = 0
+    setPosition(0)
+    return publish({ position_seconds: 0, is_playing: false })
+  }, [publish])
+  const claimOutput = useCallback(() => {
+    const currentPlayback = playbackRef.current
+    if (!currentPlayback?.file_path || !outputOwnerSupported) return false
+    if (!window.confirm('현재 다른 기기에서 음악이 출력 중입니다. 이 기기로 출력을 옮길까요?')) return false
+    return publish({
+      position_seconds: projectedPlaybackPosition(currentPlayback),
+      is_playing: currentPlayback.is_playing,
+      claim_output: true,
+    })
+  }, [outputOwnerSupported, publish])
 
   useEffect(() => {
     let active = true
@@ -2424,6 +2454,10 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     setDuration(0)
     setError('')
     setSharedAvailable(true)
+    supabase.from('production_playback').select('output_device_id').eq('production_id', production.id).maybeSingle().then(({ error: ownerProbeError }) => {
+      if (!active) return
+      setOutputOwnerSupported(!ownerProbeError)
+    })
     supabase.from('production_playback').select('*').eq('production_id', production.id).maybeSingle().then(({ data, error: loadError }) => {
       if (!active) return
       if (loadError && missingPlaybackTable(loadError)) {
@@ -2511,13 +2545,17 @@ function useSharedProductionPlayback({ production, session, playlist }) {
       setPosition(target)
     }
     if (audio.readyState >= 1) align(); else audio.addEventListener('loadedmetadata', align, { once: true })
-    if (playback.is_playing) audio.play().then(() => setError('')).catch(() => setError('이 기기에서 재생 버튼을 한 번 눌러 공유 재생을 허용해주세요.'))
-    else audio.pause()
+    const isOutputDevice = !outputOwnerSupported || !playback.output_device_id || playback.output_device_id === deviceIdRef.current
+    if (playback.is_playing && isOutputDevice) audio.play().then(() => setError('')).catch(() => setError('이 기기에서 재생 버튼을 한 번 눌러 공유 재생을 허용해주세요.'))
+    else {
+      audio.pause()
+      setPosition(desired)
+    }
     if ('mediaSession' in navigator && 'MediaMetadata' in window) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: playback.file_name || cleanStoredFileName(activeFile.name), artist: production.title, album: 'StageFlow 공유 플레이리스트' })
       navigator.mediaSession.playbackState = playback.is_playing ? 'playing' : 'paused'
     }
-  }, [activeFile, playback, production.title])
+  }, [activeFile, outputOwnerSupported, playback, production.title])
 
   useEffect(() => {
     if (!('mediaSession' in navigator)) return undefined
@@ -2528,15 +2566,25 @@ function useSharedProductionPlayback({ production, session, playlist }) {
     return () => { ['play', 'pause', 'seekto'].forEach((action) => safe(action, null)) }
   }, [publish, seek])
 
-  return { audioRef, playback, activeFile, error, sharedAvailable, position, duration, playFile, toggle, seek }
+  useEffect(() => {
+    if (!playback?.is_playing || !outputOwnerSupported || !playback.output_device_id || playback.output_device_id === deviceIdRef.current) return undefined
+    const updateProjectedPosition = () => setPosition(projectedPlaybackPosition(playback))
+    updateProjectedPosition()
+    const timer = window.setInterval(updateProjectedPosition, 500)
+    return () => window.clearInterval(timer)
+  }, [outputOwnerSupported, playback])
+
+  const isOutputDevice = !outputOwnerSupported || !playback?.output_device_id || playback.output_device_id === deviceIdRef.current
+  return { audioRef, playback, activeFile, error, sharedAvailable, outputOwnerSupported, isOutputDevice, position, duration, playFile, toggle, stop, seek, claimOutput }
 }
 
 function SharedMusicPlayer({ controller, playlist, visible = true }) {
-  const { audioRef, playback, activeFile, error, sharedAvailable, position, duration, playFile, toggle, seek } = controller
+  const { audioRef, playback, activeFile, error, sharedAvailable, outputOwnerSupported, isOutputDevice, position, duration, playFile, toggle, stop, seek, claimOutput } = controller
   return <section className={visible ? 'shared-music-player' : 'shared-music-player player-background-only'}>
     <audio ref={audioRef} preload="auto" playsInline />
     <div className="shared-player-head"><span><Music /></span><div><small>{sharedAvailable ? '공유 플레이리스트' : '개인 플레이리스트'}</small><strong>{playback?.file_name || '재생할 음악을 선택하세요'}</strong>{activeFile && <em>{activeFile.sceneNo}장면</em>}</div><i className={playback?.is_playing ? 'live' : ''}>{playback?.is_playing ? 'LIVE' : sharedAvailable ? 'READY' : 'LOCAL'}</i></div>
-    {activeFile && <button className="shared-player-toggle" onClick={toggle}>{playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{playback?.is_playing ? '모두 일시정지' : '모두 재생'}</button>}
+    {activeFile && <div className="shared-player-controls"><button className="shared-player-toggle" onClick={toggle}>{playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}{playback?.is_playing ? '모두 일시정지' : '모두 재생'}</button><button type="button" className="shared-player-stop" onClick={stop}><Square fill="currentColor" /> 정지</button></div>}
+    {activeFile && outputOwnerSupported && <div className="shared-output-owner"><span>{isOutputDevice ? '이 기기에서 음악 출력 중' : '다른 팀원의 기기에서 음악 출력 중'}</span>{!isOutputDevice && <button type="button" onClick={claimOutput}>이 기기로 출력 전환</button>}</div>}
     {activeFile && <div className="shared-player-progress"><input aria-label="음악 재생 위치" type="range" min="0" max={Math.max(1, duration || 0)} step="0.1" value={Math.min(position, Math.max(1, duration || 0))} onChange={(event) => seek(Number(event.target.value))} /><span>{formatDuration(Math.floor(position))} / {duration ? formatDuration(Math.floor(duration)) : '--:--'}</span></div>}
     {error && <p>{error}</p>}
     <div className="shared-playlist">{playlist.map((file) => <button className={file.path === playback?.file_path ? 'active' : ''} key={file.path} onClick={() => playFile(file)}><Play fill="currentColor" /><span><b>{cleanStoredFileName(file.name)}</b><small>{file.sceneNo}장면</small></span></button>)}</div>
@@ -2568,7 +2616,7 @@ function RunCueList({ cues, music, sceneNo, completed, toggle, controller }) {
   return <section className="run-scene-cues"><div className="show-section-title"><ListChecks /><strong>장면 큐 · 음악</strong><span>{entries.filter((entry) => completed[`${sceneNo}-${entry.index}`]).length}/{entries.length}</span></div><div>{entries.map(({ cue, file, index }) => {
     const key = `${sceneNo}-${index}`
     const active = file?.path === controller.playback?.file_path
-    return <article className={completed[key] ? 'run-cue-card done' : 'run-cue-card'} key={key}><button className="run-cue-check" onClick={() => toggle(sceneNo, index)} aria-label={`${cue.label} 완료 전환`}><CheckCircle2 /></button><div className="run-cue-copy"><span>{cue.type || '무대'}</span><b>{cue.label || '큐 확인 필요'}</b>{cue.trigger && <small>큐사인 · {cue.trigger}</small>}{file && <div className="run-cue-player"><button onClick={() => active ? controller.toggle() : controller.playFile(file)}>{active && controller.playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><div><strong>{cleanStoredFileName(file.name)}</strong>{active ? <><input aria-label={`${cleanStoredFileName(file.name)} 재생 위치`} type="range" min="0" max={Math.max(1, controller.duration || 0)} step="0.1" value={Math.min(controller.position, Math.max(1, controller.duration || 0))} onChange={(event) => controller.seek(Number(event.target.value))} /><small>{formatDuration(Math.floor(controller.position))} / {controller.duration ? formatDuration(Math.floor(controller.duration)) : '--:--'}</small></> : <small>눌러서 팀 공유 재생</small>}</div></div>}</div></article>
+    return <article className={completed[key] ? 'run-cue-card done' : 'run-cue-card'} key={key}><button className="run-cue-check" onClick={() => toggle(sceneNo, index)} aria-label={`${cue.label} 완료 전환`}><CheckCircle2 /></button><div className="run-cue-copy"><span>{cue.type || '무대'}</span><b>{cue.label || '큐 확인 필요'}</b>{cue.trigger && <small>큐사인 · {cue.trigger}</small>}{file && <div className="run-cue-player"><button onClick={() => active ? controller.toggle() : controller.playFile(file)}>{active && controller.playback?.is_playing ? <Pause fill="currentColor" /> : <Play fill="currentColor" />}</button><div><strong>{cleanStoredFileName(file.name)}</strong>{active ? <><input aria-label={`${cleanStoredFileName(file.name)} 재생 위치`} type="range" min="0" max={Math.max(1, controller.duration || 0)} step="0.1" value={Math.min(controller.position, Math.max(1, controller.duration || 0))} onChange={(event) => controller.seek(Number(event.target.value))} /><small>{formatDuration(Math.floor(controller.position))} / {controller.duration ? formatDuration(Math.floor(controller.duration)) : '--:--'}</small><small className="run-output-status"><span>{controller.outputOwnerSupported ? (controller.isOutputDevice ? '이 기기에서 출력' : '다른 기기에서 출력') : '개인 출력'}</span><span><button type="button" onClick={controller.stop}>정지</button>{controller.outputOwnerSupported && !controller.isOutputDevice && <button type="button" onClick={controller.claimOutput}>출력 가져오기</button>}</span></small></> : <small>눌러서 팀 공유 재생</small>}</div></div>}</div></article>
   })}</div>{controller.error && <p className="run-player-error">{controller.error}</p>}</section>
 }
 
@@ -2605,6 +2653,7 @@ function ProductionView(props) {
   const [runElapsed, setRunElapsed] = useState(0)
   const [runHistory, setRunHistory] = useState([])
   const [selectedRunPair, setSelectedRunPair] = useState('')
+  const [runParticipantChoices, setRunParticipantChoices] = useState({})
   const [feedbackRunId, setFeedbackRunId] = useState('')
   const [feedbackDrafts, setFeedbackDrafts] = useState({})
   const [feedbackStatus, setFeedbackStatus] = useState('')
@@ -2641,10 +2690,17 @@ function ProductionView(props) {
   const briefingMember = castingAssignments.find((member) => member.id === briefingMemberId)
   const briefingMembers = briefingMember ? castingAssignments.filter((member) => canonicalActor(member.name) === canonicalActor(briefingMember.name)) : []
   const availableRunPairs = [...new Set([...(castPairs || []), ...castingAssignments.map((member) => member.pairGroup?.trim()).filter(Boolean)])].sort((a, b) => a.localeCompare(b, 'ko'))
-  const runPairMembers = selectedRunPair ? castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair)) : castingAssignments
+  const selectedPairMembers = selectedRunPair ? castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(selectedRunPair)) : []
+  const runParticipantKey = useCallback((actorName) => `${normalizeMatch(selectedRunPair)}::${canonicalActor(actorName)}`, [selectedRunPair])
+  const runPairAllActors = groupCastMembersByActor(selectedPairMembers)
+  const runPairMembers = selectedPairMembers.filter((member) => runParticipantChoices[runParticipantKey(member.name)] !== false)
   const runPairRoster = buildCastRoleHierarchy(runPairMembers)
   const runFeedbackActors = groupCastMembersByActor(runPairMembers)
   const feedbackRecipients = runFeedbackActors.filter((member) => member.userId)
+  const toggleRunParticipant = (actorName) => {
+    const key = runParticipantKey(actorName)
+    setRunParticipantChoices((current) => ({ ...current, [key]: current[key] === false }))
+  }
   const loadMyFeedback = useCallback(async () => {
     const base = `${workspace.id}/${production.id}/feedback/${session.user.id}`
     setFeedbackInboxStatus('불러오는 중…')
@@ -2783,7 +2839,7 @@ function ProductionView(props) {
       setFeedbackStatus(`런을 시작하지 못했어요. 준비 상태 초기화 실패: ${error.message}`)
       return
     }
-    setRunSession({ id: crypto.randomUUID(), type: 'run', pair: selectedRunPair, startedAt: now, sceneStartedAt: now, segments: [] })
+    setRunSession({ id: crypto.randomUUID(), type: 'run', pair: selectedRunPair, participantActorKeys: runFeedbackActors.map((member) => canonicalActor(member.name)), startedAt: now, sceneStartedAt: now, segments: [] })
   }
   async function submitRunFeedback(event) {
     event.preventDefault()
@@ -2973,8 +3029,8 @@ function ProductionView(props) {
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
       {tab === 'show' && <section className="actor-run-intro"><UserRound /><div><b>배우 런 연습</b><small>내 배역을 고르고 장면별 등장·의상·소품·음악을 확인하세요.</small></div></section>}
-      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고르면 그 페어에 배정된 배역과 배우만 전체 장면에 적용돼요.</p></div><div className="run-pair-options">{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{!selectedRunPair && availableRunPairs.length > 0 && <p className="run-pair-required"><AlertTriangle /> 런을 시작할 페어를 선택해주세요.</p>}{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 전체 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
-      {tab === 'show' && <RunControl session={runSession} elapsed={runElapsed} history={runHistory} current={current} firstScene={firstRunScene} firstProps={firstRunProps} firstCostumes={firstRunCostumes} pairName={selectedRunPair} start={startFullRun} finish={goNextWithTiming} enabled={showController && Boolean(selectedRunPair)} isLast={!next} />}
+      {tab === 'show' && !runSession && <section className="run-pair-picker"><div><span>RUN PAIR</span><h2>이번 런 페어 선택</h2><p>페어를 고른 뒤 이번 런에 참여할 배우를 한 번 더 확인하세요.</p></div><div className="run-pair-options">{availableRunPairs.map((pair) => { const assignments = castingAssignments.filter((member) => normalizeMatch(member.pairGroup) === normalizeMatch(pair)); return <button className={normalizeMatch(selectedRunPair) === normalizeMatch(pair) ? 'selected' : ''} key={pair} onClick={() => setSelectedRunPair(pair)}><CheckCircle2 /><span><b>{pair}</b><small>{new Set(assignments.map((member) => canonicalActor(member.name))).size}명 · {new Set(assignments.map((member) => normalizeMatch(member.roleName)).filter(Boolean)).size}배역</small></span></button> })}</div>{!selectedRunPair && availableRunPairs.length > 0 && <p className="run-pair-required"><AlertTriangle /> 런을 시작할 페어를 선택해주세요.</p>}{selectedRunPair && <div className="run-participant-picker"><div><b>이번 런 참여 배우</b><small>{runFeedbackActors.length}/{runPairAllActors.length}명 선택</small></div><div>{runPairAllActors.map((member) => { const selected = runParticipantChoices[runParticipantKey(member.name)] !== false; return <button type="button" className={selected ? 'selected' : ''} aria-pressed={selected} key={canonicalActor(member.name)} onClick={() => toggleRunParticipant(member.name)}><CheckCircle2 /><span><b>{member.name}</b><small>{member.groupedMembers?.map((entry) => entry.roleName).filter(Boolean).join(' · ') || member.roleName || '배역 미정'}</small></span></button> })}</div></div>}{selectedRunPair && <div className="run-pair-roster"><div><b>{selectedRunPair} 선택 캐스팅</b><small>{runPairRoster.length}배역 · {runFeedbackActors.length}명</small></div>{runPairRoster.map((role) => <article key={role.key}><strong>{role.roleName}</strong><span>{role.assignments.map((member) => member.name).join(' · ')}</span></article>)}</div>}{selectedRunPair && !runFeedbackActors.length && <p className="run-pair-required"><AlertTriangle /> 참여 배우를 한 명 이상 선택해주세요.</p>}{!availableRunPairs.length && <small>배우 탭에서 A페어·B페어와 캐스팅을 먼저 등록해주세요.</small>}</section>}
+      {tab === 'show' && <RunControl session={runSession} elapsed={runElapsed} history={runHistory} current={current} firstScene={firstRunScene} firstProps={firstRunProps} firstCostumes={firstRunCostumes} pairName={selectedRunPair} start={startFullRun} finish={goNextWithTiming} enabled={showController && Boolean(selectedRunPair) && runFeedbackActors.length > 0} isLast={!next} />}
       {tab === 'show' && !feedbackRunId && feedbackStatus && <p className="notice">{feedbackStatus}</p>}
       {tab === 'show' && !runSession && !!runHistory.length && <RunHistory runs={runHistory} />}
       {tab === 'show' && feedbackRunId && <form className="run-feedback-panel" onSubmit={submitRunFeedback}><div><span>PRIVATE FEEDBACK</span><h2>런 피드백 보내기</h2><p>한 배우가 여러 배역을 맡아도 입력칸은 하나이며, 계정에서 배우를 선택한 사람에게만 전달돼요.</p></div><div className="run-feedback-list">{feedbackRecipients.map((member) => { const actorKey = canonicalActor(member.name); return <label key={actorKey}><span><UserRound /><b>{member.name}</b><small>{member.roleName || '배역 미정'}{selectedRunPair ? ` · ${selectedRunPair}` : ''}</small></span><textarea value={feedbackDrafts[actorKey] || ''} onChange={(event) => setFeedbackDrafts((current) => ({ ...current, [actorKey]: event.target.value }))} placeholder={`${member.name} 배우에게 전달할 피드백`} /></label> })}</div>{feedbackRecipients.length < runFeedbackActors.length && <p className="notice">배우 선택을 완료하지 않은 {runFeedbackActors.length - feedbackRecipients.length}명은 개인 수신 계정이 없어 제외했어요.</p>}{feedbackStatus && <p className="notice">{feedbackStatus}</p>}<div className="run-feedback-actions"><button type="button" onClick={() => setFeedbackRunId('')}>나중에</button><button className="primary" disabled={!feedbackRecipients.length}><Upload size={16} /> 개인 피드백 전달</button></div></form>}
@@ -4233,11 +4289,13 @@ function buildActorCostumeChanges(scenes, assignments) {
     byActor.forEach((members, actorKey) => {
       const actor = members[0]?.name || '배우 미정'
       const role = [...new Set(members.map((member) => member.roleName?.trim()).filter(Boolean))].join(' · ') || '배역 미정'
-      const matchedCostumes = costumes.filter((costume) => members.some((member) => assignmentMatches(costume.role, member)))
-      const costume = [...new Set(matchedCostumes.map((item) => item.name).filter(Boolean))].join(' · ') || '의상 미지정'
       const previous = previousByActor.get(actorKey)
+      const roleChanged = Boolean(previous) && normalizeMatch(previous.role) !== normalizeMatch(role)
+      const matchedCostumes = costumes.filter((costume) => members.some((member) => assignmentMatches(costume.role, member)))
+      const explicitCostume = [...new Set(matchedCostumes.map((item) => item.name).filter(Boolean))].join(' · ')
+      const costume = explicitCostume || (previous && !roleChanged ? previous.costume : `${role} 의상`)
       if (previous && (normalizeMatch(previous.role) !== normalizeMatch(role) || normalizeMatch(previous.costume) !== normalizeMatch(costume))) {
-        changes.push({ sceneNo: scene.scene_no, actor, role, costume, previousRole: previous.role, previousCostume: previous.costume, roleChanged: normalizeMatch(previous.role) !== normalizeMatch(role), costumeChanged: normalizeMatch(previous.costume) !== normalizeMatch(costume) })
+        changes.push({ sceneNo: scene.scene_no, actor, role, costume, previousRole: previous.role, previousCostume: previous.costume, roleChanged, costumeChanged: normalizeMatch(previous.costume) !== normalizeMatch(costume) })
       }
       previousByActor.set(actorKey, { role, costume, sceneNo: scene.scene_no })
     })
