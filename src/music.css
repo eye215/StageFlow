@@ -25,3 +25,35 @@
 .audio-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1; font-size: 12px; }
 .audio-row audio { width: 100%; height: 36px; }
 @media(max-width:480px){.segmented-five button{font-size:10px}.music-scene-head{padding:13px}.import-result-head .compact{padding:10px 11px}}
+.track-delete-confirm {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  padding: 10px;
+  border: 1px solid rgba(255, 92, 132, .28);
+  border-radius: 13px;
+  background: rgba(255, 73, 118, .08);
+}
+
+.track-delete-confirm > span { display: grid; min-width: 0; gap: 2px; }
+.track-delete-confirm b { color: #ffd9e3; font-size: 11px; }
+.track-delete-confirm small { color: #a98b97; font-size: 9px; line-height: 1.4; }
+.track-delete-confirm button {
+  min-height: 35px;
+  padding: 0 10px;
+  border: 1px solid #3a4560;
+  border-radius: 10px;
+  background: #161f33;
+  color: #b9c2d5;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.track-delete-confirm button.danger { border-color: #8d3853; background: #70223b; color: #ffe1e9; }
+
+@media (max-width: 390px) {
+  .track-delete-confirm { grid-template-columns: minmax(0, 1fr) auto; }
+  .track-delete-confirm > span { grid-column: 1 / -1; }
+}

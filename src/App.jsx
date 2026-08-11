@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, ExternalLink, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin,
+  AlertTriangle, ArrowDown, ArrowUp, Bell, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock3, Combine, Download, ExternalLink, FileAudio, FileSpreadsheet, FileText, Home, ListChecks, ListMusic, MapPin, MessageCircle,
   MoreHorizontal, Music, Package, Pause, Pencil, Play, Plus, RotateCcw, Save, Search, Settings, Shirt, Sparkles, Square, Theater, Timer, Trash2, Upload, UserRound, Users, WandSparkles, X,
 } from 'lucide-react'
 import { supabase } from './supabase'
+import DialoguePractice from './DialoguePractice'
 import './auth.css'
 import './import.css'
 import './music.css'
@@ -45,6 +46,7 @@ import './source-reanalyze.css'
 import './import-flow-override.css'
 import './install-app.css'
 import './debug-fixes.css'
+import './dialogue-practice.css'
 let pdfRuntimePromise
 async function loadPdfRuntime() {
   if (!pdfRuntimePromise) {
@@ -1445,21 +1447,50 @@ export default function App() {
   }
 
   async function deleteMusicFile(file) {
-    if (!window.confirm(`${cleanStoredFileName(file.name)} 음악파일을 삭제할까요?`)) return
+    const productionId = selected?.id
+    const expectedPrefix = `${workspace.id}/${productionId}/music/`
+    if (!productionId || selectedIdRef.current !== productionId) {
+      setNotice('선택한 공연을 다시 확인한 뒤 음악을 삭제해주세요.')
+      return false
+    }
+    if (!file?.path || !file.path.startsWith(expectedPrefix)) {
+      setNotice('이 공연의 음악 경로가 아니어서 삭제를 중단했어요.')
+      return false
+    }
     setUploadingMusic(true)
     try {
       const { error } = await supabase.storage.from('stageflow-files').remove([file.path])
-      if (error) setNotice(`음악 삭제 실패: ${error.message}`)
-      else {
-        const productionId = selected.id
-        const next = Object.fromEntries(Object.entries(musicByScene).map(([sceneNo, files]) => [sceneNo, files.filter((item) => item.path !== file.path)]))
-        try { await queueMusicOrderSave(productionId, next) } catch { /* 목록 재조회로 정리합니다. */ }
-        const { error: playbackError } = await supabase.from('production_playback').delete().eq('production_id', productionId).eq('file_path', file.path)
-        await loadMusic(productionId, scenes)
-        setNotice(playbackError && !isMissingBackendObject(playbackError, 'production_playback')
-          ? `음악은 삭제했지만 공유 재생 상태 정리에 실패했어요: ${playbackError.message}`
-          : '음악파일을 삭제했어요.')
+      if (error) throw error
+
+      const separator = file.path.lastIndexOf('/')
+      const parentPath = file.path.slice(0, separator)
+      const storedName = file.path.slice(separator + 1)
+      const remaining = await listAllStorageEntries(parentPath, { sortBy: { column: 'name', order: 'asc' } })
+      if (remaining.some((item) => item.id && item.name === storedName)) {
+        throw new Error('파일이 서버에 남아 있어요. 이 공연의 음악 삭제 권한을 확인해주세요.')
       }
+
+      const next = Object.fromEntries(Object.entries(musicByScene).map(([sceneNo, files]) => [sceneNo, files.filter((item) => item.path !== file.path)]))
+      if (selectedIdRef.current === productionId) setMusicByScene(next)
+      const warnings = []
+      try { await queueMusicOrderSave(productionId, next) }
+      catch (orderError) { warnings.push(`재생 순서 저장: ${orderError.message}`) }
+
+      const { error: playbackError } = await supabase.from('production_playback').delete().eq('production_id', productionId).eq('file_path', file.path)
+      if (playbackError && !isMissingBackendObject(playbackError, 'production_playback')) warnings.push(`공유 재생 상태: ${playbackError.message}`)
+      if (selectedIdRef.current === productionId) {
+        await loadMusic(productionId, scenes)
+        setNotice(warnings.length
+          ? `${cleanStoredFileName(file.name)} 파일은 삭제했어요. ${warnings.join(' / ')}`
+          : `${cleanStoredFileName(file.name)} 음악파일을 삭제했어요.`)
+      }
+      return true
+    } catch (error) {
+      if (selectedIdRef.current === productionId) {
+        await loadMusic(productionId, scenes)
+        setNotice(`음악 삭제 실패: ${error.message || '삭제 권한과 네트워크 연결을 확인해주세요.'}`)
+      }
+      return false
     } finally {
       setUploadingMusic(false)
     }
@@ -2756,6 +2787,7 @@ function ProductionView(props) {
   const [actFilter, setActFilter] = useState('전체')
   const [sceneDetailId, setSceneDetailId] = useState('')
   const [sceneEditingId, setSceneEditingId] = useState('')
+  const [dialogueInitialScene, setDialogueInitialScene] = useState(null)
   const [moreOpen, setMoreOpen] = useState(false)
   const [briefingMemberId, setBriefingMemberId] = useState(() => window.localStorage.getItem(`stageflow-briefing-${production.id}`) || '')
   const [personalReady, setPersonalReady] = useState(() => {
@@ -3121,7 +3153,7 @@ function ProductionView(props) {
         : sceneEditing
           ? <SceneEditPage scene={sceneEditing} update={updateScene} back={() => setSceneEditingId('')} />
           : sceneDetail
-            ? <SceneDetailPage scene={sceneDetail} scenes={scenes} musicFiles={musicByScene[sceneDetail.scene_no] || []} edit={() => setSceneEditingId(sceneDetail.id)} remove={async () => { await deleteScene(sceneDetail.id); setSceneDetailId('') }} reorderMusic={reorderMusic} moveMusic={moveMusicFile} removeMusic={deleteMusicFile} musicLoading={uploadingMusic} openMusic={() => setTab('music')} back={() => setSceneDetailId('')} />
+            ? <SceneDetailPage scene={sceneDetail} scenes={scenes} musicFiles={musicByScene[sceneDetail.scene_no] || []} edit={() => setSceneEditingId(sceneDetail.id)} remove={async () => { await deleteScene(sceneDetail.id); setSceneDetailId('') }} reorderMusic={reorderMusic} moveMusic={moveMusicFile} removeMusic={deleteMusicFile} musicLoading={uploadingMusic} openMusic={() => setTab('music')} practiceDialogue={() => { setDialogueInitialScene(sceneDetail.scene_no); setTab('dialogue') }} back={() => setSceneDetailId('')} />
         : <>
           <div className="section-heading"><div><p className="eyebrow">SCENES</p><h2>장면 관리</h2></div><button className="primary compact" onClick={() => setShowForm(true)}><Plus size={18} /> 장면</button></div>
           {!!scenes.length && <div className="scene-tools"><label><Search size={17} /><input value={sceneQuery} onChange={(event) => setSceneQuery(event.target.value)} placeholder="장면·배역·소품 검색" /></label><div><button className={actFilter === '전체' ? 'active' : ''} onClick={() => setActFilter('전체')}>전체</button>{actNumbers.map((act) => <button className={Number(actFilter) === act ? 'active' : ''} key={act} onClick={() => setActFilter(act)}>ACT {act}</button>)}</div><span>{visibleScenes.length}/{scenes.length}개 장면</span></div>}
@@ -3137,6 +3169,7 @@ function ProductionView(props) {
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
       {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} moveMusic={moveMusicFile} loading={uploadingMusic} />}
+      {tab === 'dialogue' && <DialoguePractice key={`${production.id}-${dialogueInitialScene ?? 'all'}`} workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} session={session} draftText={importText} initialSceneNo={dialogueInitialScene} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
       {tab === 'show' && next && <section className="team-readiness"><div><Users /><span><b>다음 장면 배우 준비</b><small>{next.scene_no}. {next.title}</small></span><strong>{upcomingReadyCount}/{upcomingCast.length}</strong></div><div className="team-ready-list">{upcomingCast.map((member) => <span className={personalReady[`${member.id}-${next.scene_no}`] ? 'ready' : ''} key={member.id}><CheckCircle2 />{member.roleName || member.name}</span>)}</div></section>}
       {tab === 'show' && <div className="show-system-status"><p className="readiness-sync"><span className="sync-dot" />{readinessSyncedAt ? `준비 상태 · ${readinessSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '팀 준비 상태 연결 중…'}</p><p className={showCursorLoaded ? 'cursor-sync active' : 'cursor-sync'}><span />{showCursorSyncedAt ? `장면 동기화 · ${showCursorSyncedAt.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '장면 연결 중…'}</p><p className={wakeLockActive ? 'wake-lock active' : 'wake-lock'}><span />{wakeLockActive ? '화면 꺼짐 방지 중' : '화면 잠금 방지 미지원'}</p></div>}
@@ -3165,7 +3198,7 @@ function ProductionView(props) {
       </section>}
       {notice && <p className="notice">{notice}</p>}
     </main>
-    {moreOpen && <ProductionMoreSheet active={tab} setup={setupState} close={() => setMoreOpen(false)} choose={(value) => { setTab(value); setMoreOpen(false) }} />}
+    {moreOpen && <ProductionMoreSheet active={tab} setup={setupState} close={() => setMoreOpen(false)} choose={(value) => { if (value === 'dialogue') setDialogueInitialScene(null); setTab(value); setMoreOpen(false) }} />}
   </div>
 }
 
@@ -3460,6 +3493,7 @@ function ProductionSetupProgress({ state, open }) {
 
 function ProductionMoreSheet({ active, setup, close, choose }) {
   const items = [
+    { id: 'dialogue', group: '배우 연습', label: '대사 연습하기', description: '대본·배역 자동 연결과 상대 대사', icon: <MessageCircle /> },
     { id: 'import', group: '공연 설정', label: '대본·자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
     { id: 'settings', group: '공연 설정', label: '기본 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
     { id: 'props', group: '공연 구성', label: '소품', description: '장면별로 챙길 소품', icon: <Package /> },
@@ -3473,6 +3507,7 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
   const visibleItems = items.filter((item) => {
     if (['settings', 'import'].includes(item.id)) return true
     if (['materials', 'backup'].includes(item.id)) return setup.script
+    if (item.id === 'dialogue') return setup.script
     if (item.id === 'team') return setup.script && setup.actors
     return setup.casting
   })
@@ -3570,9 +3605,14 @@ function ScenePeopleRow({ label, tone, people }) {
   return <div className={`scene-people-row ${tone}`}><div><Users /><strong>{label}</strong><span>{people.length}</span></div>{people.length ? <p>{people.map((person) => <em key={person}>{person}</em>)}</p> : <small>등록 없음</small>}</div>
 }
 function MusicTrackRow({ file, files, index, sceneNo, scenes = [], reorder, moveMusic, remove, loading, allowSceneChange = false }) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const moveOrder = (direction) => {
     const target = files[index + direction]
     if (target) reorder(sceneNo, file.path, target.path)
+  }
+  async function confirmRemove() {
+    const removed = await remove(file)
+    if (!removed) setConfirmDelete(false)
   }
   return <div className="audio-row" data-track-path={file.path}>
     <div className="audio-file-head">
@@ -3583,8 +3623,9 @@ function MusicTrackRow({ file, files, index, sceneNo, scenes = [], reorder, move
         <button type="button" disabled={loading || index === 0} onClick={() => moveOrder(-1)} aria-label="한 칸 위로"><ArrowUp /></button>
         <button type="button" disabled={loading || index === files.length - 1} onClick={() => moveOrder(1)} aria-label="한 칸 아래로"><ArrowDown /></button>
       </div>
-      <button className="icon-button danger" type="button" disabled={loading} onClick={() => remove(file)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button>
+      <button className={confirmDelete ? 'icon-button danger active' : 'icon-button danger'} type="button" disabled={loading} onClick={() => setConfirmDelete((value) => !value)} aria-label={`${cleanStoredFileName(file.name)} 삭제`}><Trash2 size={15} /></button>
     </div>
+    {confirmDelete && <div className="track-delete-confirm"><span><b>이 음악을 삭제할까요?</b><small>공연의 모든 장면과 공유 플레이어에서 빠져요.</small></span><button type="button" disabled={loading} onClick={() => setConfirmDelete(false)}>취소</button><button className="danger" type="button" disabled={loading} onClick={() => void confirmRemove()}>{loading ? '삭제 중…' : '삭제'}</button></div>}
     {allowSceneChange && <label className="track-scene-select"><span>연결 장면</span><select value={sceneNo} disabled={loading} onChange={(event) => moveMusic(file, sceneNo, event.target.value)}>{scenes.map((scene) => <option key={scene.id} value={scene.scene_no}>{scene.scene_no}. {scene.title}</option>)}</select></label>}
     {file.url && <audio controls preload="none" src={file.url} />}
   </div>
@@ -3604,7 +3645,7 @@ function SceneCard({ scene, musicFiles = [], open, moveUp, moveDown, canMoveUp, 
     <div className="scene-order-controls" aria-label={`${scene.title} 순서 변경`}><button type="button" disabled={orderLoading || !canMoveUp} onClick={moveUp} aria-label="장면을 한 칸 위로"><ArrowUp /></button><button type="button" disabled={orderLoading || !canMoveDown} onClick={moveDown} aria-label="장면을 한 칸 아래로"><ArrowDown /></button></div>
   </article>
 }
-function SceneDetailPage({ scene, scenes, musicFiles, edit, remove, reorderMusic, moveMusic, removeMusic, musicLoading, openMusic, back }) {
+function SceneDetailPage({ scene, scenes, musicFiles, edit, remove, reorderMusic, moveMusic, removeMusic, musicLoading, openMusic, practiceDialogue, back }) {
   const sections = parseSceneSummarySections(scene.summary)
   return <EntityEditorPage eyebrow={`ACT ${scene.act_no} · SCENE ${scene.scene_no}`} title={scene.title} description="배역·음악·소품과 장면 메모를 한곳에서 확인합니다." back={back}>
     <div className="scene-detail-page">
@@ -3616,6 +3657,7 @@ function SceneDetailPage({ scene, scenes, musicFiles, edit, remove, reorderMusic
       <SceneMusicEditor scene={scene} scenes={scenes} files={musicFiles} reorder={reorderMusic} moveMusic={moveMusic} remove={removeMusic} loading={musicLoading} openMusic={openMusic} />
       {sections.props.length > 0 && <section className="scene-prop-section"><div className="scene-detail-title"><Package /><strong>소품·대도구</strong><span>{sections.props.length}</span></div><div>{sections.props.map((item, index) => <article key={`${item.name}-${index}`}><span className={item.kind === '대도구' ? 'set' : ''}>{item.kind}</span><div><b>{item.name}</b><small><em>IN</em>{item.inBy || '미정'} <i /> <em>OUT</em>{item.outBy || '미정'}</small>{item.note && <p>{item.note}</p>}</div></article>)}</div></section>}
       {(sections.status.length > 0 || sections.other.length > 0) && <section className="scene-notes-section"><div className="scene-detail-title"><FileText /><strong>연습 메모</strong></div>{[...sections.status, ...sections.other].map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</section>}
+      <button className="scene-dialogue-practice" type="button" onClick={practiceDialogue}><MessageCircle /><span><b>이 장면 대사 연습</b><small>배역에 맞춰 상대 대사를 자동으로 읽어요</small></span><ChevronRight /></button>
       <div className="scene-hub-actions"><button onClick={edit}><Pencil /> 정보 수정</button><button className="danger" onClick={remove}><Trash2 /> 장면 삭제</button></div>
     </div>
   </EntityEditorPage>
