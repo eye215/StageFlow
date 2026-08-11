@@ -96,6 +96,35 @@ function extractPdfPageLayout(content) {
   return { text: rows.map((row) => row.text).join('\n'), rows, tableRows: rows.filter((row) => row.cells.length >= 2) }
 }
 
+function mergePdfPageText(embeddedText = '', ocrText = '') {
+  const original = String(embeddedText || '').trim()
+  const recognized = String(ocrText || '').trim()
+  if (!recognized.replace(/\s/g, '').length) return original
+  if (original.replace(/\s/g, '').length < 12) return recognized
+  const usefulCharacterRatio = (recognized.match(/[가-힣A-Za-z0-9]/g) || []).length / Math.max(1, recognized.replace(/\s/g, '').length)
+  if (usefulCharacterRatio < 0.55) return original
+  const normalizeLine = (value) => normalizeMatch(String(value || '').replace(/[^가-힣A-Za-z0-9 ]/g, ''))
+  const originalLines = original.split(/\r?\n/).map((line) => ({ raw: line.trim(), key: normalizeLine(line) })).filter((line) => line.key)
+  const bigrams = (value) => {
+    const compact = String(value || '').replace(/\s/g, '')
+    if (compact.length < 2) return new Set([compact])
+    return new Set([...Array(compact.length - 1)].map((_, index) => compact.slice(index, index + 2)))
+  }
+  const similar = (left, right) => {
+    if (!left || !right) return false
+    if (left.includes(right) || right.includes(left)) return true
+    const a = bigrams(left); const b = bigrams(right)
+    let intersection = 0
+    a.forEach((item) => { if (b.has(item)) intersection += 1 })
+    return intersection / Math.max(1, Math.min(a.size, b.size)) >= 0.72
+  }
+  const additions = recognized.split(/\r?\n/).map((line) => line.trim()).filter((line) => {
+    const key = normalizeLine(line)
+    return key.length >= 3 && !originalLines.some((candidate) => similar(candidate.key, key))
+  })
+  return additions.length ? `${original}\n${additions.join('\n')}` : original
+}
+
 function isMissingBackendObject(error, objectName = '') {
   const message = String(error?.message || error || '')
   const mentionsObject = !objectName || message.toLowerCase().includes(String(objectName).toLowerCase())
@@ -163,6 +192,17 @@ async function functionErrorMessage(error, data, fallback) {
 const emptyProduction = { title: '', venue: '', performance_start_date: '' }
 const emptyScene = { title: '', act_no: 1, scene_no: 1, summary: '' }
 
+function pendingRoleClaimKey(userId) {
+  return `stageflow:pending-role-claim:${userId}`
+}
+
+function clearInviteLocation() {
+  const url = new URL(window.location.href)
+  url.searchParams.delete('invite')
+  url.searchParams.delete('production')
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 export default function App() {
   const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -187,7 +227,6 @@ export default function App() {
   const [importRows, setImportRows] = useState([])
   const [pdfExtractionReport, setPdfExtractionReport] = useState(null)
   const [importingPdf, setImportingPdf] = useState(false)
-  const [aiAnalyzing, setAiAnalyzing] = useState(false)
   const [pendingMusic, setPendingMusic] = useState([])
   const [musicByScene, setMusicByScene] = useState({})
   const [uploadingMusic, setUploadingMusic] = useState(false)
@@ -215,6 +254,17 @@ export default function App() {
   const homeLoadIdRef = useRef('')
   const musicOrderSaveRef = useRef(Promise.resolve())
   const musicOrderGenerationRef = useRef(0)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('invite')
+    if (!token) return
+    window.localStorage.setItem('stageflow:pending-invite', JSON.stringify({
+      token,
+      productionId: params.get('production') || '',
+      savedAt: new Date().toISOString(),
+    }))
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -252,6 +302,9 @@ export default function App() {
     setCastMembers([])
     setCastPairs([])
     setPropItems([])
+    setImportText('')
+    setImportRows([])
+    setPdfExtractionReport(null)
     if (!selected) return
     void loadScenes(selected.id)
     void loadCastData(selected.id)
@@ -319,8 +372,12 @@ export default function App() {
     setLoading(true)
     try {
       const inviteParams = new URLSearchParams(window.location.search)
-      const inviteToken = inviteParams.get('invite')
-      const requestedProductionId = inviteParams.get('production') || ''
+      let savedInvite = null
+      try { savedInvite = JSON.parse(window.localStorage.getItem('stageflow:pending-invite') || 'null') } catch { /* 손상된 초대 임시값은 무시합니다. */ }
+      const inviteToken = inviteParams.get('invite') || savedInvite?.token || ''
+      const pendingClaimStorageKey = pendingRoleClaimKey(session.user.id)
+      const pendingClaimProductionId = window.localStorage.getItem(pendingClaimStorageKey) || ''
+      const requestedProductionId = inviteParams.get('production') || savedInvite?.productionId || pendingClaimProductionId
       let joinedWorkspaceId = ''
       let joinedProductionId = ''
       if (inviteToken) {
@@ -328,6 +385,7 @@ export default function App() {
         if (joinError) {
           setInviteProductionId('')
           setShowRoleClaim(false)
+          if (/만료|유효하지|invalid|uuid/i.test(String(joinError.message || ''))) window.localStorage.removeItem('stageflow:pending-invite')
           setNotice(`팀 초대 확인 실패: ${joinError.message}`)
         }
         else if (joinedProduction) {
@@ -358,18 +416,34 @@ export default function App() {
             setNotice('초대된 공연을 확인하지 못했어요. 공연별 초대 DB 업데이트가 필요합니다.')
           } else {
             setInviteProductionId(joinedProductionId)
+            setShowRoleClaim(true)
             setDefaultProductionId(joinedProductionId)
             window.localStorage.setItem('stageflow:default-production', joinedProductionId)
+            window.localStorage.setItem(pendingClaimStorageKey, joinedProductionId)
             const inviteGrantKey = `stageflow:invited-productions:${session.user.id}`
             let rememberedInvites = []
             try { rememberedInvites = JSON.parse(window.localStorage.getItem(inviteGrantKey) || '[]') } catch { /* reset invalid local invite cache */ }
             if (!Array.isArray(rememberedInvites)) rememberedInvites = []
             window.localStorage.setItem(inviteGrantKey, JSON.stringify([...new Set([...rememberedInvites, joinedProductionId])]))
+            window.localStorage.removeItem('stageflow:pending-invite')
+            clearInviteLocation()
           }
         } else {
           setInviteProductionId('')
           setShowRoleClaim(false)
           setNotice('초대 링크에서 공연 정보를 찾지 못했어요. 새 초대 링크를 받아주세요.')
+        }
+      } else if (pendingClaimProductionId) {
+        const pendingLookup = await supabase.from('productions').select('id, workspace_id').eq('id', pendingClaimProductionId).maybeSingle()
+        if (pendingLookup.data) {
+          joinedProductionId = pendingLookup.data.id
+          joinedWorkspaceId = pendingLookup.data.workspace_id
+          setInviteProductionId(joinedProductionId)
+          setShowRoleClaim(true)
+        } else {
+          window.localStorage.removeItem(pendingClaimStorageKey)
+          setInviteProductionId('')
+          setShowRoleClaim(false)
         }
       }
       let workspaceQuery = supabase
@@ -394,7 +468,10 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (workspace && inviteProductionId && showRoleClaim) loadInviteRoles(inviteProductionId)
+    if (workspace && inviteProductionId && showRoleClaim) {
+      setInviteCastMembers([])
+      loadInviteRoles(inviteProductionId)
+    }
     // 초대 공연이 실제로 변경될 때만 다시 읽습니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace, inviteProductionId, showRoleClaim])
@@ -428,27 +505,65 @@ export default function App() {
     catch (error) { if (error?.name !== 'AbortError') setNotice(`초대 링크 공유 실패: ${error.message}`) }
   }
   async function claimInviteRole(memberId) {
-    const member = inviteCastMembers.find((item) => item.id === memberId && isCastAssignment(item))
-    if (!member || (member.userId && member.userId !== session.user.id)) return
+    const previewMember = inviteCastMembers.find((item) => item.id === memberId && isCastAssignment(item))
+    if (!previewMember || !inviteProductionId) return false
     setBusy(true)
     try {
+      // 초대 화면이 열린 뒤 관리자가 캐스팅을 수정했을 수 있으므로 저장 직전에 최신 파일을 다시 읽습니다.
+      const { data: latestFile, error: latestError } = await supabase.storage.from('stageflow-files').download(castDataPath(inviteProductionId))
+      if (latestError || !latestFile) throw latestError || new Error('배우·배역 자료를 찾지 못했어요.')
+      const payload = JSON.parse(await latestFile.text())
+      const latestMembers = Array.isArray(payload.members)
+        ? ensureActorRosterRecords(payload.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment))
+        : []
+      const member = latestMembers.find((item) => item.id === memberId && isCastAssignment(item))
+        || latestMembers.find((item) => isCastAssignment(item)
+          && canonicalActor(item.name) === canonicalActor(previewMember.name)
+          && normalizeMatch(item.roleName) === normalizeMatch(previewMember.roleName)
+          && normalizeMatch(item.subRoleName) === normalizeMatch(previewMember.subRoleName)
+          && normalizeMatch(item.pairGroup) === normalizeMatch(previewMember.pairGroup))
+      if (!member) throw new Error('선택한 배역이 변경되었어요. 목록을 새로 불러와 다시 선택해주세요.')
       const actorKey = canonicalActor(member.name)
+      const actorAssignments = latestMembers.filter((item) => isCastAssignment(item) && canonicalActor(item.name) === actorKey)
+      if (actorAssignments.some((item) => item.userId && item.userId !== session.user.id)) {
+        throw new Error('이 배우의 배역은 다른 팀원이 먼저 선택했어요.')
+      }
       const now = new Date().toISOString()
-      const next = inviteCastMembers.map((item) => isCastAssignment(item) && canonicalActor(item.name) === actorKey
+      const next = latestMembers.map((item) => isCastAssignment(item) && canonicalActor(item.name) === actorKey
         ? { ...item, userId: session.user.id, email: session.user.email, claimedAt: now }
         : item)
       const pairs = [...new Set(next.map((item) => item.pairGroup?.trim()).filter(Boolean))]
       const body = new Blob([JSON.stringify({ version: 8, model: 'role-pair-actor-roster-song-choreography', members: next, pairs, updatedAt: now }, null, 2)], { type: 'application/json' })
       const { error } = await supabase.storage.from('stageflow-files').upload(castDataPath(inviteProductionId), body, { upsert: true, contentType: 'application/json' })
-      if (error) return setNotice(`배역 선택 실패: ${error.message}`)
+      if (error) throw error
       setInviteCastMembers(next)
+      if (selectedIdRef.current === inviteProductionId) {
+        setCastMembers(next)
+        setCastPairs(pairs)
+      }
       window.localStorage.setItem(`stageflow-briefing-${inviteProductionId}`, memberId)
+      window.localStorage.removeItem(pendingRoleClaimKey(session.user.id))
       setShowRoleClaim(false)
-      window.history.replaceState({}, '', window.location.pathname)
-      setNotice(`${member.name} 배우로 공연 참가가 완료됐어요.`)
+      setInviteProductionId('')
+      clearInviteLocation()
+      const roleLabel = [member.roleName, member.subRoleName].filter(Boolean).join(' › ')
+      setNotice(`${roleLabel} · ${member.name}${member.pairGroup ? ` · ${member.pairGroup}` : ''} 선택을 저장했어요.`)
+      return true
+    } catch (error) {
+      setNotice(`배역 선택 실패: ${error.message || '최신 배우·배역 정보를 확인해주세요.'}`)
+      await loadInviteRoles(inviteProductionId)
+      return false
     } finally {
       setBusy(false)
     }
+  }
+
+  function deferInviteRole() {
+    window.localStorage.removeItem(pendingRoleClaimKey(session.user.id))
+    setShowRoleClaim(false)
+    setInviteProductionId('')
+    clearInviteLocation()
+    setNotice('공연에는 참가했어요. 배역은 더보기의 참여 팀원에서 나중에 선택할 수 있어요.')
   }
 
   async function createWorkspace(event) {
@@ -878,7 +993,7 @@ export default function App() {
         ? supabase.storage.from('stageflow-files').upload(`${workspace.id}/${selected.id}/imports/${safeStorageFileName(file.name)}`, file, { upsert: false, contentType: 'application/pdf' })
         : Promise.resolve({ error: null })
       const pdfjs = await loadPdfRuntime()
-      const pdf = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
       const pageTexts = Array(pdf.numPages).fill('')
       const ocrPageNumbers = []
       const tableRows = []
@@ -886,19 +1001,33 @@ export default function App() {
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
         setNotice(`PDF 텍스트 확인 중 · ${pageNo}/${pdf.numPages}쪽`)
         const page = await pdf.getPage(pageNo)
-        const content = await page.getTextContent()
-        const layout = extractPdfPageLayout(content)
-        textRows += layout.rows.length
-        layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
-        pageTexts[pageNo - 1] = layout.text
-        // 표·이미지 안 글자도 놓치지 않도록 모든 페이지를 저해상도로
-        // OCR하고, 내장 텍스트보다 결과가 부실하면 원문 텍스트를 유지합니다.
-        ocrPageNumbers.push(pageNo)
-        page.cleanup?.()
+        try {
+          const content = await page.getTextContent()
+          const layout = extractPdfPageLayout(content)
+          textRows += layout.rows.length
+          layout.tableRows.forEach((row) => tableRows.push({ page: pageNo, cells: row.cells }))
+          pageTexts[pageNo - 1] = layout.text
+          // 내장 텍스트는 즉시 반영하되 표·이미지 속 글자까지 놓치지 않도록
+          // 모든 페이지를 저해상도 OCR 보강 대상으로 보냅니다.
+          ocrPageNumbers.push(pageNo)
+        } catch {
+          // 손상된 텍스트 레이어도 이미지 렌더링이 가능하면 OCR로 복구합니다.
+          ocrPageNumbers.push(pageNo)
+        } finally {
+          page.cleanup?.()
+        }
+      }
+      const embeddedText = pageTexts.map((pageText, index) => `--- PAGE ${index + 1} ---\n${pageText}`).join('\n')
+      const embeddedCharacterCount = embeddedText.replace(/--- PAGE \d+ ---/g, '').replace(/\s/g, '').length
+      if (embeddedCharacterCount >= Math.max(20, pdf.numPages * 4)) {
+        const embeddedParsed = linkImportedRowsToRegisteredCast(parseProductionSheet(embeddedText), embeddedText, castMembers)
+        setImportText(embeddedText)
+        setImportRows(embeddedParsed)
+        setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: embeddedCharacterCount, textRows, tableRows: tableRows.length, ocrPages: 0, preview: tableRows.slice(0, 8) })
       }
       let ocrPages = 0
       if (ocrPageNumbers.length) {
-        setNotice(`스캔 페이지 ${ocrPageNumbers.length}쪽 · 저해상도 한국어 OCR 준비 중…`)
+        setNotice(`전체 페이지 ${ocrPageNumbers.length}쪽 · 저해상도 OCR로 누락 글자를 보강하는 중…`)
         const { createWorker } = await import('tesseract.js')
         let activeOcrPage = 0
         let lastProgressStep = -1
@@ -908,7 +1037,7 @@ export default function App() {
             const progressStep = Math.floor((message.progress || 0) * 10)
             if (progressStep === lastProgressStep) return
             lastProgressStep = progressStep
-            setNotice(`스캔 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · ${progressStep * 10}%`)
+            setNotice(`전체 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · ${progressStep * 10}%`)
           },
         })
         await worker.setParameters({
@@ -920,12 +1049,12 @@ export default function App() {
             const pageNo = ocrPageNumbers[index]
             activeOcrPage = index + 1
             lastProgressStep = -1
-            setNotice(`스캔 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · 준비 중`)
+            setNotice(`전체 페이지 OCR · ${activeOcrPage}/${ocrPageNumbers.length}쪽 · 준비 중`)
             const page = await pdf.getPage(pageNo)
             const baseViewport = page.getViewport({ scale: 1 })
-            // Every page is OCRed, but a ~420k-pixel render keeps mobile
-            // memory and recognition time low enough for long scripts.
-            const scale = Math.max(0.48, Math.min(0.85, Math.sqrt(420000 / Math.max(1, baseViewport.width * baseViewport.height))))
+            // 약 520k 픽셀의 저해상도 렌더로 긴 이미지 PDF도 모바일에서
+            // 전체 페이지를 처리할 수 있게 메모리 사용량을 제한합니다.
+            const scale = Math.max(0.5, Math.min(0.9, Math.sqrt(520000 / Math.max(1, baseViewport.width * baseViewport.height))))
             const viewport = page.getViewport({ scale })
             const canvas = document.createElement('canvas')
             canvas.width = Math.ceil(viewport.width)
@@ -938,9 +1067,7 @@ export default function App() {
               const recognized = String(result.data?.text || '').trim()
               const originalText = pageTexts[pageNo - 1]
               if (recognized.replace(/\s/g, '').length >= 8) {
-                const recognizedLength = recognized.replace(/\s/g, '').length
-                const originalLength = originalText.replace(/\s/g, '').length
-                pageTexts[pageNo - 1] = originalLength > recognizedLength * 1.15 ? originalText : recognized
+                pageTexts[pageNo - 1] = mergePdfPageText(originalText, recognized)
                 ocrPages += 1
                 textRows += recognized.split(/\r?\n/).filter((line) => line.trim()).length
               } else pageTexts[pageNo - 1] = originalText
@@ -961,12 +1088,12 @@ export default function App() {
       }
       setImportText(text)
       const { error: archiveError } = await archivePromise
-      const parsed = parseProductionSheet(text)
+      const parsed = linkImportedRowsToRegisteredCast(parseProductionSheet(text), text, castMembers)
       setImportRows(parsed)
       setPdfExtractionReport({ fileName: file.name, pages: pdf.numPages, characters: characterCount, textRows, tableRows: tableRows.length, ocrPages, preview: tableRows.slice(0, 8) })
       const ocrResult = ocrPages ? ` · OCR ${ocrPages}쪽` : ''
       const archiveResult = archiveError ? ' · 원본 저장은 실패했어요' : ''
-      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했어요.${archiveResult}`)
+      setNotice(parsed.length ? `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽고 ${parsed.length}개 장면을 찾았어요. 등록된 배역도 자동 연결했어요.${archiveResult}` : `PDF ${pdf.numPages}쪽${ocrResult}에서 ${characterCount.toLocaleString()}자를 읽었지만 SCENE #번호, 장면 번호 또는 SONG.NN을 찾지 못했어요.${archiveResult}`)
     } catch (error) {
       setPdfExtractionReport(null)
       const message = /password/i.test(error?.name || '') || /password/i.test(error?.message || '')
@@ -993,7 +1120,7 @@ export default function App() {
         return matrix.map((row) => row.map((cell) => String(cell ?? '').replace(/\r?\n/g, ' / ')).join('\t')).join('\n')
       }).filter(Boolean)
       const extracted = sheetTexts.join('\n\n')
-      const parsed = parseProductionSheet(extracted)
+      const parsed = linkImportedRowsToRegisteredCast(parseProductionSheet(extracted), extracted, castMembers)
       setImportText(extracted)
       setImportRows(parsed)
       const { error: archiveError } = await archivePromise
@@ -1007,45 +1134,9 @@ export default function App() {
 
   function analyzeImport(sourceText = importText) {
     setImportText(sourceText)
-    const parsed = parseProductionSheet(sourceText)
+    const parsed = linkImportedRowsToRegisteredCast(parseProductionSheet(sourceText), sourceText, castMembers)
     setImportRows(parsed)
     setNotice(parsed.length ? `${parsed.length}개 장면과 연결 정보를 규칙으로 정리했어요.` : 'SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했어요.')
-  }
-
-  async function analyzeImportWithAI(sourceText = importText) {
-    if (!sourceText.trim()) return
-    setImportText(sourceText)
-    setAiAnalyzing(true)
-    setNotice('AI가 대본의 장면·인물·넘버·소품을 분석하고 있어요…')
-    try {
-      const { data, error } = await supabase.functions.invoke('analyze-production', {
-        body: { text: sourceText.slice(0, 120000), productionTitle: selected.title, productionId: selected.id },
-      })
-      if (error) {
-        const detail = await functionErrorMessage(error, data, 'AI 분석 서버에 연결하지 못했어요.')
-        if (/insufficient_quota|exceeded your current quota|429/i.test(detail)) {
-          applyRuleFallback('AI 한도가 없어 규칙 분석으로 자동 전환했어요.', sourceText)
-        } else if (/OPENAI_API_KEY/i.test(detail)) {
-          applyRuleFallback('AI 키를 사용할 수 없어 규칙 분석으로 자동 전환했어요.', sourceText)
-        } else {
-          applyRuleFallback(`AI 연결이 불안정해 규칙 분석으로 자동 전환했어요. (${detail})`, sourceText)
-        }
-      } else {
-        const parsed = normalizeAiScenes(data?.scenes)
-        setImportRows(parsed)
-        setNotice(parsed.length ? `AI가 ${parsed.length}개 장면과 연결 정보를 정리했어요.` : 'AI 응답에서 장면을 찾지 못했어요.')
-      }
-    } catch (error) {
-      applyRuleFallback(`AI 분석 중 오류가 발생해 규칙 분석으로 전환했어요. (${error.message})`, sourceText)
-    } finally {
-      setAiAnalyzing(false)
-    }
-  }
-
-  function applyRuleFallback(message, sourceText = importText) {
-    const parsed = parseProductionSheet(sourceText)
-    setImportRows(parsed)
-    setNotice(parsed.length ? `${message} ${parsed.length}개 장면을 찾았습니다.` : `${message} SCENE #번호, SONG.NN 또는 장면 표 헤더를 찾지 못했습니다.`)
   }
 
   async function saveImportedScenes(options = {}) {
@@ -1155,14 +1246,35 @@ export default function App() {
         code,
         title,
         sort_order: index,
+        ...(track.notionPageId ? { notion_page_id: track.notionPageId } : {}),
+        ...(track.notionLastEditedAt ? { notion_last_edited_at: track.notionLastEditedAt } : {}),
       })
     })
     const records = [...uniqueRecords.values()]
     if (!records.length) return { ok: false, message: '사운드트랙 장면 연결 없음' }
-    const { data: savedSongs, error } = await supabase
-      .from('soundtracks')
-      .upsert(records, { onConflict: 'production_id,code,title' })
-      .select('id, code, title')
+    const notionPageIds = records.map((record) => record.notion_page_id).filter(Boolean)
+    let existingByNotion = new Map()
+    if (notionPageIds.length) {
+      const { data: existingNotionSongs, error: notionLookupError } = await supabase
+        .from('soundtracks')
+        .select('id, notion_page_id')
+        .eq('production_id', productionId)
+        .in('notion_page_id', notionPageIds)
+      if (notionLookupError) return { ok: false, message: `Notion 사운드트랙 조회 실패: ${notionLookupError.message}` }
+      existingByNotion = new Map((existingNotionSongs || []).map((song) => [song.notion_page_id, song.id]))
+    }
+    const existingNotionRecords = records
+      .filter((record) => record.notion_page_id && existingByNotion.has(record.notion_page_id))
+      .map((record) => ({ ...record, id: existingByNotion.get(record.notion_page_id) }))
+    const generalRecords = records.filter((record) => !record.notion_page_id || !existingByNotion.has(record.notion_page_id))
+    const existingResult = existingNotionRecords.length
+      ? await supabase.from('soundtracks').upsert(existingNotionRecords, { onConflict: 'id' }).select('id, code, title')
+      : { data: [], error: null }
+    const generalResult = generalRecords.length
+      ? await supabase.from('soundtracks').upsert(generalRecords, { onConflict: 'production_id,code,title' }).select('id, code, title')
+      : { data: [], error: null }
+    const error = existingResult.error || generalResult.error
+    const savedSongs = [...(existingResult.data || []), ...(generalResult.data || [])]
     // Older projects may not have the relational migration yet. Summary text remains readable until it is applied.
     if (error) {
       if (!/soundtracks|schema cache|relation/i.test(error.message || '')) console.error('Soundtrack relation save failed', error)
@@ -1512,9 +1624,27 @@ export default function App() {
       const parsed = JSON.parse(await data.text())
       if (selectedIdRef.current !== productionId) return
       const members = Array.isArray(parsed.members) ? ensureActorRosterRecords(parsed.members.flatMap(expandLegacyCastAssignment).map(normalizeCastAssignment)) : []
-      setCastMembers(members)
       const savedPairs = Array.isArray(parsed.pairs) ? parsed.pairs.flatMap(splitPairEntries) : []
-      setCastPairs([...new Set([...savedPairs, ...members.map((member) => member.pairGroup?.trim()).filter(Boolean)])])
+      const pairs = [...new Set([...savedPairs, ...members.map((member) => member.pairGroup?.trim()).filter(Boolean)])]
+      // 대본을 먼저 올리고 배우를 나중에 등록한 기존 공연도 다시 열면
+      // 장면 요약의 배역명과 현재 캐스팅을 자동으로 재연결합니다.
+      const { data: storedScenes, error: sceneError } = await supabase
+        .from('scenes')
+        .select('id, scene_no, title, summary')
+        .eq('production_id', productionId)
+      if (selectedIdRef.current !== productionId) return
+      const linkedMembers = sceneError ? members : mergeCastFromScenes(members, storedScenes || [])
+      const linksChanged = castSceneLinkSignature(linkedMembers) !== castSceneLinkSignature(members)
+      if (linksChanged) {
+        const saved = await persistCastData(linkedMembers, pairs)
+        if (!saved && selectedIdRef.current === productionId) {
+          setCastMembers(members)
+          setCastPairs(pairs)
+        }
+      } else {
+        setCastMembers(members)
+        setCastPairs(pairs)
+      }
     } catch {
       setCastMembers([])
       setCastPairs([])
@@ -1560,7 +1690,8 @@ export default function App() {
     const hasRosterActor = castMembers.some((item) => isActorRoster(item) && canonicalActor(item.name) === canonicalActor(actorName) && normalizeMatch(item.pairGroup) === normalizeMatch(pairGroup))
     const rosterActor = normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'actor_roster', name: actorName, pairGroup, roleName: '', gender: castForm.gender, notes: '' })
     const nextPairs = member.pairGroup && !castPairs.includes(member.pairGroup) ? [...castPairs, member.pairGroup] : castPairs
-    if (await persistCastData([...castMembers, ...(hasRosterActor ? [] : [rosterActor]), member], nextPairs)) {
+    const linkedMembers = mergeCastFromScenes([...castMembers, ...(hasRosterActor ? [] : [rosterActor]), member], scenes)
+    if (await persistCastData(linkedMembers, nextPairs)) {
       setCastForm({ name: '', gender: '미지정', pairGroup: '', roleName: '', subRoleName: '', type: '주연', notes: '' })
       setShowCastForm(false)
       setNotice(`${member.roleName} · ${member.pairGroup}에 ${member.name} 배우를 캐스팅했어요.`)
@@ -1663,7 +1794,7 @@ export default function App() {
       normalizeCastAssignment({ id: crypto.randomUUID(), entityType: 'actor_roster', name: actor, pairGroup: pair, roleName: '' }),
       assignment,
     ]
-    const saved = await persistCastData(next)
+    const saved = await persistCastData(mergeCastFromScenes(next, scenes))
     if (saved) setNotice(`${role} · ${pair}에 ${actor} 배우를 연결했어요.`)
     return saved
   }
@@ -1698,8 +1829,13 @@ export default function App() {
       setNotice('같은 배역·페어·배우 캐스팅이 이미 등록되어 있어요.')
       return false
     }
-    const next = castMembers.map((member) => member.id === id ? candidate : member)
-    const saved = await persistCastData(next)
+    const roleChanged = normalizeMatch(current.roleName) !== normalizeMatch(candidate.roleName)
+      || normalizeMatch(current.subRoleName) !== normalizeMatch(candidate.subRoleName)
+    const next = castMembers.map((member) => member.id === id
+      ? { ...candidate, sceneNumbers: roleChanged ? [] : candidate.sceneNumbers }
+      : member)
+    const linkedNext = mergeCastFromScenes(next, scenes)
+    const saved = await persistCastData(linkedNext)
     if (saved) setNotice(`${String(values.name || '').trim() || '배우'} 정보를 수정했어요.`)
     return saved
   }
@@ -2025,6 +2161,7 @@ export default function App() {
   )
 
   if (selected) return (
+    <>
     <ProductionView
       key={selected.id}
       workspace={workspace} production={selected} updateProduction={updateProduction} scenes={scenes} tab={productionTab}
@@ -2036,7 +2173,6 @@ export default function App() {
       importText={importText} setImportText={setImportText} importRows={importRows} setImportRows={setImportRows}
       pdfExtractionReport={pdfExtractionReport}
       analyzeImport={analyzeImport} saveImportedScenes={saveImportedScenes}
-      analyzeImportWithAI={analyzeImportWithAI} aiAnalyzing={aiAnalyzing}
       readPdf={readPdf} readSpreadsheet={readSpreadsheet} undoLastImport={undoLastImport} importingPdf={importingPdf}
       pendingMusic={pendingMusic} musicByScene={musicByScene}
       organizeMusicFiles={organizeMusicFiles} assignMusicScene={assignMusicScene} uploadOrganizedMusic={uploadOrganizedMusic} deleteMusicFile={deleteMusicFile} reorderMusic={reorderMusic} moveMusicFile={moveMusicFile}
@@ -2057,6 +2193,8 @@ export default function App() {
       createTeamInvite={createTeamInvite}
       changeMyProductionRole={changeMyProductionRole}
     />
+    {showRoleClaim && <RoleClaimSheet production={selected} members={inviteCastMembers} currentUserId={session.user.id} choose={claimInviteRole} dismiss={deferInviteRole} busy={busy} />}
+    </>
   )
 
   return <HomeDashboardV2
@@ -2068,7 +2206,7 @@ export default function App() {
     showForm={showProductionForm} setShowForm={setShowProductionForm}
     productionForm={productionForm} setProductionForm={setProductionForm}
     createProduction={createProduction} busy={busy} createTeamInvite={createTeamInvite}
-    showRoleClaim={showRoleClaim} inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole}
+    showRoleClaim={showRoleClaim} inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole} deferInviteRole={deferInviteRole}
   />
 
   // eslint-disable-next-line no-unreachable
@@ -2112,7 +2250,7 @@ export default function App() {
   )
 }
 
-function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, musicByScene, propStats, tasks = [], events = [], castMembers, propItems, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole }) {
+function HomeDashboardV2({ session, workspace, productions, defaultProduction, daysLeft, progress, scenes, musicCount, musicByScene, propStats, tasks = [], events = [], castMembers, propItems, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole, deferInviteRole }) {
   const [taskScope, setTaskScope] = useState('mine')
   const attentionScenes = scenes.filter((scene) => /확인\s*필요|미정|논의|재\s*정리|연습\s*필요/.test(scene.summary || '')).slice(0, 3)
   const myCast = castMembers.find((member) => member.userId === session.user.id)
@@ -2128,7 +2266,7 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
     openAt={openAt} profileOpen={profileOpen} setProfileOpen={setProfileOpen} chooseDefaultProduction={chooseDefaultProduction}
     notice={notice} showForm={showForm} setShowForm={setShowForm} productionForm={productionForm} setProductionForm={setProductionForm}
     createProduction={createProduction} busy={busy} createTeamInvite={createTeamInvite} showRoleClaim={showRoleClaim}
-    inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole}
+    inviteCastMembers={inviteCastMembers} claimInviteRole={claimInviteRole} deferInviteRole={deferInviteRole}
     castCount={new Set(castMembers.filter((member) => isActorRoster(member) || isCastAssignment(member)).map((member) => canonicalActor(member.name)).filter(Boolean)).size}
   />
   /* Legacy home is kept temporarily for migration comparison. */
@@ -2160,11 +2298,11 @@ function HomeDashboardV2({ session, workspace, productions, defaultProduction, d
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={defaultProduction?.id} choose={chooseDefaultProduction} invite={createTeamInvite} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
-    {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
+    {showRoleClaim && <RoleClaimSheet production={defaultProduction} members={inviteCastMembers} currentUserId={session.user.id} choose={claimInviteRole} dismiss={deferInviteRole} busy={busy} />}
   </div>
 }
 
-function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole, castCount = 0 }) {
+function ActorHome({ session, workspace, productions, production, daysLeft, progress, scenes, musicCount, propStats, attentionScenes, openAt, profileOpen, setProfileOpen, chooseDefaultProduction, notice, showForm, setShowForm, productionForm, setProductionForm, createProduction, busy, createTeamInvite, showRoleClaim, inviteCastMembers, claimInviteRole, deferInviteRole, castCount = 0 }) {
   const unresolvedCount = attentionScenes.length
   const nextStep = !scenes.length
     ? { step: '1', title: '대본이나 공연표를 먼저 올려주세요', description: '장면·배역·소품을 자동으로 정리해드려요.', tab: 'import', action: '자료 올리기', icon: <WandSparkles /> }
@@ -2186,7 +2324,7 @@ function ActorHome({ session, workspace, productions, production, daysLeft, prog
       {notice && <p className="notice">{notice}</p>}
     </main>
     {profileOpen && <ProfileSheet session={session} workspace={workspace} productions={productions} defaultId={production?.id} choose={chooseDefaultProduction} createTeam={() => { setProfileOpen(false); setShowForm(true) }} close={() => setProfileOpen(false)} logout={() => supabase.auth.signOut()} />}
-    {showRoleClaim && <RoleClaimSheet members={inviteCastMembers} choose={claimInviteRole} busy={busy} />}
+    {showRoleClaim && <RoleClaimSheet production={production} members={inviteCastMembers} currentUserId={session.user.id} choose={claimInviteRole} dismiss={deferInviteRole} busy={busy} />}
   </div>
 }
 
@@ -2392,7 +2530,8 @@ function mergeCastFromScenes(existing, scenes) {
   const addRoleCandidate = (roleName, type, sceneNo) => {
     const cleanRole = roleName.trim()
     if (!cleanRole || /^(없음|미정|확인\s*필요|논의|\?)$/i.test(cleanRole)) return
-    const roleAssignments = members.filter((member) => isCastAssignment(member) && normalizeMatch(member.roleName) === normalizeMatch(cleanRole))
+    const roleAssignments = members.filter((member) => isCastAssignment(member)
+      && [member.roleName, member.subRoleName, member.name].some((name) => normalizeMatch(name) === normalizeMatch(cleanRole)))
     if (roleAssignments.length) {
       roleAssignments.forEach((member) => {
         if (!member.sceneNumbers.includes(sceneNo)) member.sceneNumbers.push(sceneNo)
@@ -2430,6 +2569,14 @@ function mergeCastFromScenes(existing, scenes) {
   return members
 }
 
+function castSceneLinkSignature(members = []) {
+  return members
+    .filter((member) => isCastAssignment(member) || isRoleCandidate(member))
+    .map((member) => `${member.id}:${[...(member.sceneNumbers || [])].map(Number).sort((a, b) => a - b).join(',')}`)
+    .sort()
+    .join('|')
+}
+
 function Auth({ email, setEmail, password, setPassword, passwordConfirm, setPasswordConfirm, authMode, setAuthMode, submit, notice, setNotice, busy }) {
   return <main className="auth-page"><section className="auth-card">
     <BrandMark icon={<Theater size={34} />} /><p className="eyebrow">MUSICAL PRODUCTION OS</p><h1>StageFlow</h1>
@@ -2458,19 +2605,29 @@ function ProfileSheet({ session, productions, defaultId, choose, createTeam, clo
   </section></div>
 }
 
-function RoleClaimSheet({ members, choose, busy }) {
+function RoleClaimSheet({ production, members, currentUserId, choose, dismiss, busy }) {
   const [query, setQuery] = useState('')
   const assignments = members.filter(isCastAssignment)
-  const claimedActors = new Set(assignments.filter((member) => member.userId).map((member) => canonicalActor(member.name)))
-  const available = assignments.filter((member) => !claimedActors.has(canonicalActor(member.name)) && (!normalizeMatch(query) || normalizeMatch(`${member.name} ${member.roleName || ''}`).includes(normalizeMatch(query))))
+  const claimedByOthers = new Set(assignments.filter((member) => member.userId && member.userId !== currentUserId).map((member) => canonicalActor(member.name)))
+  const normalizedQuery = normalizeMatch(query)
+  const available = assignments.filter((member) => !claimedByOthers.has(canonicalActor(member.name))
+    && (!normalizedQuery || normalizeMatch(`${member.roleName || ''} ${member.subRoleName || ''} ${member.name} ${member.pairGroup || ''}`).includes(normalizedQuery)))
   const actorGroups = available.reduce((groups, member) => {
     const key = canonicalActor(member.name) || member.id
     const group = groups.find((item) => item.key === key)
     if (group) group.members.push(member)
     else groups.push({ key, actor: member.name, members: [member] })
     return groups
-  }, [])
-  return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>내 배우 이름을 선택하세요</h2><p className="muted">한 배우에게 여러 배역이 묶여 있으면 모두 한 번에 선택돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배우 이름·배역 검색" /></label><div className="role-claim-list">{actorGroups.map((group) => <button key={group.key} disabled={busy} onClick={() => choose(group.members[0].id)}><UserRound /><span><b>{group.actor}</b><small>{group.members.map((member) => member.roleName || '배역 미정').join(' · ')} · {group.members.length}배역</small></span><ChevronRight /></button>)}</div>{!members.length && <p className="notice">등록된 배역이 없어요. 팀 관리자에게 배우 탭에서 배역을 먼저 등록해달라고 알려주세요.</p>}{members.length > 0 && !actorGroups.length && <p className="notice">선택 가능한 배우가 없어요.</p>}</section></div>
+  }, []).sort((left, right) => {
+    const roleOf = (group) => group.members.map((member) => `${member.roleName} ${member.subRoleName || ''}`).join(' ')
+    return roleOf(left).localeCompare(roleOf(right), 'ko')
+  })
+  return <div className="sheet-backdrop role-claim-backdrop"><section className="profile-sheet role-claim-sheet"><div className="sheet-handle" /><p className="eyebrow">JOIN THE CAST</p><h2>{production?.title ? `${production.title} 배역 선택` : '공연 배역 선택'}</h2><p className="muted">배역을 고르면 연결된 배우 이름과 페어, 1·2Depth 배역이 함께 저장돼요.</p><label className="role-claim-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="배역·배우·페어 검색" /></label><div className="role-claim-list">{actorGroups.map((group) => {
+    const roles = [...new Set(group.members.map((member) => [member.roleName, member.subRoleName].filter(Boolean).join(' › ')).filter(Boolean))]
+    const pairs = [...new Set(group.members.map((member) => member.pairGroup).filter(Boolean))]
+    const selectedByMe = group.members.some((member) => member.userId === currentUserId)
+    return <button className={selectedByMe ? 'selected' : ''} key={group.key} disabled={busy} onClick={() => choose(group.members[0].id)}><Theater /><span><b>{roles.join(' · ') || '배역 미정'}</b><small>{group.actor}{pairs.length ? ` · ${pairs.join(' · ')}` : ''}{roles.length > 1 ? ` · ${roles.length}개 배역` : ''}</small>{selectedByMe && <em>현재 내 배역</em>}</span><ChevronRight /></button>
+  })}</div>{!assignments.length && <p className="notice">선택 가능한 캐스팅이 없어요. 관리자가 배우 탭에서 1Depth 배역·배우 이름·페어를 연결한 뒤 다시 열어주세요.</p>}{assignments.length > 0 && !actorGroups.length && <p className="notice">다른 팀원이 이미 선택한 배역만 남아 있어요.</p>}{dismiss && <button type="button" className="role-claim-later" disabled={busy} onClick={dismiss}>배역은 나중에 선택</button>}</section></div>
 }
 
 function projectedPlaybackPosition(value, now = Date.now()) {
@@ -2772,7 +2929,7 @@ function RunCueList({ cues, music, sceneNo, completed, toggle, controller }) {
 }
 
 function ProductionView(props) {
-  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, reorderScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, analyzeImportWithAI, aiAnalyzing, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, moveMusicFile, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
+  const { workspace, production, updateProduction, scenes, tab, setTab, goBack, daysLeft, progress, showIndex, setShowIndex, form, setForm, createScene, updateScene, deleteScene, reorderScene, showForm, setShowForm, notice, busy, importText, setImportText, importRows, setImportRows, analyzeImport, saveImportedScenes, readPdf, readSpreadsheet, undoLastImport, importingPdf, pendingMusic, musicByScene, organizeMusicFiles, assignMusicScene, uploadOrganizedMusic, deleteMusicFile, reorderMusic, moveMusicFile, uploadingMusic, castMembers, castPairs, addCastPair, renameCastPair, removeCastPair, addCastRosterActor, removeCastRosterActor, assignCastRole, castForm, setCastForm, showCastForm, setShowCastForm, addCastMember, updateCastMember, removeCastMember, toggleCastScene, toggleCastChoreography, importCastFromScenes, propItems, propForm, setPropForm, showPropForm, setShowPropForm, propFilter, setPropFilter, addPropItem, updatePropItem, removePropItem, togglePropReady, importPropsFromScenes, restoreProductionBackup, session, clearProductionUploads, deleteProduction, createTeamInvite, changeMyProductionRole } = props
   const runScenes = useMemo(() => [...scenes].sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.scene_no) - Number(b.scene_no)), [scenes])
   const current = runScenes[showIndex]
   const pdfExtractionReport = props.pdfExtractionReport
@@ -3167,7 +3324,7 @@ function ProductionView(props) {
       {tab === 'backup' && <BackupPanel workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} propItems={propItems} musicByScene={musicByScene} restore={restoreProductionBackup} busy={busy} />}
       {tab === 'team' && <ProductionTeamPanel workspace={workspace} production={production} session={session} castMembers={castMembers} invite={createTeamInvite} changeMyRole={changeMyProductionRole} busy={busy} />}
       {tab === 'settings' && <ProductionDangerPanel workspace={workspace} production={production} session={session} castMembers={castMembers} clearUploads={clearProductionUploads} deleteProduction={deleteProduction} busy={busy} />}
-      {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} analyzeWithAI={analyzeImportWithAI} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} aiAnalyzing={aiAnalyzing} pdfExtractionReport={pdfExtractionReport} />}
+      {tab === 'import' && <ImportPanel workspace={workspace} production={production} updateProduction={updateProduction} scenes={scenes} castMembers={castMembers} text={importText} setText={setImportText} rows={importRows} setRows={setImportRows} analyze={analyzeImport} save={saveImportedScenes} readPdf={readPdf} readSpreadsheet={readSpreadsheet} undo={undoLastImport} loading={importingPdf || busy} pdfExtractionReport={pdfExtractionReport} />}
       {tab === 'music' && <MusicPanel scenes={scenes} pending={pendingMusic} musicByScene={musicByScene} organize={organizeMusicFiles} assign={assignMusicScene} upload={uploadOrganizedMusic} remove={deleteMusicFile} reorder={reorderMusic} moveMusic={moveMusicFile} loading={uploadingMusic} />}
       {tab === 'dialogue' && <DialoguePractice key={`${production.id}-${dialogueInitialScene ?? 'all'}`} workspace={workspace} production={production} scenes={scenes} castMembers={castMembers} session={session} draftText={importText} initialSceneNo={dialogueInitialScene} />}
       {tab === 'show' && briefingMember && current && <section className={`next-appearance-card ${nextAppearance && nextAppearanceIndex - showIndex <= 1 ? 'urgent' : ''} ${nextAppearance && personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? 'ready' : ''}`}><div className="appearance-head"><UserRound /><div><span>NEXT CALL</span><strong>{briefingMember.roleName || briefingMember.name} 다음 등장</strong></div>{nextAppearance && <b>{nextAppearanceIndex - showIndex <= 1 ? '곧 등장' : `${nextAppearanceIndex - showIndex}장면 뒤`}</b>}</div>{nextAppearance ? <><div className="appearance-scene"><span>{nextAppearance.scene_no}</span><div><small>ACT {nextAppearance.act_no}</small><strong>{nextAppearance.title}</strong></div></div><div className="appearance-prep"><div><Shirt /><span><b>의상</b><small>{nextAppearanceCostumes.length ? nextAppearanceCostumes.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div><div><Package /><span><b>챙길 소품</b><small>{nextAppearanceProps.length ? nextAppearanceProps.map((item) => item.name).join(' · ') : '등록 없음'}</small></span></div></div><button className="appearance-ready-button" onClick={() => togglePersonalReady(nextAppearance.scene_no)}><CheckCircle2 />{personalReady[`${briefingMemberId}-${nextAppearance.scene_no}`] ? '등장 준비 완료됨' : '의상·소품 준비 완료'}</button></> : <p>남은 등장 장면이 없어요. 수고했어요!</p>}</section>}
@@ -3494,7 +3651,7 @@ function ProductionSetupProgress({ state, open }) {
 function ProductionMoreSheet({ active, setup, close, choose }) {
   const items = [
     { id: 'dialogue', group: '배우 연습', label: '대사 연습하기', description: '대본·배역 자동 연결과 상대 대사', icon: <MessageCircle /> },
-    { id: 'import', group: '공연 설정', label: '대본·자동정리', description: 'PDF와 공연표 분석', icon: <WandSparkles /> },
+    { id: 'import', group: '공연 설정', label: '대본·자동정리', description: 'PDF와 텍스트 직접 입력', icon: <WandSparkles /> },
     { id: 'settings', group: '공연 설정', label: '기본 설정', description: '자료 초기화 · 공연 삭제 승인', icon: <Settings /> },
     { id: 'props', group: '공연 구성', label: '소품', description: '장면별로 챙길 소품', icon: <Package /> },
     { id: 'costumes', group: '공연 구성', label: '의상', description: '배역별 의상과 퀵체인지', icon: <Shirt /> },
@@ -3515,12 +3672,14 @@ function ProductionMoreSheet({ active, setup, close, choose }) {
   return <div className="sheet-backdrop" onClick={close}><section className="production-more-sheet" onClick={(event) => event.stopPropagation()}><div className="sheet-handle" /><div className="more-sheet-head"><div><p className="eyebrow">PRODUCTION TOOLS</p><h2>공연 도구</h2></div><button className="icon-button" onClick={close} aria-label="공연 도구 닫기"><X size={18} /></button></div><div className="more-tool-groups">{groups.map((group) => <section key={group}><h3>{group}</h3><div className="more-tool-grid">{visibleItems.filter((item) => item.group === group).map((item) => <button className={active === item.id ? 'active' : ''} key={item.id} onClick={() => choose(item.id)}><span>{item.icon}</span><div><strong>{item.label}</strong><small>{item.description}</small></div><ChevronRight /></button>)}</div></section>)}</div></section></div>
 }
 
-function NotionImportPanel({ production, updateProduction, setRows, disabled }) {
+function NotionImportPanel({ production, updateProduction, rows, setRows, targets, setTargets, disabled }) {
   const [dataSourceId, setDataSourceId] = useState(production.notion_data_source_id || '')
   const [syncing, setSyncing] = useState(false)
   const [status, setStatus] = useState('')
+  const [statusTone, setStatusTone] = useState('')
   const [open, setOpen] = useState(false)
-  const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
+  const requestIdRef = useRef(0)
+  useEffect(() => () => { requestIdRef.current += 1 }, [])
   const normalizedSourceId = (value) => {
     const raw = String(value || '').trim()
     if (!raw) return ''
@@ -3528,8 +3687,8 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
       const url = new URL(raw)
       const queryId = url.searchParams.get('data_source_id') || url.searchParams.get('database_id')
       if (queryId) return queryId.trim()
-      const pathId = decodeURIComponent(url.pathname).match(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0]
-      return pathId || raw
+      const pathIds = [...decodeURIComponent(url.pathname).matchAll(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/gi)]
+      return pathIds.at(-1)?.[0] || raw
     } catch {
       return raw.replace(/^data_source_id\s*[:=]\s*/i, '').trim()
     }
@@ -3539,37 +3698,60 @@ function NotionImportPanel({ production, updateProduction, setRows, disabled }) 
     const sourceId = normalizedSourceId(dataSourceId)
     if (!sourceId) return
     if (!Object.values(targets).some(Boolean)) return setStatus('가져올 항목을 하나 이상 선택해 주세요.')
-    setSyncing(true); setStatus('Notion 데이터를 분석하는 중이에요…')
+    const requestId = ++requestIdRef.current
+    const productionId = production.id
+    const stale = () => requestId !== requestIdRef.current
+    setSyncing(true); setStatusTone(''); setStatus('Notion 연결과 열 이름을 확인하는 중이에요…')
     setDataSourceId(sourceId)
     try {
-      const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId: production.id, dataSourceId: sourceId, targets } })
+      const { data, error } = await supabase.functions.invoke('sync-notion', { body: { productionId, dataSourceId: sourceId, targets } })
+      if (stale()) return
       if (error || data?.error) {
         const detail = await functionErrorMessage(error, data, '연결 공유와 서버 설정을 확인해 주세요.')
+        if (stale()) return
+        setStatusTone('error')
         setStatus(`Notion 불러오기에 실패했어요. ${detail}`)
         return
       }
+      if (data?.productionId && data.productionId !== productionId) throw new Error('다른 공연의 응답이 도착해 적용을 중단했어요. 다시 시도해 주세요.')
       const resolvedSourceId = data?.dataSourceId || sourceId
       const importedRows = Array.isArray(data?.rows) ? mergeDuplicateImportRows(data.rows) : []
       setDataSourceId(resolvedSourceId)
       setRows(importedRows)
-      await updateProduction({ ...production, notion_data_source_id: resolvedSourceId })
-      setStatus(`${importedRows.length}개 장면의 정보를 미리보기에 불러왔어요.${data?.sourceName ? ` · ${data.sourceName}` : ''}${data?.skipped ? ` 씬 번호가 없는 ${data.skipped}개 행은 제외했어요.` : ''} 아래에서 신규 추가 또는 기존 병합을 선택해 주세요.`)
+      const saved = await updateProduction({ ...production, notion_data_source_id: resolvedSourceId })
+      if (stale()) return
+      const sourceLabel = data?.sourceName ? ` · ${data.sourceName}` : ''
+      if (!importedRows.length) {
+        const columns = Array.isArray(data?.availableProperties) ? data.availableProperties.slice(0, 12).join(', ') : ''
+        setStatusTone('error')
+        setStatus(`Notion 연결은 확인했지만 장면 번호를 찾지 못했어요.${columns ? ` 확인된 열: ${columns}.` : ''} 장면 번호 열을 '씬번호', '장면 번호' 또는 'Scene No'로 지정해 주세요.${saved ? '' : ' 연결 정보도 저장하지 못했어요.'}`)
+        return
+      }
+      setStatusTone(saved ? 'success' : 'error')
+      setStatus(`${importedRows.length}개 장면의 정보를 미리보기에 불러왔어요${sourceLabel}.${data?.skipped ? ` 장면 번호를 찾지 못한 ${data.skipped}개 행은 제외했어요.` : ''}${saved ? ' 아래에서 저장 방식을 선택해 적용해 주세요.' : ' 미리보기는 유지되지만 공연별 연결 ID는 저장하지 못했어요.'}`)
     } catch (error) {
+      if (stale()) return
+      setStatusTone('error')
       setStatus(`Notion 불러오기에 실패했어요. ${error.message || '잠시 후 다시 시도해 주세요.'}`)
-    } finally { setSyncing(false) }
+    } finally { if (!stale()) setSyncing(false) }
   }
   async function disconnect() {
+    requestIdRef.current += 1
     setSyncing(true)
     const saved = await updateProduction({ ...production, notion_data_source_id: '' })
     if (saved) {
       setDataSourceId('')
       setRows([])
+      setStatusTone('success')
       setStatus('이 공연의 Notion 연결을 해제했어요.')
-    } else setStatus('Notion 연결을 해제하지 못했어요.')
+    } else {
+      setStatusTone('error')
+      setStatus('Notion 연결을 해제하지 못했어요.')
+    }
     setSyncing(false)
   }
   const labels = { scenes: '장면', cast: '배우·배역', props: '소품·대도구', costumes: '의상', cues: '큐', soundtracks: '사운드트랙' }
-  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Notion 주소 또는 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion 데이터베이스 주소를 붙여넣어도 돼요" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 정보는 현재 공연에만 저장됩니다. 공연마다 서로 다른 Notion 데이터베이스를 연결해도 섞이지 않아요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 분석 중…' : '선택 항목 미리보기'}</button>{production.notion_data_source_id && <button className="secondary" type="button" disabled={disabled || syncing} onClick={disconnect}>이 공연의 Notion 연결 해제</button>}{status && <p className="notice">{status}</p>}</form>}</section>
+  return <section className={open ? 'notion-import-card open' : 'notion-import-card'}><button className="notion-import-head" type="button" onClick={() => setOpen((value) => !value)}><ExternalLink /><span><b>Notion에서 불러오기</b><small>이 공연 전용 데이터베이스 연결 · 항목 선택</small></span><ChevronRight /></button>{open && <form onSubmit={sync}><label className="notion-source-field"><span>이 공연의 Notion 주소 또는 Data Source ID</span><input required value={dataSourceId} onChange={(event) => setDataSourceId(event.target.value)} placeholder="Notion 데이터베이스 주소를 붙여넣어도 돼요" /></label><fieldset className="notion-targets"><legend>가져올 항목</legend>{Object.entries(labels).map(([key, label]) => <label key={key}><input type="checkbox" checked={targets[key]} onChange={() => setTargets((value) => ({ ...value, [key]: !value[key] }))} /><span>{label}</span></label>)}</fieldset><p className="notion-project-note">연결 정보는 현재 공연에만 저장됩니다. 공연마다 서로 다른 Notion 데이터베이스를 연결해도 섞이지 않아요.</p><button className="primary" disabled={disabled || syncing}>{syncing ? 'Notion 확인 중…' : rows.length ? 'Notion 다시 불러오기' : '선택 항목 미리보기'}</button>{production.notion_data_source_id && <button className="secondary" type="button" disabled={disabled || syncing} onClick={disconnect}>이 공연의 Notion 연결 해제</button>}{status && <p className={`notice ${statusTone}`}>{status}</p>}</form>}</section>
 }
 
 function ProductionForm({ form, setForm, submit, busy }) { return <form className="panel form-grid labeled-form" onSubmit={submit}><label><span>공연명</span><input required placeholder="예: 잭더리퍼 2026" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></label><label><span>공연 장소</span><input placeholder="예: 서대문 문화회관" value={form.venue} onChange={(e) => setForm({ ...form, venue: e.target.value })} /></label><label><span>공연일</span><input type="date" value={form.performance_start_date} onChange={(e) => setForm({ ...form, performance_start_date: e.target.value })} /></label><button className="primary" disabled={busy}>{busy ? '만드는 중…' : '공연 만들기'}</button></form> }
@@ -3671,7 +3853,7 @@ function SceneEditPage({ scene, update, back }) {
   }
   return <EntityEditorPage eyebrow={`SCENE ${scene.scene_no}`} title="장면 수정" description="장면 번호를 바꿔도 연결 데이터는 유지됩니다." back={back}><form className="panel form-grid entity-editor-form" onSubmit={save}><div className="two-col"><label><span>ACT</span><input type="number" min="1" step="1" value={draft.act_no} onChange={(event) => setDraft({ ...draft, act_no: event.target.value })} /></label><label><span>장면 번호</span><input type="number" min="0" step="1" value={draft.scene_no} onChange={(event) => setDraft({ ...draft, scene_no: event.target.value })} /></label></div><label><span>장면 제목</span><input required value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} /></label><label><span>장면 설명</span><textarea value={draft.summary} onChange={(event) => setDraft({ ...draft, summary: event.target.value })} /></label><button className="primary"><Save size={16} /> 변경 저장</button></form></EntityEditorPage>
 }
-function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, analyzeWithAI, save, readPdf, readSpreadsheet, undo, loading, aiAnalyzing, pdfExtractionReport }) {
+function ImportPanel({ workspace, production, updateProduction, scenes, castMembers, text, setText, rows, setRows, analyze, save, readPdf, readSpreadsheet, undo, loading, pdfExtractionReport }) {
   const [mode, setMode] = useState('add')
   const [sourceMode, setSourceMode] = useState('pdf')
   const [targets, setTargets] = useState({ scenes: true, cast: true, props: true, costumes: true, cues: true, soundtracks: true })
@@ -3729,14 +3911,14 @@ function ImportPanel({ workspace, production, updateProduction, scenes, castMemb
     <div className="import-source-tabs" role="tablist" aria-label="자료 가져오기 방식">
       <button className={sourceMode === 'pdf' ? 'active' : ''} onClick={() => setSourceMode('pdf')}><FileText />PDF</button>
       <button className={sourceMode === 'sheet' ? 'active' : ''} onClick={() => setSourceMode('sheet')}><FileSpreadsheet />엑셀·CSV</button>
-      <button className={sourceMode === 'paste' ? 'active' : ''} onClick={() => setSourceMode('paste')}><WandSparkles />표 붙여넣기</button>
+      <button className={sourceMode === 'paste' ? 'active' : ''} onClick={() => setSourceMode('paste')}><WandSparkles />텍스트 직접 입력</button>
       <button className={sourceMode === 'notion' ? 'active' : ''} onClick={() => setSourceMode('notion')}><ExternalLink />Notion</button>
     </div>
     <section className="import-source-stage">
-      {sourceMode === 'pdf' && <><label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 분석 중…' : '대본 PDF 선택'}</strong><span>텍스트와 표를 모든 페이지에서 추출해요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={(event) => readPdf(event.target.files?.[0])} /></label>{pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}</section>}</>}
+      {sourceMode === 'pdf' && <><label className="upload-zone"><Upload size={25} /><strong>{loading ? 'PDF 읽는 중…' : '대본 PDF 선택'}</strong><span>내장 텍스트를 먼저 추출하고, 전체 페이지 저해상도 OCR로 누락을 보강해요</span><input type="file" accept="application/pdf,.pdf" disabled={loading} onChange={async (event) => { const input = event.currentTarget; await readPdf(input.files?.[0]); input.value = '' }} /></label>{pdfExtractionReport && <section className="pdf-extraction-report"><div className="pdf-report-head"><FileText /><span><b>{pdfExtractionReport.fileName}</b><small>PDF 텍스트·표 추출 완료</small></span></div><div className="pdf-report-stats"><span><b>{pdfExtractionReport.pages}</b>쪽</span><span><b>{pdfExtractionReport.characters.toLocaleString()}</b>자</span><span><b>{pdfExtractionReport.textRows}</b>텍스트 행</span><span><b>{pdfExtractionReport.tableRows}</b>표 행</span></div>{pdfExtractionReport.preview.length > 0 && <div className="pdf-table-preview"><strong>인식한 표 미리보기</strong><div>{pdfExtractionReport.preview.map((row, index) => <div key={`${row.page}-${index}`}><em>p.{row.page}</em>{row.cells.map((cell, cellIndex) => <span key={`${cell}-${cellIndex}`}>{cell}</span>)}</div>)}</div></div>}</section>}</>}
       {sourceMode === 'sheet' && <label className="spreadsheet-upload source-stage-upload"><FileSpreadsheet /><span><b>{loading ? '전체 표 분석 중…' : '엑셀·CSV 파일 선택'}</b><small>모든 시트의 행·열과 헤더를 한 번에 읽어요</small></span><ChevronRight /><input type="file" accept=".xlsx,.xls,.csv,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/tab-separated-values" disabled={loading} onChange={(event) => { readSpreadsheet(event.target.files?.[0]); event.target.value = '' }} /></label>}
-      {sourceMode === 'paste' && <FastImportTextEditor text={text} setText={setText} analyze={analyze} analyzeWithAI={analyzeWithAI} loading={loading} aiAnalyzing={aiAnalyzing} />}
-      {sourceMode === 'notion' && <NotionImportPanel production={production} updateProduction={updateProduction} setRows={setRows} disabled={loading} />}
+      {sourceMode === 'paste' && <FastImportTextEditor text={text} setText={setText} analyze={analyze} loading={loading} />}
+      {sourceMode === 'notion' && <NotionImportPanel key={production.id} production={production} updateProduction={updateProduction} rows={rows} setRows={setRows} targets={targets} setTargets={setTargets} disabled={loading} />}
     </section>
     {(sources.length > 0 || rows.length > 0) && <div className="import-history-actions"><button className="import-undo" disabled={loading} onClick={undo}><RotateCcw /><span><b>마지막 적용 되돌리기</b><small>직전 저장 상태로 복원</small></span></button>{!!sources.length && <SourceReanalyze sources={sources} reanalyze={reanalyzeSource} loading={loading} />}</div>}
     {!!rows.length && <ImportAudit audit={audit} mergeDuplicates={mergeDuplicateRows} />}
@@ -3747,14 +3929,14 @@ function ImportPanel({ workspace, production, updateProduction, scenes, castMemb
     <section className="import-source-library"><div className="compact-heading"><div><span>SOURCE LIBRARY</span><h2>업로드 자료</h2></div><small>{sources.length}개</small></div>{sources.length ? <div>{sources.map((item) => <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><FileText /><span><b>{cleanStoredFileName(item.name)}</b><small>{item.created_at ? new Date(item.created_at).toLocaleString('ko-KR') : '업로드 자료'}</small></span><ChevronRight /></a>)}</div> : <p>아직 보관된 원본 자료가 없어요.</p>}</section>
   </section>
 }
-function FastImportTextEditor({ text, setText, analyze, analyzeWithAI, loading, aiAnalyzing }) {
+function FastImportTextEditor({ text, setText, analyze, loading }) {
   const [draft, setDraft] = useState(text)
   const focused = useRef(false)
   useEffect(() => { if (!focused.current) setDraft(text) }, [text])
   const commit = () => { focused.current = false; setText(draft) }
   return <>
-    <textarea className="import-textarea" value={draft} onFocus={() => { focused.current = true }} onBlur={commit} onChange={(event) => setDraft(event.target.value)} placeholder={'1. 가려진 진실\t앤더슨\t살인자 / 매춘부\t...\n2. 진정해 조심해\t앤더슨 / 먼로\t경찰 / 기자\t...'} />
-    <div className="import-action-grid"><button className="secondary analyze-button" disabled={loading || aiAnalyzing || !draft.trim()} onClick={() => analyze(draft)}><WandSparkles size={18} /> 빠른 표 정리</button><button className="primary analyze-button ai-analyze" disabled={loading || aiAnalyzing || !draft.trim()} onClick={() => analyzeWithAI(draft)}><Sparkles size={18} /> {aiAnalyzing ? 'AI 분석 중…' : 'AI로 대본 분석'}</button></div>
+    <textarea className="import-textarea" value={draft} onFocus={() => { focused.current = true }} onBlur={commit} onChange={(event) => setDraft(event.target.value)} placeholder={'대본이나 정리된 텍스트를 그대로 붙여넣으세요.\n\nSCENE #1 가려진 진실\n앤더슨: 사건을 다시 확인하지.\n\n또는\n1. 가려진 진실\t앤더슨\t살인자 / 매춘부'} />
+    <div className="import-action-grid"><button className="primary analyze-button" disabled={loading || !draft.trim()} onClick={() => analyze(draft)}><WandSparkles size={18} /> 입력 내용 정리</button></div>
   </>
 }
 function ImportAudit({ audit, mergeDuplicates }) {
@@ -3773,7 +3955,7 @@ function mergeDuplicateImportRows(rows) {
       const value = typeof item === 'string' ? item : item || {}
       const key = typeof value === 'string'
         ? normalizeMatch(value)
-        : [value.kind, value.name, value.character, value.role, value.code, value.title, value.type, value.label, value.trigger, value.changeNote, value.inBy, value.outBy, value.note].map(normalizeMatch).join('::')
+        : [value.kind, value.name, value.character, value.role, value.actor, value.pair, value.code, value.title, value.type, value.label, value.trigger, value.changeNote, value.inBy, value.outBy, value.note].map(normalizeMatch).join('::')
       if (key && !unique.has(key)) unique.set(key, value)
     })
     return [...unique.values()]
@@ -5217,13 +5399,69 @@ function parseProductionSheet(source) {
 }
 
 function parseSceneNumberMarker(value) {
-  const match = String(value || '').trim().match(/^SCENE\s*#\s*(\d+)\s*(?:-\s*(\d+))?\s*(.*)$/i)
+  const match = String(value || '').trim().match(/^(?:SCENE|장면|씬)\s*#?\s*(\d+)\s*(?:[-–—._]\s*(\d+))?\s*(.*)$/i)
   if (!match) return null
   return {
     sceneNo: Number(match[1]),
     detailNo: match[2] ? Number(match[2]) : null,
     title: String(match[3] || '').replace(/^[-.:\s]+/, '').trim(),
   }
+}
+
+function escapeRegularExpression(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// 대본 원문에 등장한 등록 배역을 장면별로 다시 대조합니다. PDF의 글자
+// 배치 때문에 `배역: 대사`가 `배역\t대사` 또는 독립된 배역명으로 추출돼도
+// 기존 배우·배역 데이터와 연결할 수 있게 하는 규칙 기반 보정입니다.
+function linkImportedRowsToRegisteredCast(rows, sourceText, castMembers = []) {
+  if (!rows.length || !castMembers.length || !String(sourceText || '').trim()) return rows
+  const rowNumbers = new Set(rows.map((row) => Number(row.number)))
+  const segments = new Map()
+  let currentNumber = null
+  String(sourceText).replace(/\r/g, '').split('\n').forEach((rawLine) => {
+    const line = rawLine.trim()
+    const sceneMarker = parseSceneNumberMarker(line)
+    const numberedMarker = !sceneMarker ? line.match(/^(\d{1,3})\s*[.)]\s*\S+/) : null
+    const nextNumber = sceneMarker?.sceneNo ?? (numberedMarker ? Number(numberedMarker[1]) : null)
+    if (nextNumber !== null && rowNumbers.has(Number(nextNumber))) currentNumber = Number(nextNumber)
+    if (currentNumber === null) return
+    if (!segments.has(currentNumber)) segments.set(currentNumber, [])
+    segments.get(currentNumber).push(rawLine)
+  })
+  const knownRoles = new Map()
+  castMembers.forEach((member) => {
+    const primary = String(member.roleName || member.roleDepth1 || '').trim()
+    const secondary = String(member.subRoleName || member.roleDepth2 || '').trim()
+    if (!primary) return
+    ;[primary, secondary, member.name].filter(Boolean).forEach((alias) => {
+      const key = normalizeMatch(alias)
+      if (key && !knownRoles.has(key)) knownRoles.set(key, { role: primary, alias })
+    })
+  })
+  if (!knownRoles.size) return rows
+  return rows.map((row) => {
+    const segment = (segments.get(Number(row.number)) || []).join('\n')
+    if (!segment) return row
+    const matchedRoles = []
+    knownRoles.forEach(({ role, alias }) => {
+      const escaped = escapeRegularExpression(alias)
+      const boundary = new RegExp(`(^|[\\s\\t([{/,:：])${escaped}(?=$|[\\s\\t)\\]}/,:：.!?])`, 'imu')
+      if (boundary.test(segment) && !matchedRoles.some((value) => normalizeMatch(value) === normalizeMatch(role))) matchedRoles.push(role)
+    })
+    if (!matchedRoles.length) return row
+    const existing = splitRoleEntries(row.main || '')
+    const merged = [...existing]
+    matchedRoles.forEach((role) => {
+      if (!merged.some((value) => normalizeMatch(value) === normalizeMatch(role))) merged.push(role)
+    })
+    const characters = [...(row.characters || [])]
+    matchedRoles.forEach((role) => {
+      if (!characters.some((value) => normalizeMatch(value) === normalizeMatch(role))) characters.push(role)
+    })
+    return { ...row, main: merged.join(' / '), characters }
+  })
 }
 
 function parseScriptSceneHierarchy(source) {
@@ -5251,7 +5489,7 @@ function parseScriptSceneHierarchy(source) {
       current.music = current.soundtracks.map((item) => `${item.code} ${item.title}`).join(' / ')
       return
     }
-    const speaker = line.match(/^([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{0,24})\s*[:：]\s*(.+)$/)
+    const speaker = line.match(/^\[?([가-힣A-Za-z][가-힣A-Za-z0-9 _-]{0,24})\]?\s*(?::|：|\t+)\s*(.+)$/)
     if (speaker && !/^(조명|음향|영상|무대|소품|의상|장소|시간)$/i.test(speaker[1].trim())) {
       const character = speaker[1].trim()
       if (!current.characters.some((item) => normalizeMatch(item) === normalizeMatch(character))) current.characters.push(character)
@@ -5453,26 +5691,6 @@ function addProp(row, cells) {
   const item = { kind, name, inBy: cells[start + 2] || '', outBy: cells[start + 3] || '', note: cells.slice(start + 4).join(' ') }
   const duplicate = row.props.some((prop) => prop.kind === item.kind && prop.name === item.name)
   if (!duplicate) row.props.push(item)
-}
-
-function normalizeAiScenes(value) {
-  if (!Array.isArray(value)) return []
-  return value.map((scene, index) => ({
-    number: Number.isFinite(Number(scene.number)) && Number(scene.number) >= 0 ? Number(scene.number) : index + 1,
-    title: String(scene.title || `장면 ${index + 1}`).trim(),
-    main: String(scene.main || '').trim(),
-    ensemble: String(scene.ensemble || '').trim(),
-    backstage: String(scene.backstage || '').trim(),
-    music: String(scene.music || '').trim(),
-    movement: String(scene.movement || '').trim(),
-    status: String(scene.status || '').trim(),
-    props: Array.isArray(scene.props) ? scene.props.filter((item) => item?.name).map((item) => ({ kind: item.kind === '대도구' ? '대도구' : '소품', name: String(item.name).trim(), inBy: String(item.inBy || '').trim(), outBy: String(item.outBy || '').trim(), note: String(item.note || '').trim() })) : [],
-    costumes: Array.isArray(scene.costumes) ? scene.costumes : [],
-    cues: Array.isArray(scene.cues) ? scene.cues : [],
-    details: Array.isArray(scene.details) ? scene.details : [],
-    soundtracks: Array.isArray(scene.soundtracks) ? scene.soundtracks : [],
-    characters: Array.isArray(scene.characters) ? scene.characters : [],
-  })).sort((a, b) => a.number - b.number)
 }
 
 function formatSceneSummary(row) {

@@ -1,9 +1,12 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
+
+const json = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
+  status,
+  headers: { ...cors, 'Content-Type': 'application/json; charset=utf-8' },
+})
 
 const notionToken = () => String(Deno.env.get('NOTION_TOKEN') || '')
   .trim()
@@ -85,7 +88,8 @@ const normalizeSourceId = (value: string) => {
     const url = new URL(raw)
     const queryId = url.searchParams.get('data_source_id') || url.searchParams.get('database_id')
     if (queryId) return queryId.trim()
-    return decodeURIComponent(url.pathname).match(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/i)?.[0] || raw
+    const matches = [...decodeURIComponent(url.pathname).matchAll(/[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f-]{27,}/gi)]
+    return matches.at(-1)?.[0] || raw
   } catch {
     return raw.replace(/^data_source_id\s*[:=]\s*/i, '').trim()
   }
@@ -114,7 +118,7 @@ const notionFailure = async (response: Response, action: string) => {
   return new Error(`${action} 실패 (${response.status})${message ? `: ${message}` : ''}`)
 }
 
-const queryDataSource = (sourceId: string, cursor?: string) => fetch(`https://api.notion.com/v1/data_sources/${sourceId}/query`, {
+const queryDataSource = (sourceId: string, cursor?: string) => fetch(`https://api.notion.com/v1/data_sources/${encodeURIComponent(sourceId)}/query`, {
   method: 'POST',
   headers: notionHeaders(),
   body: JSON.stringify({ page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) }),
@@ -122,10 +126,20 @@ const queryDataSource = (sourceId: string, cursor?: string) => fetch(`https://ap
 
 const resolveDataSource = async (inputId: string) => {
   const direct = await queryDataSource(inputId)
-  if (direct.ok) return { id: inputId, name: '', firstPage: await direct.json() }
-  if (direct.status !== 404) throw await notionFailure(direct, 'Notion 데이터 조회')
+  if (direct.ok) {
+    let name = ''
+    const sourceResponse = await fetch(`https://api.notion.com/v1/data_sources/${encodeURIComponent(inputId)}`, { headers: notionHeaders() })
+    if (sourceResponse.ok) {
+      const source = await sourceResponse.json()
+      name = (source.title || []).map((item: any) => item.plain_text || '').join('').trim()
+    }
+    return { id: inputId, name, firstPage: await direct.json() }
+  }
+  // 사용자가 Notion 주소를 붙여넣으면 대부분 컨테이너 database_id가 들어옵니다.
+  // Data Source 조회의 400/404만 Database 조회로 안전하게 재시도합니다.
+  if (![400, 404].includes(direct.status)) throw await notionFailure(direct, 'Notion 데이터 조회')
 
-  const database = await fetch(`https://api.notion.com/v1/databases/${inputId}`, { headers: notionHeaders() })
+  const database = await fetch(`https://api.notion.com/v1/databases/${encodeURIComponent(inputId)}`, { headers: notionHeaders() })
   if (!database.ok) throw await notionFailure(database, 'Notion 데이터베이스 확인')
   const payload = await database.json()
   const source = payload?.data_sources?.[0]
@@ -135,22 +149,36 @@ const resolveDataSource = async (inputId: string) => {
   return { id: source.id, name: source.name || '', firstPage: await firstPage.json() }
 }
 
+const verifyProductionAccess = async (authorization: string, productionId: string) => {
+  const supabaseUrl = String(Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '')
+  const anonKey = String(Deno.env.get('SUPABASE_ANON_KEY') || '')
+  if (!supabaseUrl || !anonKey) throw new Error('Supabase 함수 환경변수가 설정되지 않았어요.')
+  const headers = { Authorization: authorization, apikey: anonKey }
+  const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, { headers })
+  if (!userResponse.ok) return { ok: false, status: 401, message: '로그인 세션이 만료되었습니다.' }
+  const productionResponse = await fetch(`${supabaseUrl}/rest/v1/productions?id=eq.${encodeURIComponent(productionId)}&select=id&limit=1`, { headers })
+  if (!productionResponse.ok) {
+    const detail = await productionResponse.text().catch(() => '')
+    throw new Error(`공연 권한 확인 실패${detail ? `: ${detail.slice(0, 500)}` : ''}`)
+  }
+  const productions = await productionResponse.json()
+  if (!Array.isArray(productions) || !productions.length) return { ok: false, status: 403, message: '이 공연의 Notion 자료를 불러올 권한이 없습니다.' }
+  return { ok: true, status: 200, message: '' }
+}
+
+const firstTitle = (properties: Record<string, any>) => {
+  const titleProperty = Object.values(properties).find((property: any) => property?.type === 'title')
+  return propertyText(titleProperty)
+}
+
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: cors })
-  if (request.method !== 'POST') return new Response(JSON.stringify({ ok: false, error: 'POST 요청만 지원합니다.' }), { status: 405, headers: { ...cors, 'Content-Type': 'application/json' } })
+  if (request.method !== 'POST') return json({ ok: false, error: 'POST 요청만 지원합니다.' }, 405)
   let stage = '요청 확인'
   try {
     if (!notionToken()) throw new Error('NOTION_TOKEN이 설정되지 않았어요.')
     const auth = String(request.headers.get('Authorization') || '').replace(/[^\x21-\x7E]/g, '')
-    if (!auth) return new Response(JSON.stringify({ ok: false, error: '로그인이 필요합니다.' }), { status: 401, headers: { ...cors, 'Content-Type': 'application/json' } })
-    stage = '공연 권한 확인'
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
-      { global: { headers: { Authorization: auth } } },
-    )
-    const { data: userData, error: userError } = await supabase.auth.getUser()
-    if (userError || !userData.user) return new Response(JSON.stringify({ ok: false, error: '로그인 세션이 만료되었습니다.' }), { status: 401, headers: { ...cors, 'Content-Type': 'application/json' } })
+    if (!auth) return json({ ok: false, error: '로그인이 필요합니다.' }, 401)
     let body: any
     try { body = await request.json() } catch { throw new Error('요청 본문이 올바른 JSON이 아닙니다.') }
     const { productionId, dataSourceId, targets: requestedTargets } = body || {}
@@ -158,12 +186,9 @@ Deno.serve(async (request) => {
     const targetKeys = ['scenes', 'cast', 'props', 'costumes', 'cues', 'soundtracks'] as const
     const targets = Object.fromEntries(targetKeys.map((key) => [key, requestedTargets?.[key] !== false])) as Record<(typeof targetKeys)[number], boolean>
     if (!Object.values(targets).some(Boolean)) throw new Error('가져올 항목을 하나 이상 선택해 주세요.')
-    const { error: productionError } = await supabase
-      .from('productions')
-      .select('id')
-      .eq('id', productionId)
-      .single()
-    if (productionError) throw new Error(errorMessage(productionError))
+    stage = '공연 권한 확인'
+    const access = await verifyProductionAccess(auth, productionId)
+    if (!access.ok) return json({ ok: false, error: access.message }, access.status)
     const requestedSourceId = normalizeSourceId(dataSourceId || '')
     if (!requestedSourceId) throw new Error('Notion Data Source ID가 필요합니다.')
     if (requestedSourceId.length > 300) throw new Error('Notion Data Source ID가 너무 깁니다.')
@@ -184,22 +209,33 @@ Deno.serve(async (request) => {
       payload = await response.json()
     }
 
-    const sceneNumberKeys = ['씬번호', '장면 번호', 'Scene No', 'Scene', 'SCENE']
+    const sceneNumberKeys = ['씬번호', '씬 번호', '장면번호', '장면 번호', '신넘버', 'Scene No', 'Scene Number', 'Scene', 'SCENE']
+    const sceneTitleKeys = ['장면명', '장면 제목', '씬 제목', 'Scene Title', 'Title', 'Name', '이름']
+    const availableProperties = [...new Set(pages.flatMap((page) => Object.keys(page.properties || {})))]
     const rows = new Map<number, any>()
     for (const page of pages) {
       const properties = page.properties || {}
-      const sceneNo = numeric(pick(properties, sceneNumberKeys))
+      const pageTitle = firstTitle(properties)
+      const sceneNo = numeric(pick(properties, sceneNumberKeys)) ?? numeric(pick(properties, sceneTitleKeys)) ?? numeric(pageTitle)
       if (sceneNo === null || !Number.isFinite(sceneNo) || sceneNo < 0) continue
       const current = rows.get(sceneNo) || {
         number: sceneNo, title: `SCENE ${sceneNo}`, main: '', ensemble: '', backstage: '', music: '', movement: '', status: '',
         props: [], costumes: [], cues: [], details: [], soundtracks: [], characters: [],
       }
-      const title = pick(properties, ['장면명', '씬 제목', 'Scene Title', 'Title'])
+      const title = pick(properties, sceneTitleKeys) || pageTitle
       if (targets.scenes && title) current.title = title
       if (targets.cast) {
         current.main = mergeText(current.main, pick(properties, ['메인 배역', '주요 배역', 'Main Cast', 'Main']))
         current.ensemble = mergeText(current.ensemble, pick(properties, ['등장 앙상블', '앙상블', 'Ensemble']))
         current.backstage = mergeText(current.backstage, pick(properties, ['백 앙상블', '대기 인원', 'Back Ensemble', 'Backstage']))
+        const role = pick(properties, ['배역', '역할', 'Role', 'Character'])
+        const actor = pick(properties, ['배우', '배우 이름', '배우명', 'Actor', 'Performer'])
+        const pair = pick(properties, ['페어', '페어명', 'Pair', 'Pair Group', 'Group'])
+        if (role || actor) {
+          const castLabel = role && actor ? `${role} (${actor})` : role || actor
+          current.main = mergeText(current.main, castLabel)
+          current.characters.push({ role: role || actor, actor, pair })
+        }
       }
       if (targets.scenes) {
         current.music = mergeText(current.music, pick(properties, ['넘버', '음악', 'Music', 'Number']))
@@ -242,17 +278,20 @@ Deno.serve(async (request) => {
     // This endpoint is preview-only. The browser writes selected rows only after
     // the user confirms add/merge, preventing a preview from changing data.
     stage = '미리보기 생성'
-    const skipped = pages.filter((page) => numeric(pick(page.properties || {}, sceneNumberKeys)) === null).length
-    return new Response(JSON.stringify({
+    const skipped = pages.filter((page) => {
+      const properties = page.properties || {}
+      return numeric(pick(properties, sceneNumberKeys)) === null
+        && numeric(pick(properties, sceneTitleKeys)) === null
+        && numeric(firstTitle(properties)) === null
+    }).length
+    return json({
       rows: normalizedRows, imported: normalizedRows.length, skipped,
-      dataSourceId: sourceId, sourceName: resolved.name,
-    }), { headers: { ...cors, 'Content-Type': 'application/json' } })
+      productionId, dataSourceId: sourceId, sourceName: resolved.name,
+      availableProperties,
+    })
   } catch (error) {
     const message = errorMessage(error)
     console.error('sync-notion failed', { stage, message })
-    return new Response(JSON.stringify({ ok: false, error: `${stage}: ${message}` }), {
-      status: /권한|토큰|필요|찾지 못|형식|너무 많/i.test(message) ? 400 : 500,
-      headers: { ...cors, 'Content-Type': 'application/json' },
-    })
+    return json({ ok: false, error: `${stage}: ${message}` }, /권한|토큰|필요|찾지 못|형식|너무 많/i.test(message) ? 400 : 500)
   }
 })
