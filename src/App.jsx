@@ -286,6 +286,11 @@ export default function App() {
           setInviteProductionId(joinedProductionId)
           setDefaultProductionId(joinedProductionId)
           window.localStorage.setItem('stageflow:default-production', joinedProductionId)
+          const inviteGrantKey = `stageflow:invited-productions:${session.user.id}`
+          let rememberedInvites = []
+          try { rememberedInvites = JSON.parse(window.localStorage.getItem(inviteGrantKey) || '[]') } catch { /* reset invalid local invite cache */ }
+          if (!Array.isArray(rememberedInvites)) rememberedInvites = []
+          window.localStorage.setItem(inviteGrantKey, JSON.stringify([...new Set([...rememberedInvites, joinedProductionId])]))
           const { data: joinedRow } = await supabase.from('productions').select('workspace_id').eq('id', joinedProductionId).maybeSingle()
           joinedWorkspaceId = joinedRow?.workspace_id || ''
         }
@@ -382,10 +387,20 @@ export default function App() {
   }
 
   async function loadProductions(workspaceId, preferredProductionId = '') {
-    const { data: membershipRows, error: membershipError } = await supabase
+    let { data: membershipRows, error: membershipError } = await supabase
       .from('production_members')
-      .select('production_id')
+      .select('production_id, role, access_source')
       .eq('user_id', session.user.id)
+    let sourceAwareMembership = true
+    if (membershipError && /access_source|column .* does not exist|PGRST204/i.test(String(membershipError.message || membershipError))) {
+      sourceAwareMembership = false
+      const fallback = await supabase
+        .from('production_members')
+        .select('production_id, role')
+        .eq('user_id', session.user.id)
+      membershipRows = fallback.data
+      membershipError = fallback.error
+    }
     const membershipUnavailable = membershipError && isMissingBackendObject(membershipError, 'production_members')
     if (membershipError && !membershipUnavailable) {
       setProductions([])
@@ -393,7 +408,10 @@ export default function App() {
       setNotice(`공연별 접근 권한을 불러오지 못했어요: ${membershipError.message}`)
       return
     }
-    const allowedIds = [...new Set((membershipRows || []).map((row) => row.production_id).filter(Boolean))]
+    const activeMemberships = sourceAwareMembership
+      ? (membershipRows || []).filter((row) => ['owner', 'invite', 'manual'].includes(row.access_source))
+      : (membershipRows || [])
+    const allowedIds = [...new Set(activeMemberships.map((row) => row.production_id).filter(Boolean))]
     let productionQuery = supabase
       .from('productions')
       .select('*')
@@ -412,7 +430,15 @@ export default function App() {
     const { data, error } = await productionQuery
     if (error) setNotice(`공연을 불러오지 못했어요: ${error.message}`)
     else {
-      const next = data || []
+      let next = data || []
+      if (!sourceAwareMembership) {
+        const inviteGrantKey = `stageflow:invited-productions:${session.user.id}`
+        let rememberedInvites = []
+        try { rememberedInvites = JSON.parse(window.localStorage.getItem(inviteGrantKey) || '[]') } catch { /* ignore invalid local invite cache */ }
+        if (!Array.isArray(rememberedInvites)) rememberedInvites = []
+        const remembered = new Set(rememberedInvites)
+        next = next.filter((item) => item.created_by === session.user.id || remembered.has(item.id))
+      }
       setProductions(next)
       const preferred = preferredProductionId && next.find((item) => item.id === preferredProductionId)
       if (preferred) {
